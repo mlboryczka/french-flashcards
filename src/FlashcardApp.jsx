@@ -1,6 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { RAW, BLANKS } from "./data/cards";
 import { useProgress } from "./useProgress";
+import { supabase } from "./supabase";
+import {
+  speakFrench,
+  stopSpeaking,
+  WavRecorder,
+  assessPronunciation,
+  TTS_AVAILABLE,
+  STT_AVAILABLE,
+  scoreColor,
+} from "./audio";
+
+const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
 // ─── BUILD DECK ──────────────────────────────────────────────────────────
 function buildDeck(raw) {
@@ -78,11 +90,19 @@ function editDistance(a, b) {
   return dp[a.length][b.length];
 }
 // Returns { match, close?, wrongArticle? }
-function matchAnswer(typed, correct) {
+function matchAnswer(typed, correct, extraAlts = []) {
   const t = normalize(typed);
   if (!t) return { match: false };
-  const alts = correct.split(/\s*[/|;]\s*|\s+or\s+/i).map(normalize).filter(Boolean);
+  // Strip parentheticals first so commas inside them aren't treated as separators
+  // (e.g., "to take (someone, somewhere)" should not split into "to take (someone" + "somewhere)")
+  const stripParens = correct.replace(/\([^)]*\)/g, "");
+  // Split on /, |, ;, comma, or " or " — each becomes an acceptable alternative answer
+  const alts = stripParens.split(/\s*[,/|;]\s*|\s+or\s+/i).map(normalize).filter(Boolean);
   alts.push(normalize(correct));
+  for (const e of extraAlts) {
+    const n = normalize(e);
+    if (n) alts.push(n);
+  }
   const tP = splitArticle(t);
   let articleMismatch = false; // track if content matched but article was wrong
   for (const alt of alts) {
@@ -106,8 +126,10 @@ function matchAnswer(typed, correct) {
       }
     }
     // 3. Token set overlap on content
-    const tTok = tR.split(/\s+/).filter(w => w.length > 1);
-    const aTok = aR.split(/\s+/).filter(w => w.length > 1);
+    // Filter out function words — "of", "in", "for", etc. inflate overlap without meaning
+    const STOPWORDS = new Set(["of","in","on","at","for","by","is","it","to","the","a","an","up","not","no","and","or","my","be","do","if","so","as","with","that","this","from","but","its","has","was","are","will","been","have","had","can","all","out","than","when","very","just","about","into","also","each","how","de","la","le","les","un","une","du","des","en","au","est","et","que","qui","pas","ne","se"]);
+    const tTok = tR.split(/\s+/).filter(w => w.length > 1 && !STOPWORDS.has(w));
+    const aTok = aR.split(/\s+/).filter(w => w.length > 1 && !STOPWORDS.has(w));
     if (tTok.length > 0 && aTok.length > 0) {
       const tSet = new Set(tTok), aSet = new Set(aTok);
       const [smallSet, bigSet] = tSet.size <= aSet.size ? [tSet, aSet] : [aSet, tSet];
@@ -157,6 +179,50 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [blankStats, setBlankStats] = useState({ seen:0, got:0 });
   const inputRef = useRef(null);
 
+  // Feedback & alternates state
+  const [alternates, setAlternates] = useState({}); // { "cardId:direction": ["alt1", "alt2"] }
+  const [feedbackState, setFeedbackState] = useState(null); // null | 'submitting' | 'submitted' | 'error'
+  const autoAdvanceTimer = useRef(null);
+  const isAdmin = !!(user?.email && user.email.toLowerCase() === ADMIN_EMAIL);
+
+  // Load card alternates from Supabase on mount (and when user changes)
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const { data, error } = await supabase
+        .from("card_alternates")
+        .select("card_id, direction, alternate_text");
+      if (error) { console.error("Failed to load alternates:", error); return; }
+      const map = {};
+      for (const row of data || []) {
+        const key = `${row.card_id}:${row.direction}`;
+        if (!map[key]) map[key] = [];
+        map[key].push(row.alternate_text);
+      }
+      setAlternates(map);
+    })();
+  }, [user]);
+
+  // ── AUDIO STATE ─────────────────────────────────────────────────────
+  // Pronunciation states: 'idle' | 'recording' | 'processing' | 'result' | 'error'
+  const [autoSpeak, setAutoSpeak] = useState(false);
+  const [recState, setRecState] = useState("idle");
+  const [pronResult, setPronResult] = useState(null);
+  const [pronError, setPronError] = useState("");
+  const recorderRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+
+  // Cancel any in-flight speech and recording when component unmounts
+  useEffect(() => {
+    return () => {
+      stopSpeaking();
+      if (recorderRef.current && recorderRef.current.recording) {
+        recorderRef.current.stop().catch(() => {});
+      }
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    };
+  }, []);
+
   // Build flashcard deck - only rebuilds when filters/mode change, NOT on every answer
   useEffect(() => {
     let cards = cat === "all" ? [...ALL_CARDS] : ALL_CARDS.filter(c => c.cat === cat);
@@ -192,6 +258,100 @@ export default function FlashcardApp({ user, onSignOut }) {
   const card = deck[idx];
   const flip = useCallback(() => setFlipped(f => !f), []);
 
+  // Auto-speak French when a French side becomes visible
+  useEffect(() => {
+    if (!autoSpeak || !card || mode !== "study") return;
+    const isFrenchVisible =
+      (card.shownDir === "fr" && !flipped) || (card.shownDir === "en" && flipped);
+    if (isFrenchVisible) {
+      // Slight delay so the speech starts after the flip animation
+      const t = setTimeout(() => speakFrench(card.f), 200);
+      return () => clearTimeout(t);
+    }
+  }, [autoSpeak, card, flipped, mode]);
+
+  // Speak French manually (button handler)
+  const speakCard = useCallback(() => {
+    if (card) speakFrench(card.f);
+  }, [card]);
+
+  // Speak any specific text (used for "tap a word to hear it")
+  const speakText = useCallback((text) => {
+    speakFrench(text);
+  }, []);
+
+  // Start a pronunciation practice session for the current card.
+  // Records the user, sends the WAV to Azure, displays per-word scores.
+  const startRecording = useCallback(async () => {
+    if (!STT_AVAILABLE || !card) return;
+    setPronError("");
+    setPronResult(null);
+    stopSpeaking();
+    try {
+      const recorder = new WavRecorder();
+      await recorder.start();
+      recorderRef.current = recorder;
+      setRecState("recording");
+    } catch (e) {
+      console.error("Mic access failed:", e);
+      setPronError(
+        e.name === "NotAllowedError"
+          ? "Microphone access denied"
+          : "Couldn't start recording: " + (e.message || e.name || "unknown")
+      );
+      setRecState("error");
+    }
+  }, [card]);
+
+  const stopRecording = useCallback(async () => {
+    const recorder = recorderRef.current;
+    if (!recorder || !card) return;
+    setRecState("processing");
+    try {
+      const wav = await recorder.stop();
+      recorderRef.current = null;
+      if (!wav) {
+        setPronError("No audio recorded");
+        setRecState("error");
+        return;
+      }
+      const result = await assessPronunciation(wav, card.f);
+      if (result.error) {
+        setPronError(result.error);
+        setRecState("error");
+        return;
+      }
+      setPronResult(result);
+      setRecState("result");
+    } catch (e) {
+      console.error("Recording / assessment failed:", e);
+      setPronError(e.message || "Unknown error");
+      setRecState("error");
+    }
+  }, [card]);
+
+  const cancelRecording = useCallback(async () => {
+    const recorder = recorderRef.current;
+    if (recorder) {
+      try { await recorder.stop(); } catch {}
+      recorderRef.current = null;
+    }
+    setRecState("idle");
+    setPronResult(null);
+    setPronError("");
+  }, []);
+
+  // Reset audio state when navigating to a different card
+  useEffect(() => {
+    setRecState("idle");
+    setPronResult(null);
+    setPronError("");
+    if (recorderRef.current && recorderRef.current.recording) {
+      recorderRef.current.stop().catch(() => {});
+      recorderRef.current = null;
+    }
+  }, [idx]);
+
   const rate = useCallback((correct) => {
     if (!card) return;
     const old = progress[card.id] || { score:0, seen:0, got:0 };
@@ -219,17 +379,59 @@ export default function FlashcardApp({ user, onSignOut }) {
   const checkTyped = useCallback(() => {
     if (!card || !typedAnswer.trim()) return;
     const correctAnswer = card.shownDir === "fr" ? card.b : card.f;
-    const result = matchAnswer(typedAnswer, correctAnswer);
+    const altKey = `${card.id}:${card.shownDir}`;
+    const extraAlts = alternates[altKey] || [];
+    const result = matchAnswer(typedAnswer, correctAnswer, extraAlts);
     let status;
     if (result.match) status = result.close ? "close" : "correct";
     else if (result.wrongArticle) status = "wrongArticle";
     else status = "wrong";
     setTypeResult(status);
     setFlipped(true);
+    setFeedbackState(null);
     const wasCorrect = result.match;
     const delay = status === "correct" ? 900 : status === "close" ? 1800 : 2200;
-    setTimeout(() => rate(wasCorrect), delay);
-  }, [card, typedAnswer, rate]);
+    // Store timer ID so the feedback button can cancel auto-advance
+    if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
+    autoAdvanceTimer.current = setTimeout(() => rate(wasCorrect), delay);
+  }, [card, typedAnswer, rate, alternates]);
+
+  // Submit "my answer should have been accepted" feedback to Supabase + LLM reviewer
+  const submitFeedback = useCallback(async () => {
+    if (!card || !user || !typedAnswer.trim()) return;
+    // Cancel the auto-advance so the user can see the confirmation
+    if (autoAdvanceTimer.current) {
+      clearTimeout(autoAdvanceTimer.current);
+      autoAdvanceTimer.current = null;
+    }
+    setFeedbackState("submitting");
+    const row = {
+      user_id: user.id,
+      user_email: user.email,
+      card_id: card.id,
+      card_front: card.shownDir === "fr" ? card.f : card.b,
+      card_back: card.shownDir === "fr" ? card.b : card.f,
+      direction: card.shownDir,
+      user_answer: typedAnswer.trim(),
+    };
+    const { data, error } = await supabase
+      .from("feedback_submissions")
+      .insert(row)
+      .select()
+      .single();
+    if (error) {
+      console.error("Feedback insert failed:", error);
+      setFeedbackState("error");
+      return;
+    }
+    // Fire-and-forget the LLM review (don't block the UI on it)
+    fetch("/api/review-answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ submissionId: data.id }),
+    }).catch(err => console.error("LLM review call failed:", err));
+    setFeedbackState("submitted");
+  }, [card, user, typedAnswer]);
 
   useEffect(() => {
     if (mode !== "study") return;
@@ -286,13 +488,17 @@ export default function FlashcardApp({ user, onSignOut }) {
   if (!loaded) return <div style={S.loading}>Loading…</div>;
 
   // ── NAV BAR ─────────────────────────────────────────────────────────
-  const NavBar = () => (
-    <div style={S.nav}>
-      {[["study","Cards"],["blank","Fill-in"],["stats","Stats"]].map(([m,label]) => (
-        <button key={m} style={mode===m ? {...S.navBtn,...S.navActive} : S.navBtn} onClick={() => { setMode(m); resetSession(); }}>{label}</button>
-      ))}
-    </div>
-  );
+  const NavBar = () => {
+    const items = [["study","Cards"],["blank","Fill-in"],["stats","Stats"]];
+    if (isAdmin) items.push(["feedback","Feedback"]);
+    return (
+      <div style={S.nav}>
+        {items.map(([m,label]) => (
+          <button key={m} style={mode===m ? {...S.navBtn,...S.navActive} : S.navBtn} onClick={() => { setMode(m); resetSession(); }}>{label}</button>
+        ))}
+      </div>
+    );
+  };
 
   // ── FILTERS ─────────────────────────────────────────────────────────
   const Filters = () => (
@@ -306,6 +512,9 @@ export default function FlashcardApp({ user, onSignOut }) {
         <div style={S.toggleRow}>
           <label style={S.toggle}><input type="checkbox" checked={freqOnly} onChange={e => setFreqOnly(e.target.checked)} /><span>Repeated 2×+</span></label>
           <label style={S.toggle}><input type="checkbox" checked={typeMode} onChange={e => { setTypeMode(e.target.checked); setTypedAnswer(""); setTypeResult(null); setFlipped(false); }} /><span>Type answer</span></label>
+          {TTS_AVAILABLE && (
+            <label style={S.toggle}><input type="checkbox" checked={autoSpeak} onChange={e => setAutoSpeak(e.target.checked)} /><span>Auto-speak FR</span></label>
+          )}
           <div style={S.dirGroup}>
             {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
               <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
@@ -400,6 +609,19 @@ export default function FlashcardApp({ user, onSignOut }) {
     );
   }
 
+  // ── FEEDBACK VIEW (admin only) ──────────────────────────────────────
+  if (mode === "feedback") {
+    if (!isAdmin) {
+      return (
+        <div style={S.container}>
+          <NavBar />
+          <div style={S.empty}><p>Admins only.</p></div>
+        </div>
+      );
+    }
+    return <FeedbackAdminView user={user} setMode={setMode} resetSession={resetSession} />;
+  }
+
   // ── STUDY MODE ──────────────────────────────────────────────────────
   const front = card ? (card.shownDir==="fr" ? card.f : card.b) : "";
   const back = card ? (card.shownDir==="fr" ? card.b : card.f) : "";
@@ -438,15 +660,44 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <div style={S.cardCat}><span style={{...S.dot,background:CAT_COLORS[card.cat]}} />{CAT_LABELS[card.cat]}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
                 <div style={S.langBadge}>{card.flippable ? (card.shownDir==="fr" ? "FR → EN" : "EN → FR") : "RULE"}</div>
                 <div style={S.cardText}>{front}</div>
+                {TTS_AVAILABLE && card.shownDir === "fr" && (
+                  <AudioToolbar
+                    onSpeak={(e) => { e.stopPropagation(); speakCard(); }}
+                    onMic={(e) => { e.stopPropagation(); if (recState === "recording") stopRecording(); else startRecording(); }}
+                    recState={recState}
+                    sttAvailable={STT_AVAILABLE}
+                  />
+                )}
                 {!effectiveTypeMode && <div style={S.hint}>tap to flip</div>}
               </div>
               <div style={S.cardBack}>
                 <div style={S.cardCat}><span style={{...S.dot,background:CAT_COLORS[card.cat]}} />{card.shownDir==="fr"?"English":"French"}</div>
                 <div style={S.cardTextB}>{back}</div>
+                {TTS_AVAILABLE && card.shownDir === "en" && (
+                  <AudioToolbar
+                    onSpeak={(e) => { e.stopPropagation(); speakCard(); }}
+                    onMic={(e) => { e.stopPropagation(); if (recState === "recording") stopRecording(); else startRecording(); }}
+                    recState={recState}
+                    sttAvailable={STT_AVAILABLE}
+                  />
+                )}
                 <div style={S.dateH}>Seen on: {card.dates[card.dates.length-1]}</div>
               </div>
             </div>
           </div>
+          {/* Pronunciation panel — appears below card when recording or showing results */}
+          {(recState !== "idle") && (
+            <PronunciationPanel
+              recState={recState}
+              result={pronResult}
+              error={pronError}
+              referenceText={card.f}
+              onCancel={cancelRecording}
+              onRetry={() => { setRecState("idle"); setPronResult(null); setPronError(""); setTimeout(startRecording, 100); }}
+              onSpeakWord={speakText}
+              onDismiss={() => { setRecState("idle"); setPronResult(null); setPronError(""); }}
+            />
+          )}
           {effectiveTypeMode ? (
             typeResult ? (
               <div style={S.typeFeedback}>
@@ -456,6 +707,23 @@ export default function FlashcardApp({ user, onSignOut }) {
                   {typeResult==="wrongArticle" && `✗ Wrong article — answer: ${back}`}
                   {typeResult==="wrong" && `✗ Answer: ${back}`}
                 </div>
+                {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
+                  <div style={S.feedbackRow}>
+                    {feedbackState === null && (
+                      <button style={S.feedbackBtn} onClick={submitFeedback}>
+                        My answer should have been accepted
+                      </button>
+                    )}
+                    {feedbackState === "submitting" && <span style={S.feedbackStatus}>Submitting…</span>}
+                    {feedbackState === "submitted" && (
+                      <div style={S.feedbackSubmitted}>
+                        <span>✓ Thanks — we'll review this.</span>
+                        <button style={S.nextAfterFeedback} onClick={() => rate(false)}>Next →</button>
+                      </div>
+                    )}
+                    {feedbackState === "error" && <span style={S.feedbackError}>Failed to submit. Try again?</span>}
+                  </div>
+                )}
               </div>
             ) : (
               <>
@@ -487,6 +755,249 @@ export default function FlashcardApp({ user, onSignOut }) {
           <button style={S.resetSBtn} onClick={resetSession}>New Session</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── FEEDBACK ADMIN VIEW ─────────────────────────────────────────────────
+// Shows pending feedback submissions with the LLM's verdict. Admin can
+// approve (adds answer as a card alternate) or reject (marks reviewed).
+function FeedbackAdminView({ user, setMode, resetSession }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("pending"); // 'pending' | 'all'
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    let q = supabase
+      .from("feedback_submissions")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (filter === "pending") q = q.eq("status", "pending");
+    const { data, error } = await q;
+    if (error) { console.error("Load feedback failed:", error); setItems([]); }
+    else setItems(data || []);
+    setLoading(false);
+  }, [filter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const approve = async (item) => {
+    // Insert alternate
+    const { error: altErr } = await supabase.from("card_alternates").insert({
+      card_id: item.card_id,
+      direction: item.direction,
+      alternate_text: item.user_answer,
+      source_feedback_id: item.id,
+    });
+    if (altErr && altErr.code !== "23505") { // 23505 = unique_violation (already exists)
+      console.error("Insert alternate failed:", altErr);
+      alert("Failed to add alternate: " + altErr.message);
+      return;
+    }
+    // Mark reviewed
+    const { error: updErr } = await supabase
+      .from("feedback_submissions")
+      .update({ status: "approved", reviewed_at: new Date().toISOString() })
+      .eq("id", item.id);
+    if (updErr) { console.error(updErr); return; }
+    load();
+  };
+
+  const reject = async (item) => {
+    const { error } = await supabase
+      .from("feedback_submissions")
+      .update({ status: "rejected", reviewed_at: new Date().toISOString() })
+      .eq("id", item.id);
+    if (error) { console.error(error); return; }
+    load();
+  };
+
+  return (
+    <div style={S.container}>
+      <div style={S.header}>
+        <div>
+          <h1 style={S.title}>Feedback Review</h1>
+          <p style={S.sub}>{items.length} {filter === "pending" ? "pending" : "total"} submissions</p>
+        </div>
+      </div>
+      <div style={S.nav}>
+        {[["study","Cards"],["blank","Fill-in"],["stats","Stats"],["feedback","Feedback"]].map(([m,label]) => (
+          <button key={m} style={m==="feedback" ? {...S.navBtn,...S.navActive} : S.navBtn} onClick={() => { if (m !== "feedback") { setMode(m); resetSession(); } }}>{label}</button>
+        ))}
+      </div>
+      <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+        <button style={filter === "pending" ? {...S.catBtn,...S.catBtnA} : S.catBtn} onClick={() => setFilter("pending")}>Pending</button>
+        <button style={filter === "all" ? {...S.catBtn,...S.catBtnA} : S.catBtn} onClick={() => setFilter("all")}>All</button>
+        <button style={S.catBtn} onClick={load}>Refresh</button>
+      </div>
+      {loading ? (
+        <div style={S.loading}>Loading…</div>
+      ) : items.length === 0 ? (
+        <div style={S.empty}><div style={{ fontSize:48 }}>📭</div><p>No submissions.</p></div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          {items.map(item => (
+            <div key={item.id} style={S.feedbackCard}>
+              <div style={S.feedbackMeta}>
+                <span>{item.user_email}</span>
+                <span>{new Date(item.created_at).toLocaleString()}</span>
+              </div>
+              <div style={S.feedbackCardBody}>
+                <div style={S.feedbackLine}><b>Card ({item.direction === "fr" ? "FR→EN" : "EN→FR"}):</b> {item.card_front}</div>
+                <div style={S.feedbackLine}><b>Expected:</b> {item.card_back}</div>
+                <div style={{...S.feedbackLine, color:"#2d6a4f", fontWeight:600 }}><b style={{ color:"#1a1a1a", fontWeight:700 }}>User typed:</b> {item.user_answer}</div>
+                {item.llm_verdict ? (
+                  <div style={{
+                    ...S.feedbackLlm,
+                    background: item.llm_verdict === "accept" ? "#e8f5ed" : item.llm_verdict === "reject" ? "#fce8e6" : "#fff4e0",
+                    borderColor: item.llm_verdict === "accept" ? "#2d6a4f" : item.llm_verdict === "reject" ? "#c44536" : "#b8860b",
+                  }}>
+                    <b>Claude's verdict: {item.llm_verdict}</b>
+                    <div>{item.llm_reasoning}</div>
+                  </div>
+                ) : (
+                  <div style={{ ...S.feedbackLlm, color:"#888", background:"#f5f5f5" }}>Awaiting LLM review…</div>
+                )}
+              </div>
+              {item.status === "pending" ? (
+                <div style={S.feedbackActions}>
+                  <button style={S.gotBtn} onClick={() => approve(item)}>✓ Approve</button>
+                  <button style={S.missBtn} onClick={() => reject(item)}>✗ Reject</button>
+                </div>
+              ) : (
+                <div style={{ padding:"8px 12px", fontSize:12, color:"#888" }}>
+                  {item.status} on {item.reviewed_at ? new Date(item.reviewed_at).toLocaleString() : ""}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AUDIO COMPONENTS ────────────────────────────────────────────────────
+
+// Small button group inside the card: speaker + mic
+function AudioToolbar({ onSpeak, onMic, recState, sttAvailable }) {
+  const isRecording = recState === "recording";
+  return (
+    <div style={S.audioToolbar}>
+      <button
+        style={S.speakBtn}
+        onClick={onSpeak}
+        title="Listen to French pronunciation"
+        aria-label="Listen"
+      >🔊</button>
+      {sttAvailable && (
+        <button
+          style={isRecording ? {...S.micBtn, ...S.micBtnActive} : S.micBtn}
+          onClick={onMic}
+          title={isRecording ? "Stop recording" : "Practice your pronunciation"}
+          aria-label={isRecording ? "Stop" : "Practice pronunciation"}
+        >{isRecording ? "⏹" : "🎤"}</button>
+      )}
+    </div>
+  );
+}
+
+// Full pronunciation result panel below the card
+function PronunciationPanel({ recState, result, error, referenceText, onCancel, onRetry, onSpeakWord, onDismiss }) {
+  // Recording state — show timer + stop hint
+  if (recState === "recording") {
+    return (
+      <div style={S.pronPanel}>
+        <div style={S.pronRecordingRow}>
+          <div style={S.pronRecordingDot} />
+          <span>Listening… speak the French clearly</span>
+          <button style={S.pronStopBtn} onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (recState === "processing") {
+    return (
+      <div style={S.pronPanel}>
+        <div style={S.pronProcessing}>
+          <div style={S.spinner} />
+          <span>Analyzing your pronunciation…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (recState === "error") {
+    return (
+      <div style={S.pronPanel}>
+        <div style={S.pronError}>
+          <span>⚠ {error || "Something went wrong"}</span>
+          <div style={S.pronActions}>
+            <button style={S.pronBtn} onClick={onRetry}>Try again</button>
+            <button style={S.pronBtnGhost} onClick={onDismiss}>Dismiss</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (recState === "result" && result) {
+    const overall = result.pronunciation ?? result.accuracy ?? 0;
+    return (
+      <div style={S.pronPanel}>
+        <div style={S.pronHeader}>
+          <div style={S.pronScoreBlock}>
+            <div style={{...S.pronScoreBig, color: scoreColor(overall)}}>{overall}</div>
+            <div style={S.pronScoreLabel}>overall</div>
+          </div>
+          <div style={S.pronSubScores}>
+            <ScoreCell label="accuracy" value={result.accuracy} />
+            <ScoreCell label="fluency" value={result.fluency} />
+            <ScoreCell label="completeness" value={result.completeness} />
+          </div>
+        </div>
+        {result.words && result.words.length > 0 && (
+          <div style={S.pronWords}>
+            {result.words.map((w, i) => (
+              <button
+                key={i}
+                style={{
+                  ...S.pronWordChip,
+                  borderColor: scoreColor(w.accuracy),
+                  color: scoreColor(w.accuracy),
+                }}
+                onClick={() => onSpeakWord(w.word)}
+                title={`${w.word}: ${w.accuracy}/100${w.errorType !== "None" ? " — " + w.errorType : ""}. Tap to hear it.`}
+              >
+                {w.word}
+                <span style={S.pronWordScore}>{w.accuracy}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {result.transcribed && result.transcribed.toLowerCase() !== referenceText.toLowerCase() && (
+          <div style={S.pronTranscript}>
+            heard: <i>"{result.transcribed}"</i>
+          </div>
+        )}
+        <div style={S.pronActions}>
+          <button style={S.pronBtn} onClick={onRetry}>🎤 Try again</button>
+          <button style={S.pronBtnGhost} onClick={onDismiss}>Done</button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function ScoreCell({ label, value }) {
+  return (
+    <div style={S.scoreCell}>
+      <div style={{...S.scoreCellNum, color: scoreColor(value)}}>{value ?? "—"}</div>
+      <div style={S.scoreCellLabel}>{label}</div>
     </div>
   );
 }
@@ -571,8 +1082,50 @@ const S = {
   typeInputRow: { display:"flex", gap:8, justifyContent:"center", marginBottom:8 },
   typeInput: { flex:1, maxWidth:280, padding:"11px 14px", border:"1.5px solid #ddd", borderRadius:10, fontSize:15, fontFamily:"'Georgia',serif", outline:"none", background:"#fff" },
   typeSubmit: { padding:"11px 22px", border:"none", borderRadius:10, background:"#2d6a4f", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
+  // Audio: speak/mic toolbar inside the card
+  audioToolbar: { marginTop:10, display:"flex", gap:8, justifyContent:"center" },
+  speakBtn: { background:"none", border:"1.5px solid #c5cfc0", borderRadius:20, padding:"6px 14px", fontSize:16, cursor:"pointer", lineHeight:1, color:"#2d6a4f" },
+  micBtn: { background:"none", border:"1.5px solid #c5cfc0", borderRadius:20, padding:"6px 14px", fontSize:16, cursor:"pointer", lineHeight:1, color:"#2d6a4f", transition:"all 0.15s" },
+  micBtnActive: { background:"#fde8e8", borderColor:"#c44536", color:"#c44536", animation:"pulse 1.2s infinite" },
+  // Pronunciation result panel below the card
+  pronPanel: { marginTop:14, marginBottom:14, padding:"16px 18px", background:"#fff", border:"1.5px solid #e0dcd4", borderRadius:14, fontFamily:"system-ui,sans-serif", boxShadow:"0 2px 12px rgba(0,0,0,0.04)" },
+  pronRecordingRow: { display:"flex", alignItems:"center", gap:12, fontSize:14, color:"#c44536", fontWeight:500 },
+  pronRecordingDot: { width:14, height:14, borderRadius:"50%", background:"#c44536", animation:"pulse 1s infinite", flexShrink:0 },
+  pronStopBtn: { marginLeft:"auto", background:"#c44536", color:"#fff", border:"none", borderRadius:8, padding:"6px 14px", fontSize:12, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
+  pronProcessing: { display:"flex", alignItems:"center", gap:12, color:"#666", fontSize:14 },
+  spinner: { width:16, height:16, border:"2px solid #ddd", borderTopColor:"#2d6a4f", borderRadius:"50%", animation:"spin 0.8s linear infinite" },
+  pronError: { display:"flex", flexDirection:"column", gap:12, color:"#c44536", fontSize:13 },
+  pronHeader: { display:"flex", alignItems:"center", gap:18, marginBottom:14 },
+  pronScoreBlock: { display:"flex", flexDirection:"column", alignItems:"center", minWidth:64 },
+  pronScoreBig: { fontSize:42, fontWeight:700, lineHeight:1, fontFamily:"'Georgia',serif" },
+  pronScoreLabel: { fontSize:10, color:"#888", textTransform:"uppercase", letterSpacing:0.5, marginTop:2 },
+  pronSubScores: { display:"flex", gap:14, flex:1, flexWrap:"wrap" },
+  scoreCell: { display:"flex", flexDirection:"column", alignItems:"flex-start" },
+  scoreCellNum: { fontSize:18, fontWeight:600, lineHeight:1 },
+  scoreCellLabel: { fontSize:9, color:"#888", textTransform:"uppercase", letterSpacing:0.5, marginTop:2 },
+  pronWords: { display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 },
+  pronWordChip: { background:"#fff", border:"1.5px solid", borderRadius:16, padding:"5px 11px", fontSize:13, cursor:"pointer", fontFamily:"system-ui,sans-serif", display:"inline-flex", alignItems:"center", gap:6, fontWeight:500 },
+  pronWordScore: { fontSize:10, opacity:0.7, fontWeight:600 },
+  pronTranscript: { fontSize:11, color:"#888", marginBottom:10, fontStyle:"italic" },
+  pronActions: { display:"flex", gap:8, justifyContent:"flex-end" },
+  pronBtn: { background:"#2d6a4f", color:"#fff", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, cursor:"pointer", fontWeight:500, fontFamily:"system-ui,sans-serif" },
+  pronBtnGhost: { background:"none", color:"#666", border:"1.5px solid #ddd", borderRadius:8, padding:"7px 14px", fontSize:12, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
   showAnswerRow: { textAlign:"center", marginBottom:12 },
   showAnswerBtn: { background:"none", border:"none", color:"#888", fontSize:11, fontFamily:"system-ui,sans-serif", cursor:"pointer", textDecoration:"underline" },
+  // Feedback button shown after a wrong/close answer in typing mode
+  feedbackRow: { textAlign:"center", marginTop:6, marginBottom:6 },
+  feedbackBtn: { background:"none", border:"1px solid #c4a373", borderRadius:6, padding:"6px 12px", fontSize:11, fontFamily:"system-ui,sans-serif", color:"#8b6914", cursor:"pointer" },
+  feedbackStatus: { fontSize:11, color:"#888", fontFamily:"system-ui,sans-serif" },
+  feedbackError: { fontSize:11, color:"#c44536", fontFamily:"system-ui,sans-serif" },
+  feedbackSubmitted: { display:"flex", flexDirection:"column", alignItems:"center", gap:8, fontSize:12, color:"#2d6a4f", fontFamily:"system-ui,sans-serif" },
+  nextAfterFeedback: { background:"#2d6a4f", color:"#fff", border:"none", borderRadius:6, padding:"6px 14px", fontSize:12, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
+  // Admin feedback review view
+  feedbackCard: { background:"#fff", border:"1.5px solid #e0dcd4", borderRadius:12, overflow:"hidden" },
+  feedbackMeta: { display:"flex", justifyContent:"space-between", padding:"8px 14px", background:"#f5f1e8", fontSize:11, color:"#888", fontFamily:"system-ui,sans-serif", borderBottom:"1px solid #e0dcd4" },
+  feedbackCardBody: { padding:"14px", display:"flex", flexDirection:"column", gap:8, fontSize:13, fontFamily:"system-ui,sans-serif" },
+  feedbackLine: { lineHeight:1.5 },
+  feedbackLlm: { padding:"10px 12px", borderRadius:8, border:"1.5px solid", marginTop:4, fontSize:12, lineHeight:1.5 },
+  feedbackActions: { display:"flex", gap:8, padding:"10px 14px", borderTop:"1px solid #f0ede5" },
   typeFeedback: { textAlign:"center", marginBottom:12, minHeight:40 },
   typeCorrect: { display:"inline-block", padding:"10px 20px", borderRadius:10, background:"#f2f8f0", border:"2px solid #b8d4b0", color:"#2d6a4f", fontSize:16, fontWeight:700, fontFamily:"system-ui,sans-serif" },
   typeClose: { display:"inline-block", padding:"10px 18px", borderRadius:10, background:"#fdf8e6", border:"2px solid #e9c46a", color:"#8a6d10", fontSize:14, fontWeight:600, fontFamily:"system-ui,sans-serif", maxWidth:"95%" },

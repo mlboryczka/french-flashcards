@@ -1,47 +1,10 @@
--- French Flashcards — database schema
--- Run this in the Supabase SQL Editor once when setting up a new project.
--- Dashboard → SQL Editor → New Query → paste → Run.
-
-create table if not exists public.card_progress (
-  user_id uuid references auth.users(id) on delete cascade not null,
-  card_id text not null,
-  score integer not null default 0,
-  seen integer not null default 0,
-  got integer not null default 0,
-  updated_at timestamptz not null default now(),
-  primary key (user_id, card_id)
-);
-
--- Enable row-level security so users can only see/modify their own progress
-alter table public.card_progress enable row level security;
-
--- Policy: users can read their own progress
-create policy "Users can read own progress"
-  on public.card_progress
-  for select
-  using (auth.uid() = user_id);
-
--- Policy: users can insert rows for themselves
-create policy "Users can insert own progress"
-  on public.card_progress
-  for insert
-  with check (auth.uid() = user_id);
-
--- Policy: users can update their own rows
-create policy "Users can update own progress"
-  on public.card_progress
-  for update
-  using (auth.uid() = user_id);
-
--- Policy: users can delete their own rows (used by Reset All)
-create policy "Users can delete own progress"
-  on public.card_progress
-  for delete
-  using (auth.uid() = user_id);
-
--- Index for fast lookups when loading all progress for a user
-create index if not exists card_progress_user_id_idx
-  on public.card_progress(user_id);
+-- Migration: add feedback + alternates tables to an existing deployment.
+-- Safe to run multiple times (uses `if not exists` everywhere).
+--
+-- ╔══════════════════════════════════════════════════════════════════╗
+-- ║ BEFORE RUNNING: search-and-replace YOUR_EMAIL_HERE@example.com   ║
+-- ║ throughout this file with the email you log in with.             ║
+-- ╚══════════════════════════════════════════════════════════════════╝
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- FEEDBACK: user-reported "this should have been accepted" submissions
@@ -54,11 +17,11 @@ create table if not exists public.feedback_submissions (
   card_id text not null,
   card_front text not null,
   card_back text not null,
-  direction text not null, -- 'fr' or 'en' — which way the card was shown
+  direction text not null,
   user_answer text not null,
-  llm_verdict text, -- 'accept' | 'reject' | 'uncertain' | null (pending review)
+  llm_verdict text,
   llm_reasoning text,
-  status text not null default 'pending', -- 'pending' | 'approved' | 'rejected'
+  status text not null default 'pending',
   created_at timestamptz not null default now(),
   reviewed_at timestamptz
 );
@@ -68,26 +31,22 @@ create index if not exists feedback_submissions_status_idx
 
 alter table public.feedback_submissions enable row level security;
 
--- Anyone signed in can insert their own feedback
+drop policy if exists "Users can submit feedback" on public.feedback_submissions;
 create policy "Users can submit feedback"
   on public.feedback_submissions for insert
   with check (auth.uid() = user_id);
 
--- Users can read their own submissions
+drop policy if exists "Users can read own feedback" on public.feedback_submissions;
 create policy "Users can read own feedback"
   on public.feedback_submissions for select
   using (auth.uid() = user_id);
 
--- Admin can read all feedback. 
--- ╔══════════════════════════════════════════════════════════════════╗
--- ║ BEFORE RUNNING: replace YOUR_EMAIL_HERE@example.com on the next  ║
--- ║ two policies with the email you log in with.                     ║
--- ╚══════════════════════════════════════════════════════════════════╝
+drop policy if exists "Admin can read all feedback" on public.feedback_submissions;
 create policy "Admin can read all feedback"
   on public.feedback_submissions for select
   using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
 
--- Admin can update any feedback (to approve/reject)
+drop policy if exists "Admin can update feedback" on public.feedback_submissions;
 create policy "Admin can update feedback"
   on public.feedback_submissions for update
   using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
@@ -95,14 +54,11 @@ create policy "Admin can update feedback"
 -- ═══════════════════════════════════════════════════════════════════════════
 -- CARD ALTERNATES: approved-via-feedback alternative answers
 -- ═══════════════════════════════════════════════════════════════════════════
--- When you approve a feedback submission, a row lands here. The client fetches
--- these on load and treats them as additional acceptable answers during
--- matching. This means approved feedback goes live without redeploying.
 
 create table if not exists public.card_alternates (
   id uuid primary key default gen_random_uuid(),
   card_id text not null,
-  direction text not null, -- 'fr' = alternate for English side, 'en' = alternate for French side
+  direction text not null,
   alternate_text text not null,
   source_feedback_id uuid references public.feedback_submissions(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -114,13 +70,12 @@ create index if not exists card_alternates_card_id_idx
 
 alter table public.card_alternates enable row level security;
 
--- Everyone signed in can read alternates (needed for matching to work)
+drop policy if exists "Authenticated users can read alternates" on public.card_alternates;
 create policy "Authenticated users can read alternates"
   on public.card_alternates for select
   using (auth.role() = 'authenticated');
 
--- Only admin can insert/update/delete alternates
--- (replace YOUR_EMAIL_HERE@example.com with your email before running)
+drop policy if exists "Admin can manage alternates" on public.card_alternates;
 create policy "Admin can manage alternates"
   on public.card_alternates for all
   using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');

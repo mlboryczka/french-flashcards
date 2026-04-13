@@ -117,7 +117,106 @@ text, users will lose progress on that specific card (the new text is a new
 card from the app's perspective). Adding new cards or editing back text is
 safe.
 
-## Things you might want to add later
+## The user feedback loop (LLM-reviewed)
+
+When a user types an answer that the matcher rejects but the user thinks should
+have been accepted (e.g., they typed "salesperson" for "le vendeur"), they can
+hit a button to flag it. The submission goes to Supabase, then a serverless
+function asks Claude whether the answer is equivalent. You see the verdict in
+an admin tab, approve or reject, and approved answers become live alternates
+without redeploying.
+
+### Setup (one-time, ~15 min)
+
+The first deploy steps above must be done first. Then:
+
+**1. Run the migration**
+
+In Supabase SQL Editor, open `supabase/migration_001_feedback.sql` from this
+repo. Before running, search-and-replace `YOUR_EMAIL_HERE@example.com` with the
+email you log in with. Click Run.
+
+This adds two tables (`feedback_submissions`, `card_alternates`) and the
+row-level security policies that give you admin access to both.
+
+**2. Set the admin email in your local env**
+
+Add this line to `.env.local`:
+
+```
+VITE_ADMIN_EMAIL=your@email.com
+```
+
+Same email as in the SQL. This is what tells the React app to show the
+"Feedback" tab when you log in.
+
+**3. Get an Anthropic API key**
+
+Go to [console.anthropic.com](https://console.anthropic.com), create a
+workspace, generate an API key. You'll get billed per request — for this use
+case it'll be cents per month even with heavy use, since each review is one
+small Claude call.
+
+**4. Get your Supabase service role key**
+
+Supabase dashboard → Project Settings → API → scroll to **service_role** →
+**Reveal** → copy. ⚠️ This key bypasses row-level security entirely. Never
+commit it, never paste it into frontend code, never share it. The serverless
+function uses it to update feedback rows after the LLM verdict comes back.
+
+**5. Add server-side env vars to Vercel**
+
+Vercel dashboard → your project → Settings → Environment Variables. Add three
+new ones (all without the `VITE_` prefix, so they stay server-side only):
+
+- `ANTHROPIC_API_KEY` → your key from step 3
+- `SUPABASE_URL` → same as `VITE_SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY` → service role key from step 4
+
+Also add `VITE_ADMIN_EMAIL` to Vercel (this one DOES use the VITE_ prefix
+because it's read in the browser).
+
+**6. Redeploy**
+
+Vercel → Deployments → click the latest → click **...** → **Redeploy**.
+Or just push any git commit and it'll auto-redeploy. The new
+`api/review-answer.js` will be picked up as a serverless function automatically.
+
+### How it flows
+
+1. User types a wrong answer → sees "✗ Answer: ..."
+2. Clicks "My answer should have been accepted"
+3. Row goes into `feedback_submissions` with `status='pending'`
+4. Client fires-and-forgets a POST to `/api/review-answer`
+5. Serverless function fetches the row, sends it to Claude with the prompt
+   "is this equivalent?"
+6. Claude returns `accept` / `reject` / `uncertain` + a one-sentence reason
+7. The verdict gets written back to the same row
+8. You see the row in the **Feedback** tab when you log in
+9. You click **Approve** → an entry lands in `card_alternates` and is
+   immediately used by the matcher for everyone
+10. Or you click **Reject** → row marked reviewed, no change to the deck
+
+### What it costs
+
+- **Claude API**: rough estimate is $0.002 per review (Sonnet 4.5, ~500 tokens
+  in/out). 1,000 reviews ≈ $2. Realistically you'll get a few per day.
+- **Supabase**: free tier is fine, the new tables are tiny.
+- **Vercel**: free tier includes serverless function invocations.
+
+### Security model
+
+- Users can only see/insert their own feedback rows (RLS).
+- You (admin email) can read everyone's feedback and approve/reject.
+- The serverless function uses the service-role key to update rows after the
+  LLM verdict, bypassing RLS — but it only does so for the specific
+  `submissionId` passed in, so a malicious caller can't read other users' data.
+- The Anthropic API key is never exposed to the browser; it lives only in
+  Vercel's environment variables and is used by the serverless function.
+- The `card_alternates` table is readable by all signed-in users (so the
+  matcher works) but only writable by admin.
+
+
 
 - **Multiple decks**: right now every user shares the same 919 cards. If you
   want each teacher to have their own deck, you'd add a `decks` table and let
@@ -129,7 +228,102 @@ safe.
 - **Mobile app**: the current app works fine in mobile browsers; wrapping it in
   Capacitor or PWA-enabling it would make it installable.
 
-## Local development notes
+## Audio: native French TTS + pronunciation grading
+
+Two features powered by Azure Speech Services:
+
+1. **🔊 button** plays the French pronunciation of any card using a high-quality
+   neural voice (Denise by default). MP3s are cached in your browser's IndexedDB
+   so the second play is instant and works offline.
+2. **🎤 button** records you saying the French aloud, sends the audio to Azure's
+   Pronunciation Assessment API, and shows per-word and per-phoneme accuracy
+   scores so you can see exactly which sounds need work.
+
+### Setup (one-time, ~10 min)
+
+**1. Create an Azure Speech Service**
+
+Go to [portal.azure.com](https://portal.azure.com) → sign in (or create an
+account; free tier card needed but no charges for normal use). Then:
+
+- **+ Create a resource** → search "Speech" → Speech (by Microsoft)
+- Resource group: create new or pick existing
+- Region: pick something close to your users (`francecentral`, `eastus`,
+  `westeurope` are all fine)
+- Name: anything (e.g., `french-flashcards-speech`)
+- Pricing tier: **F0 (Free)** — gives you 500K TTS chars/month and 5 hours STT/month
+- Click Review + create → Create
+- Wait ~30s for provisioning, then click **Go to resource**
+- In the left sidebar, click **Keys and Endpoint**
+- Copy **KEY 1** (long alphanumeric string) and the **Location/Region** (e.g., `eastus`)
+
+**2. Add two env vars to Vercel**
+
+Vercel dashboard → your project → Settings → Environment Variables. Add:
+
+- `AZURE_SPEECH_KEY` → KEY 1 from step 1 (no `VITE_` prefix — server-side only)
+- `AZURE_SPEECH_REGION` → the region (e.g., `eastus`, `francecentral`)
+
+**3. Push and deploy**
+
+The serverless functions `api/tts.js` and `api/pronounce.js` are already in the
+repo. Any push will deploy them. If you've already pushed without the env vars,
+you can either push again or hit **Redeploy** in the Vercel dashboard.
+
+### How it works
+
+**TTS path:**
+1. User clicks 🔊 → `speakFrench(text)` checks IndexedDB cache
+2. Cache hit → play instantly (no network)
+3. Cache miss → POST to `/api/tts` → Azure synthesizes MP3 → cache it → play it
+4. Cleanup turns slashes into commas so "le vendeur / la vendeuse" reads as
+   "le vendeur, la vendeuse" instead of "le vendeur slash la vendeuse"
+
+**Pronunciation path:**
+1. User clicks 🎤 → mic permission prompt (first time only)
+2. Browser captures audio with Web Audio API → resampled to 16kHz mono → encoded
+   as 16-bit PCM WAV in JavaScript (Azure rejects WebM, which is what
+   MediaRecorder produces by default)
+3. POST raw WAV bytes to `/api/pronounce` with reference text in query string
+4. Backend forwards to Azure Pronunciation Assessment API with phoneme-level
+   granularity
+5. Response parsed into `{ accuracy, fluency, completeness, pronunciation, words: [{ word, accuracy, errorType, phonemes: [...] }] }`
+6. UI shows: big overall score, three sub-scores (accuracy/fluency/completeness),
+   per-word chips color-coded by accuracy (tap any chip to hear that word
+   spoken back), and the transcription if it differs from the reference
+
+### What it costs
+
+- **TTS**: Azure free tier gives 500K characters/month. The whole deck is ~25K
+  characters, so you can play every card 20 times/month per user before any
+  charges. Beyond that: $4/M chars (~$0.0001 per card play).
+- **STT**: Free tier gives 5 hours/month of pronunciation assessment. Beyond
+  that: $1/audio hour.
+- **Realistic monthly cost** for you + a teacher + ~10 students testing actively:
+  almost certainly $0. Heavy use after the free tier: a few dollars.
+
+### Voice options
+
+The default voice is `fr-FR-DeniseNeural` — the most popular French neural voice,
+pleasant and clear. Other options in `api/tts.js` (the client just sends a
+voice name in the request body):
+
+- `fr-FR-DeniseNeural` — female, friendly (default)
+- `fr-FR-HenriNeural` — male, friendly
+- `fr-FR-AlainNeural` — male, calm
+- `fr-FR-EloiseNeural` — female, young
+- ...and 9 others
+
+To switch, edit the default in `src/audio.js` or expose a voice picker in the UI.
+
+### Browser support
+
+- **TTS**: works in every modern browser (just uses `<Audio>`)
+- **STT**: needs `getUserMedia` (mic) + Web Audio API → works in Chrome, Edge,
+  Firefox, Safari, mobile Safari, Chrome on Android. The 🎤 button hides itself
+  if these aren't available.
+
+
 
 - The fuzzy matcher lives in `src/FlashcardApp.jsx` (look for `matchAnswer`).
   It handles accents, articles, typos via Damerau-Levenshtein, and strict
