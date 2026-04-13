@@ -1,7 +1,11 @@
+// === src/FlashcardApp.jsx PART 1/5 START ===
 import { useState, useEffect, useCallback, useRef } from "react";
-import { RAW, BLANKS } from "./data/cards";
+import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { useProgress } from "./useProgress";
+import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
+import { CahierUpload } from "./CahierUpload";
+import { BetaFeedback } from "./BetaFeedback";
 import {
   speakFrench,
   stopSpeaking,
@@ -14,23 +18,8 @@ import {
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
-// ─── BUILD DECK ──────────────────────────────────────────────────────────
-function buildDeck(raw) {
-  const map = new Map();
-  for (const [f, b, cat, dates] of raw) {
-    const key = f.toLowerCase().trim();
-    if (map.has(key)) {
-      const ex = map.get(key);
-      ex.dates = [...new Set([...ex.dates, ...dates])];
-      ex.freq = ex.dates.length;
-    } else {
-      map.set(key, { f, b, cat, dates: [...dates], freq: dates.length, id: key });
-    }
-  }
-  return [...map.values()].sort((a, b) => b.freq - a.freq);
-}
-
-const ALL_CARDS = buildDeck(RAW);
+// UI code → DB code, used by the admin seed-deck action
+const CAT_TO_DB = { vocab: "V", expr: "E", gram: "G", pron: "P" };
 
 const CAT_LABELS = { all:"All", vocab:"Vocabulaire", expr:"Expressions", gram:"Grammaire", pron:"Prononciation" };
 const CAT_COLORS = { vocab:"#2d6a4f", expr:"#7b2d8b", gram:"#c44536", pron:"#1d3557" };
@@ -81,7 +70,12 @@ function editDistance(a, b) {
   for (let j = 0; j <= b.length; j++) dp[0][j] = j;
   for (let i = 1; i <= a.length; i++) {
     for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+      const cost = a[i-1] === b[j-1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i-1][j] + 1,
+        dp[i][j-1] + 1,
+        dp[i-1][j-1] + cost
+      );
       if (i > 1 && j > 1 && a[i-1] === b[j-2] && a[i-2] === b[j-1]) {
         dp[i][j] = Math.min(dp[i][j], dp[i-2][j-2] + 1);
       }
@@ -89,81 +83,76 @@ function editDistance(a, b) {
   }
   return dp[a.length][b.length];
 }
-// Returns { match, close?, wrongArticle? }
+// Match typed answer against correct answer, handling alternatives and fuzz
 function matchAnswer(typed, correct, extraAlts = []) {
   const t = normalize(typed);
   if (!t) return { match: false };
-  // Strip parentheticals first so commas inside them aren't treated as separators
-  // (e.g., "to take (someone, somewhere)" should not split into "to take (someone" + "somewhere)")
-  const stripParens = correct.replace(/\([^)]*\)/g, "");
-  // Split on /, |, ;, comma, or " or " — each becomes an acceptable alternative answer
-  const alts = stripParens.split(/\s*[,/|;]\s*|\s+or\s+/i).map(normalize).filter(Boolean);
-  alts.push(normalize(correct));
-  for (const e of extraAlts) {
-    const n = normalize(e);
-    if (n) alts.push(n);
-  }
-  const tP = splitArticle(t);
-  let articleMismatch = false; // track if content matched but article was wrong
-  for (const alt of alts) {
-    if (!alt) continue;
-    const aP = splitArticle(alt);
-    const artOK = articlesCompatible(tP.article, aP.article);
-    const tR = tP.rest, aR = aP.rest;
-    // 1. Exact match on content
-    if (t === alt) return { match: true };
-    if (tR === aR) {
-      if (artOK) return { match: true };
-      articleMismatch = true; continue;
-    }
-    // 2. Substring of content
-    if (tR.length >= 4 && aR.length >= 4) {
-      const short = tR.length < aR.length ? tR : aR;
-      const long = tR.length < aR.length ? aR : tR;
-      if (long.includes(short) && short.length >= long.length * 0.4) {
-        if (artOK) return { match: true, close: true };
-        articleMismatch = true; continue;
-      }
-    }
-    // 3. Token set overlap on content
-    // Filter out function words — "of", "in", "for", etc. inflate overlap without meaning
-    const STOPWORDS = new Set(["of","in","on","at","for","by","is","it","to","the","a","an","up","not","no","and","or","my","be","do","if","so","as","with","that","this","from","but","its","has","was","are","will","been","have","had","can","all","out","than","when","very","just","about","into","also","each","how","de","la","le","les","un","une","du","des","en","au","est","et","que","qui","pas","ne","se"]);
-    const tTok = tR.split(/\s+/).filter(w => w.length > 1 && !STOPWORDS.has(w));
-    const aTok = aR.split(/\s+/).filter(w => w.length > 1 && !STOPWORDS.has(w));
-    if (tTok.length > 0 && aTok.length > 0) {
-      const tSet = new Set(tTok), aSet = new Set(aTok);
-      const [smallSet, bigSet] = tSet.size <= aSet.size ? [tSet, aSet] : [aSet, tSet];
-      const overlap = [...smallSet].filter(w => bigSet.has(w)).length;
-      let tokenMatch = false;
-      if (overlap === smallSet.size && smallSet.size >= 2) tokenMatch = true;
-      if (smallSet.size >= 3 && overlap >= smallSet.size - 1 && overlap / bigSet.size >= 0.5) tokenMatch = true;
-      if (tokenMatch) {
-        if (artOK) return { match: true, close: true };
-        articleMismatch = true; continue;
-      }
-    }
-    // 4. Typo tolerance on content
-    const maxLen = Math.max(tR.length, aR.length);
-    if (maxLen >= 4 && maxLen <= 20) {
-      const dist = editDistance(tR, aR);
-      const tolerance = Math.max(1, Math.floor(maxLen / 6));
-      if (dist <= tolerance) {
-        if (artOK) return { match: true, close: true };
-        articleMismatch = true; continue;
-      }
+
+  // Build list of valid answers: the correct one plus any alternates, plus
+  // slash-separated synonyms like "mémoriser / retenir" or "un vendeur / une vendeuse"
+  const sources = [correct, ...extraAlts];
+  const alternatives = [];
+  for (const src of sources) {
+    // Split on / , ; | to get individual acceptable answers
+    for (const alt of src.split(/[\/,;|]/)) {
+      const trimmed = alt.trim();
+      if (trimmed) alternatives.push(trimmed);
     }
   }
-  return { match: false, wrongArticle: articleMismatch };
+
+  for (const alt of alternatives) {
+    const a = normalize(alt);
+    if (!a) continue;
+    // Split article off both sides
+    const typedSplit = splitArticle(t);
+    const answerSplit = splitArticle(a);
+    // Enforce French gender on articles
+    if (!articlesCompatible(typedSplit.article, answerSplit.article)) {
+      // Record that the article was wrong specifically, so we can feedback
+      // "wrong article" instead of just "wrong"
+      if (normalize(typedSplit.rest) === normalize(answerSplit.rest)) {
+        return { match: false, wrongArticle: true };
+      }
+      continue;
+    }
+    const tRest = typedSplit.rest;
+    const aRest = answerSplit.rest;
+    // Exact match
+    if (tRest === aRest) return { match: true };
+    // Substring match (user typed part of a longer answer)
+    if (aRest.includes(tRest) && tRest.length >= Math.max(4, aRest.length - 3)) {
+      return { match: true, close: true };
+    }
+    if (tRest.includes(aRest) && aRest.length >= 4) {
+      return { match: true, close: true };
+    }
+    // Token-set overlap (for multi-word phrases, ignoring order)
+    const tTokens = new Set(tRest.split(/\s+/).filter(x => x.length >= 2));
+    const aTokens = new Set(aRest.split(/\s+/).filter(x => x.length >= 2));
+    if (tTokens.size >= 2 && aTokens.size >= 2) {
+      let shared = 0;
+      for (const tok of tTokens) if (aTokens.has(tok)) shared++;
+      const ratio = shared / Math.max(tTokens.size, aTokens.size);
+      if (ratio >= 0.8) return { match: true, close: true };
+    }
+    // Fuzzy: edit distance within threshold
+    const dist = editDistance(tRest, aRest);
+    const longest = Math.max(tRest.length, aRest.length);
+    const threshold = longest <= 4 ? 0 : longest <= 8 ? 1 : longest <= 14 ? 2 : 3;
+    if (dist <= threshold) return { match: true, close: dist > 0 };
+  }
+  return { match: false };
 }
 
-// ─── COMPONENT ───────────────────────────────────────────────────────────
 export default function FlashcardApp({ user, onSignOut }) {
-  const { progress, loaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
+  const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
+  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck } = useUserDeck(user);
+  const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [cat, setCat] = useState("all");
-  const [mode, setMode] = useState("study"); // study | stats | blank
+  const [mode, setMode] = useState("study"); // study | stats | feedback
   const [stats, setStats] = useState({ seen:0, got:0, missed:0 });
   const [freqOnly, setFreqOnly] = useState(false);
   const [dir, setDir] = useState("mix"); // fr | en | mix
@@ -171,13 +160,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [typedAnswer, setTypedAnswer] = useState("");
   const [typeResult, setTypeResult] = useState(null); // null | 'correct' | 'wrong'
   const studyInputRef = useRef(null);
-  // blank mode state
-  const [blankIdx, setBlankIdx] = useState(0);
-  const [blankInput, setBlankInput] = useState("");
-  const [blankResult, setBlankResult] = useState(null); // null | 'correct' | 'wrong'
-  const [blankDeck, setBlankDeck] = useState([]);
-  const [blankStats, setBlankStats] = useState({ seen:0, got:0 });
-  const inputRef = useRef(null);
+
+  // Upload & onboarding state
+  const [showUpload, setShowUpload] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState("");
+
+  // Inline card edit state
+  const [editingCard, setEditingCard] = useState(null); // null | card object
 
   // Feedback & alternates state
   const [alternates, setAlternates] = useState({}); // { "cardId:direction": ["alt1", "alt2"] }
@@ -225,7 +215,8 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // Build flashcard deck - only rebuilds when filters/mode change, NOT on every answer
   useEffect(() => {
-    let cards = cat === "all" ? [...ALL_CARDS] : ALL_CARDS.filter(c => c.cat === cat);
+    if (!loaded) return;
+    let cards = cat === "all" ? [...userCards] : userCards.filter(c => c.cat === cat);
     if (freqOnly) cards = cards.filter(c => c.freq >= 2);
     for (let i = cards.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [cards[i],cards[j]]=[cards[j],cards[i]]; }
     // Sort by current progress score (worst first) at build time only
@@ -241,19 +232,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setIdx(0);
     setFlipped(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cat, freqOnly, mode, loaded, dir]);
-
-  // Build blank deck
-  useEffect(() => {
-    if (mode !== "blank") return;
-    let b = cat === "all" ? [...BLANKS] : BLANKS.filter(x => x[3] === cat);
-    for (let i = b.length-1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [b[i],b[j]]=[b[j],b[i]]; }
-    setBlankDeck(b);
-    setBlankIdx(0);
-    setBlankInput("");
-    setBlankResult(null);
-    setBlankStats({ seen:0, got:0 });
-  }, [mode, cat]);
+  }, [cat, freqOnly, mode, loaded, dir, userCards]);
 
   const card = deck[idx];
   const flip = useCallback(() => setFlipped(f => !f), []);
@@ -280,216 +259,360 @@ export default function FlashcardApp({ user, onSignOut }) {
     speakFrench(text);
   }, []);
 
-  // Start a pronunciation practice session for the current card.
-  // Records the user, sends the WAV to Azure, displays per-word scores.
-  const startRecording = useCallback(async () => {
+  // ── PRONUNCIATION RECORDING ─────────────────────────────────────────
+  const startRecording = async () => {
     if (!STT_AVAILABLE || !card) return;
-    setPronError("");
+    stopSpeaking(); // don't let TTS bleed into the mic
     setPronResult(null);
-    stopSpeaking();
+    setPronError("");
     try {
       const recorder = new WavRecorder();
       await recorder.start();
       recorderRef.current = recorder;
       setRecState("recording");
+      // Auto-stop after 10 seconds to prevent runaway recordings
+      recordingTimerRef.current = setTimeout(() => {
+        if (recorderRef.current && recorderRef.current.recording) {
+          stopRecording();
+        }
+      }, 10000);
     } catch (e) {
-      console.error("Mic access failed:", e);
-      setPronError(
-        e.name === "NotAllowedError"
-          ? "Microphone access denied"
-          : "Couldn't start recording: " + (e.message || e.name || "unknown")
-      );
+      console.error("Recording failed to start:", e);
+      setPronError(e.message || "Could not access microphone");
       setRecState("error");
     }
-  }, [card]);
+  };
 
-  const stopRecording = useCallback(async () => {
-    const recorder = recorderRef.current;
-    if (!recorder || !card) return;
+  const stopRecording = async () => {
+    if (!recorderRef.current || !recorderRef.current.recording) return;
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
     setRecState("processing");
     try {
-      const wav = await recorder.stop();
+      const blob = await recorderRef.current.stop();
       recorderRef.current = null;
-      if (!wav) {
-        setPronError("No audio recorded");
+      if (!blob) {
+        setPronError("Recording was empty. Try holding the mic button while speaking.");
         setRecState("error");
         return;
       }
-      const result = await assessPronunciation(wav, card.f);
+      const result = await assessPronunciation(blob, card.f);
       if (result.error) {
         setPronError(result.error);
         setRecState("error");
-        return;
+      } else {
+        setPronResult(result);
+        setRecState("result");
       }
-      setPronResult(result);
-      setRecState("result");
     } catch (e) {
-      console.error("Recording / assessment failed:", e);
-      setPronError(e.message || "Unknown error");
+      console.error("Assessment failed:", e);
+      setPronError(e.message || "Assessment failed");
       setRecState("error");
     }
-  }, [card]);
+  };
 
-  const cancelRecording = useCallback(async () => {
-    const recorder = recorderRef.current;
-    if (recorder) {
-      try { await recorder.stop(); } catch {}
-      recorderRef.current = null;
+  const cancelRecording = () => {
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
     }
-    setRecState("idle");
-    setPronResult(null);
-    setPronError("");
-  }, []);
-
-  // Reset audio state when navigating to a different card
-  useEffect(() => {
-    setRecState("idle");
-    setPronResult(null);
-    setPronError("");
     if (recorderRef.current && recorderRef.current.recording) {
       recorderRef.current.stop().catch(() => {});
       recorderRef.current = null;
     }
-  }, [idx]);
+    setRecState("idle");
+    setPronResult(null);
+    setPronError("");
+  };
 
-  const rate = useCallback((correct) => {
-    if (!card) return;
-    const old = progress[card.id] || { score:0, seen:0, got:0 };
-    const next = {
-      score: correct ? Math.min(old.score+1,5) : Math.max(old.score-1,-2),
-      seen: old.seen+1,
-      got: old.got+(correct?1:0),
+  // Auto-focus study input when entering type mode or advancing cards
+  useEffect(() => {
+    if (typeMode && mode === "study" && !typeResult) {
+      setTimeout(() => studyInputRef.current?.focus(), 50);
+    }
+  }, [typeMode, idx, typeResult, mode]);
+
+  // Clear any pending auto-advance timer on unmount or card change
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimer.current) {
+        clearTimeout(autoAdvanceTimer.current);
+        autoAdvanceTimer.current = null;
+      }
     };
-    updateCard(card.id, next);
-    setStats(s => ({ seen:s.seen+1, got:s.got+(correct?1:0), missed:s.missed+(correct?0:1) }));
-    setFlipped(false);
-    setTypedAnswer("");
-    setTypeResult(null);
-    setTimeout(() => setIdx(i => Math.min(i+1, deck.length-1)), 150);
-  }, [card, deck.length, progress, updateCard]);
-
-  const goBack = useCallback(() => {
-    if (idx === 0) return;
-    setFlipped(false);
-    setTypedAnswer("");
-    setTypeResult(null);
-    setIdx(i => Math.max(0, i - 1));
   }, [idx]);
 
-  const checkTyped = useCallback(() => {
+// === src/FlashcardApp.jsx PART 1/5 END ===
+
+// === src/FlashcardApp.jsx PART 2/5 START ===
+
+  // Answer handling: update progress
+  const answer = async (got) => {
+    if (!card) return;
+    const prev = progress[card.id] || { score:0, seen:0, got:0 };
+    const newProg = {
+      score: Math.max(0, Math.min(5, prev.score + (got?1:-1))),
+      seen: prev.seen + 1,
+      got: prev.got + (got?1:0),
+    };
+    await updateCard(card.id, newProg);
+    setStats(s => ({ seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }));
+    setTimeout(() => {
+      setFlipped(false);
+      setIdx(i => Math.min(i+1, deck.length-1));
+      setTypedAnswer("");
+      setTypeResult(null);
+    }, 100);
+  };
+
+  // Submit typed answer
+  const submitTyped = () => {
     if (!card || !typedAnswer.trim()) return;
-    const correctAnswer = card.shownDir === "fr" ? card.b : card.f;
+    const correctText = card.shownDir === "fr" ? card.b : card.f;
     const altKey = `${card.id}:${card.shownDir}`;
     const extraAlts = alternates[altKey] || [];
-    const result = matchAnswer(typedAnswer, correctAnswer, extraAlts);
-    let status;
-    if (result.match) status = result.close ? "close" : "correct";
-    else if (result.wrongArticle) status = "wrongArticle";
-    else status = "wrong";
-    setTypeResult(status);
-    setFlipped(true);
-    setFeedbackState(null);
-    const wasCorrect = result.match;
-    const delay = status === "correct" ? 900 : status === "close" ? 1800 : 2200;
-    // Store timer ID so the feedback button can cancel auto-advance
-    if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
-    autoAdvanceTimer.current = setTimeout(() => rate(wasCorrect), delay);
-  }, [card, typedAnswer, rate, alternates]);
+    const result = matchAnswer(typedAnswer, correctText, extraAlts);
+    if (result.match) {
+      setTypeResult(result.close ? "close" : "correct");
+      setFlipped(true);
+      // Auto-advance after a moment
+      autoAdvanceTimer.current = setTimeout(() => answer(true), 1200);
+    } else if (result.wrongArticle) {
+      setTypeResult("wrongArticle");
+      setFlipped(true);
+    } else {
+      setTypeResult("wrong");
+      setFlipped(true);
+    }
+  };
 
-  // Submit "my answer should have been accepted" feedback to Supabase + LLM reviewer
-  const submitFeedback = useCallback(async () => {
-    if (!card || !user || !typedAnswer.trim()) return;
-    // Cancel the auto-advance so the user can see the confirmation
+  const goBack = () => {
+    if (idx === 0) return;
     if (autoAdvanceTimer.current) {
       clearTimeout(autoAdvanceTimer.current);
       autoAdvanceTimer.current = null;
     }
+    setFlipped(false);
+    setIdx(i => Math.max(0, i-1));
+    setTypedAnswer("");
+    setTypeResult(null);
+    setFeedbackState(null);
+    setTimeout(() => studyInputRef.current?.focus(), 50);
+  };
+
+  const resetSession = () => {
+    setIdx(0);
+    setFlipped(false);
+    setStats({ seen:0, got:0, missed:0 });
+    setTypedAnswer("");
+    setTypeResult(null);
+    setFeedbackState(null);
+  };
+
+  // Keyboard shortcuts (study mode, non-type mode)
+  useEffect(() => {
+    if (mode !== "study" || typeMode) return;
+    const handler = (e) => {
+      if (!card) return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.key === " ") { e.preventDefault(); flip(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); answer(false); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); answer(true); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); goBack(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, mode, typeMode, idx, deck.length]);
+
+  // Submit a feedback claim: "my answer should have been accepted"
+  const submitFeedback = async () => {
+    if (!card || !typedAnswer.trim()) return;
     setFeedbackState("submitting");
-    const row = {
-      user_id: user.id,
-      user_email: user.email,
-      card_id: card.id,
-      card_front: card.shownDir === "fr" ? card.f : card.b,
-      card_back: card.shownDir === "fr" ? card.b : card.f,
-      direction: card.shownDir,
-      user_answer: typedAnswer.trim(),
-    };
-    const { data, error } = await supabase
-      .from("feedback_submissions")
-      .insert(row)
-      .select()
-      .single();
-    if (error) {
-      console.error("Feedback insert failed:", error);
+    const correctText = card.shownDir === "fr" ? card.b : card.f;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/review-answer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          card_id: card.id,
+          direction: card.shownDir,
+          french: card.f,
+          english: card.b,
+          user_answer: typedAnswer,
+          expected_answer: correctText,
+        }),
+      });
+      if (!res.ok) {
+        setFeedbackState("error");
+        return;
+      }
+      setFeedbackState("submitted");
+    } catch (e) {
+      console.error("Feedback failed:", e);
       setFeedbackState("error");
-      return;
     }
-    // Fire-and-forget the LLM review (don't block the UI on it)
-    fetch("/api/review-answer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ submissionId: data.id }),
-    }).catch(err => console.error("LLM review call failed:", err));
-    setFeedbackState("submitted");
-  }, [card, user, typedAnswer]);
+  };
 
-  useEffect(() => {
-    if (mode !== "study") return;
-    const h = (e) => {
-      // Don't hijack keys when the user is typing in the answer input
-      if (e.target.tagName === "INPUT") return;
-      if (e.key === " " || e.key === "Enter") { e.preventDefault(); flip(); }
-      if (e.key === "ArrowRight" || e.key === "j") rate(true);
-      if (e.key === "ArrowLeft" || e.key === "k") rate(false);
-      if (e.key === "ArrowUp" || e.key === "b") { e.preventDefault(); goBack(); }
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [flip, rate, goBack, mode]);
-
-  // Focus input when entering type mode or moving to next card
-  useEffect(() => {
-    if (typeMode && mode === "study" && !typeResult) {
-      setTimeout(() => studyInputRef.current?.focus(), 100);
-    }
-  }, [idx, typeMode, mode, typeResult]);
-
-  const resetSession = () => { setStats({seen:0,got:0,missed:0}); setIdx(0); setFlipped(false); setTypedAnswer(""); setTypeResult(null); };
   const resetAll = async () => {
     if (!confirm("Reset all of your progress? This can't be undone.")) return;
     await resetAllProgress();
     resetSession();
   };
 
-  // Blank mode handlers
-  const checkBlank = () => {
-    if (!blankDeck[blankIdx]) return;
-    const answer = blankDeck[blankIdx][1].toLowerCase().trim();
-    const input = blankInput.toLowerCase().trim();
-    // flexible matching: exact or contained
-    const correct = input === answer || answer.includes(input) && input.length >= Math.max(3, answer.length - 2);
-    setBlankResult(correct ? "correct" : "wrong");
-    setBlankStats(s => ({ seen: s.seen+1, got: s.got + (correct?1:0) }));
+  // ── SEED DEMO DECK (admin only) ─────────────────────────────────────
+  // Bulk-inserts RAW into user_cards for the current user. Preserves
+  // categories (vocab/expr/gram/pron → V/E/G/P) and dates so Matt's existing
+  // card_progress rows continue to match via the lowercased-front id.
+  const seedDemoDeck = async () => {
+    if (!user) return;
+    setSeeding(true);
+    setSeedError("");
+    try {
+      // Build rows from RAW, deduped by lowercased front (matches old buildDeck)
+      const seen = new Map();
+      for (const [f, b, cat, dates] of RAW) {
+        const key = f.toLowerCase().trim();
+        if (seen.has(key)) {
+          const ex = seen.get(key);
+          ex.dates = [...new Set([...ex.dates, ...dates])];
+        } else {
+          seen.set(key, { front: f, back: b, category: CAT_TO_DB[cat] || "V", dates: [...dates] });
+        }
+      }
+      const rows = [...seen.values()].map(r => ({
+        user_id: user.id,
+        front: r.front,
+        back: r.back,
+        category: r.category,
+        dates: r.dates,
+        source: "demo-seed",
+      }));
+      // Insert in chunks of 500
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const { error } = await supabase
+          .from("user_cards")
+          .upsert(chunk, { onConflict: "user_id,front" });
+        if (error) throw error;
+      }
+      reloadDeck();
+    } catch (e) {
+      console.error("seed failed:", e);
+      setSeedError(e.message || "Seed failed");
+    } finally {
+      setSeeding(false);
+    }
   };
-  const nextBlank = () => {
-    setBlankResult(null);
-    setBlankInput("");
-    setBlankIdx(i => Math.min(i+1, blankDeck.length-1));
-    setTimeout(() => inputRef.current?.focus(), 100);
+
+  // ── INLINE CARD EDIT ────────────────────────────────────────────────
+  const saveCardEdit = async (rowId, newFront, newBack) => {
+    const { error } = await supabase
+      .from("user_cards")
+      .update({ front: newFront.trim(), back: newBack.trim(), flagged_for_review: false })
+      .eq("id", rowId);
+    if (error) {
+      console.error("Card update failed:", error);
+      return false;
+    }
+    reloadDeck();
+    return true;
   };
-  const goBackBlank = () => {
-    if (blankIdx === 0) return;
-    setBlankResult(null);
-    setBlankInput("");
-    setBlankIdx(i => Math.max(0, i-1));
-    setTimeout(() => inputRef.current?.focus(), 100);
+
+  const deleteCard = async (rowId) => {
+    const { error } = await supabase.from("user_cards").delete().eq("id", rowId);
+    if (error) {
+      console.error("Card delete failed:", error);
+      return false;
+    }
+    reloadDeck();
+    return true;
+  };
+
+  const flagCard = async (rowId) => {
+    const { error } = await supabase
+      .from("user_cards")
+      .update({
+        flagged_for_review: true,
+        flagged_at: new Date().toISOString(),
+      })
+      .eq("id", rowId);
+    if (error) {
+      console.error("Flag failed:", error);
+      return;
+    }
+    reloadDeck();
   };
 
   if (!loaded) return <div style={S.loading}>Loading…</div>;
 
+  // ── ONBOARDING (empty deck) ─────────────────────────────────────────
+  if (userCards.length === 0 && mode !== "feedback") {
+    return (
+      <div style={S.container}>
+        <div style={S.header}>
+          <div>
+            <h1 style={S.title}>French Flashcards</h1>
+            <p style={S.sub}>Let's set up your deck</p>
+          </div>
+          {user && (
+            <div style={S.userInfo}>
+              <div style={S.userEmail}>{user.email}</div>
+              <button style={S.signOutBtn} onClick={onSignOut}>Sign out</button>
+            </div>
+          )}
+        </div>
+        <div style={S.onboarding}>
+          <h2 style={S.onbTitle}>Welcome 👋</h2>
+          <p style={S.onbText}>
+            To start studying, upload your cahier — the lesson notes your teacher keeps for you.
+            We'll turn them into a personal flashcard deck with vocabulary, expressions,
+            grammar rules, and conjugation drills.
+          </p>
+          <button style={S.onbPrimary} onClick={() => setShowUpload(true)}>
+            Upload my cahier
+          </button>
+          {isAdmin && (
+            <>
+              <div style={S.onbDivider}>or</div>
+              <button
+                style={S.onbSecondary}
+                onClick={seedDemoDeck}
+                disabled={seeding}
+              >
+                {seeding ? "Seeding…" : "Seed demo deck (admin)"}
+              </button>
+              {seedError && <div style={S.onbError}>{seedError}</div>}
+            </>
+          )}
+        </div>
+        <CahierUpload
+          open={showUpload}
+          onClose={() => setShowUpload(false)}
+          hasExisting={false}
+          onSuccess={(result) => {
+            setShowUpload(false);
+            reloadDeck();
+            alert(
+              `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
+              (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
+              (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
+            );
+          }}
+        />
+      </div>
+    );
+  }
+
   // ── NAV BAR ─────────────────────────────────────────────────────────
   const NavBar = () => {
-    const items = [["study","Cards"],["blank","Fill-in"],["stats","Stats"]];
+    const items = [["study","Cards"],["stats","Stats"]];
     if (isAdmin) items.push(["feedback","Feedback"]);
     return (
       <div style={S.nav}>
@@ -525,14 +648,18 @@ export default function FlashcardApp({ user, onSignOut }) {
     </div>
   );
 
+// === src/FlashcardApp.jsx PART 2/5 END ===
+
+// === src/FlashcardApp.jsx PART 3/5 START ===
+
   // ── STATS VIEW ──────────────────────────────────────────────────────
   if (mode === "stats") {
-    const total = ALL_CARDS.length;
-    const learned = ALL_CARDS.filter(c => (progress[c.id]?.score??0) >= 3).length;
-    const inProg = ALL_CARDS.filter(c => { const s=progress[c.id]?.score??0; return s>0&&s<3; }).length;
+    const total = userCards.length;
+    const learned = userCards.filter(c => (progress[c.id]?.score??0) >= 3).length;
+    const inProg = userCards.filter(c => { const s=progress[c.id]?.score??0; return s>0&&s<3; }).length;
     const byCat = {};
-    for (const c of ALL_CARDS) { if (!byCat[c.cat]) byCat[c.cat]={total:0,learned:0}; byCat[c.cat].total++; if ((progress[c.id]?.score??0)>=3) byCat[c.cat].learned++; }
-    const topFreq = ALL_CARDS.filter(c=>c.freq>=3).slice(0,20);
+    for (const c of userCards) { if (!byCat[c.cat]) byCat[c.cat]={total:0,learned:0}; byCat[c.cat].total++; if ((progress[c.id]?.score??0)>=3) byCat[c.cat].learned++; }
+    const topFreq = userCards.filter(c=>c.freq>=3).slice(0,20);
     return (
       <div style={S.container}>
         <h1 style={S.title}>My Statistics</h1>
@@ -543,8 +670,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div style={{...S.statCard,borderColor:"#e9c46a"}}><div style={{...S.statNum,color:"#b8860b"}}>{inProg}</div><div style={S.statLabel}>In Progress</div></div>
           <div style={{...S.statCard,borderColor:"#c44536"}}><div style={{...S.statNum,color:"#c44536"}}>{total-learned-inProg}</div><div style={S.statLabel}>To Learn</div></div>
         </div>
-        <div style={S.pBarOut}><div style={{...S.pBarIn, width:`${(learned/total)*100}%`}} /></div>
-        <div style={S.pText}>{Math.round((learned/total)*100)}% mastered</div>
+        <div style={S.pBarOut}><div style={{...S.pBarIn, width:`${total > 0 ? (learned/total)*100 : 0}%`}} /></div>
+        <div style={S.pText}>{total > 0 ? Math.round((learned/total)*100) : 0}% mastered</div>
         <h2 style={S.subT}>By Category</h2>
         <div style={S.catStats}>{Object.entries(byCat).map(([k,v]) => (
           <div key={k} style={S.catStatRow}><span style={{...S.dot,background:CAT_COLORS[k]}} /><span style={{flex:1}}>{CAT_LABELS[k]}</span><span style={{fontWeight:600}}>{v.learned}/{v.total}</span></div>
@@ -554,57 +681,6 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div key={c.id} style={S.freqItem}><span style={S.freqWord}>{c.f}</span><span style={S.freqBadge}>{c.freq}×</span></div>
         ))}</div>
         <button style={S.resetBtn} onClick={resetAll}>Reset All Progress</button>
-      </div>
-    );
-  }
-
-  // ── BLANK MODE ──────────────────────────────────────────────────────
-  if (mode === "blank") {
-    const bl = blankDeck[blankIdx];
-    const done = blankIdx >= blankDeck.length - 1 && blankStats.seen > 0;
-    return (
-      <div style={S.container}>
-        <h1 style={S.title}>Fill in the Blank</h1>
-        <NavBar />
-        <Filters />
-        {bl ? (
-          <>
-            <div style={S.counterRow}>
-              <button style={{...S.backBtn, visibility: blankIdx === 0 ? "hidden" : "visible"}} onClick={goBackBlank} title="Previous question">← Back</button>
-              <div style={{...S.counter, flex:1, marginBottom:0}}>{blankIdx+1} / {blankDeck.length}</div>
-              <div style={S.backBtnSpacer} />
-            </div>
-            <div style={S.blankCard}>
-              <div style={S.blankSentence}>{bl[0].split("___").map((part,i,arr) => (
-                <span key={i}>{part}{i < arr.length-1 && <span style={S.blankSlot}>{blankResult ? bl[1] : "___"}</span>}</span>
-              ))}</div>
-              <div style={S.blankHint}>{bl[2]}</div>
-              {!blankResult ? (
-                <div style={S.blankInputRow}>
-                  <input ref={inputRef} style={S.blankInput} value={blankInput} onChange={e => setBlankInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") checkBlank(); }} placeholder="Your answer…" autoFocus />
-                  <button style={S.blankSubmit} onClick={checkBlank}>Check</button>
-                </div>
-              ) : (
-                <div style={S.blankFeedback}>
-                  <div style={blankResult==="correct" ? S.blankCorrect : S.blankWrong}>
-                    {blankResult==="correct" ? "✓ Correct!" : `✗ Answer: ${bl[1]}`}
-                  </div>
-                  {bl[4] && <div style={S.blankTranslation}>"{bl[4]}"</div>}
-                  <button style={S.blankNext} onClick={nextBlank}>Next →</button>
-                </div>
-              )}
-            </div>
-            <div style={S.blankStatsRow}>Score: {blankStats.got}/{blankStats.seen}</div>
-            {done && (
-              <div style={S.sessionDone}>
-                <p style={S.doneText}>Session complete! {blankStats.got}/{blankStats.seen} ({Math.round(blankStats.got/Math.max(blankStats.seen,1)*100)}%)</p>
-                <button style={S.resetSBtn} onClick={() => { setBlankIdx(0); setBlankInput(""); setBlankResult(null); setBlankStats({seen:0,got:0}); }}>Start Over</button>
-              </div>
-            )}
-          </>
-        ) : (
-          <div style={S.empty}><div style={{fontSize:48}}>📝</div><p>No questions in this category.</p></div>
-        )}
       </div>
     );
   }
@@ -640,6 +716,10 @@ export default function FlashcardApp({ user, onSignOut }) {
         </div>
         {user && (
           <div style={S.userInfo}>
+            <div style={S.headerBtnRow}>
+              <button style={S.headerBtn} onClick={() => setShowUpload(true)} title="Upload or re-upload your cahier">📄 Upload cahier</button>
+              <BetaFeedback user={user} currentPage={mode} />
+            </div>
             <div style={S.userEmail}>{user.email}</div>
             <button style={S.signOutBtn} onClick={onSignOut}>Sign out</button>
           </div>
@@ -682,6 +762,25 @@ export default function FlashcardApp({ user, onSignOut }) {
                   />
                 )}
                 <div style={S.dateH}>Seen on: {card.dates[card.dates.length-1]}</div>
+                <div style={S.cardActions}>
+                  <button
+                    style={S.cardActionBtn}
+                    onClick={(e) => { e.stopPropagation(); setEditingCard(card); }}
+                    title="Edit this card"
+                  >
+                    ✏️ Edit
+                  </button>
+                  <button
+                    style={card.flagged ? {...S.cardActionBtn, ...S.cardActionBtnFlagged} : S.cardActionBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!card.flagged) flagCard(card.row_id);
+                    }}
+                    title={card.flagged ? "Already flagged" : "Flag this card's translation for review"}
+                  >
+                    {card.flagged ? "🚩 Flagged" : "🚩 Flag"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -698,6 +797,11 @@ export default function FlashcardApp({ user, onSignOut }) {
               onDismiss={() => { setRecState("idle"); setPronResult(null); setPronError(""); }}
             />
           )}
+
+// === src/FlashcardApp.jsx PART 3/5 END ===
+
+          // === src/FlashcardApp.jsx PART 4/5 START ===
+
           {effectiveTypeMode ? (
             typeResult ? (
               <div style={S.typeFeedback}>
@@ -714,33 +818,39 @@ export default function FlashcardApp({ user, onSignOut }) {
                         My answer should have been accepted
                       </button>
                     )}
-                    {feedbackState === "submitting" && <span style={S.feedbackStatus}>Submitting…</span>}
-                    {feedbackState === "submitted" && (
-                      <div style={S.feedbackSubmitted}>
-                        <span>✓ Thanks — we'll review this.</span>
-                        <button style={S.nextAfterFeedback} onClick={() => rate(false)}>Next →</button>
-                      </div>
-                    )}
-                    {feedbackState === "error" && <span style={S.feedbackError}>Failed to submit. Try again?</span>}
+                    {feedbackState === "submitting" && <span style={S.feedbackPending}>Sending…</span>}
+                    {feedbackState === "submitted" && <span style={S.feedbackOk}>Thanks! Your answer is being reviewed.</span>}
+                    {feedbackState === "error" && <span style={S.feedbackErr}>Couldn't send — try again</span>}
                   </div>
                 )}
+                <div style={S.typeBtnRow}>
+                  <button style={S.btnWrong} onClick={() => answer(false)}>Again</button>
+                  <button style={S.btnRight} onClick={() => answer(true)}>Got It</button>
+                </div>
               </div>
             ) : (
-              <>
-                <div style={S.typeInputRow}>
-                  <input ref={studyInputRef} style={S.typeInput} value={typedAnswer} onChange={e => setTypedAnswer(e.target.value)} onKeyDown={e => { if (e.key === "Enter") checkTyped(); }} placeholder={!card.flippable ? "Type the answer…" : (card.shownDir==="fr" ? "Type English meaning…" : "Type French…")} autoFocus />
-                  <button style={S.typeSubmit} onClick={checkTyped} disabled={!typedAnswer.trim()}>Check</button>
-                </div>
-                <div style={S.showAnswerRow}>
-                  <button style={S.showAnswerBtn} onClick={() => { setFlipped(true); setTypeResult("wrong"); setTimeout(() => rate(false), 1800); }}>Show answer (skip)</button>
-                </div>
-              </>
+              <div style={S.typeInputRow}>
+                <input
+                  ref={studyInputRef}
+                  style={S.typeInput}
+                  value={typedAnswer}
+                  onChange={e => setTypedAnswer(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") submitTyped(); }}
+                  placeholder={`Type ${card.shownDir==="fr" ? "English" : "French"}…`}
+                  autoFocus
+                />
+                <button style={S.typeSubmit} onClick={submitTyped}>Check</button>
+              </div>
             )
           ) : (
             <>
-              <div style={S.rateRow}>
-                <button style={S.missBtn} onClick={() => rate(false)}>✗ Again</button>
-                <button style={S.gotBtn} onClick={() => rate(true)}>✓ Got It</button>
+              <div style={S.btnRow}>
+                <button style={S.btnWrong} onClick={() => answer(false)}>
+                  <span style={{fontSize:18}}>✗</span> Again
+                </button>
+                <button style={S.btnRight} onClick={() => answer(true)}>
+                  <span style={{fontSize:18}}>✓</span> Got It
+                </button>
               </div>
               <div style={S.shortcuts}>Space = flip · ← = again · → = got it · ↑ = back</div>
             </>
@@ -755,9 +865,111 @@ export default function FlashcardApp({ user, onSignOut }) {
           <button style={S.resetSBtn} onClick={resetSession}>New Session</button>
         </div>
       )}
+      <CahierUpload
+        open={showUpload}
+        onClose={() => setShowUpload(false)}
+        hasExisting={userCards.length > 0}
+        onSuccess={(result) => {
+          setShowUpload(false);
+          reloadDeck();
+          alert(
+            `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
+            (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
+            (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
+          );
+        }}
+      />
+      {editingCard && (
+        <EditCardModal
+          card={editingCard}
+          onClose={() => setEditingCard(null)}
+          onSave={async (newFront, newBack) => {
+            const ok = await saveCardEdit(editingCard.row_id, newFront, newBack);
+            if (ok) setEditingCard(null);
+            return ok;
+          }}
+          onDelete={async () => {
+            if (!confirm("Delete this card? This cannot be undone.")) return;
+            const ok = await deleteCard(editingCard.row_id);
+            if (ok) setEditingCard(null);
+          }}
+        />
+      )}
     </div>
   );
 }
+
+// ─── EDIT CARD MODAL ─────────────────────────────────────────────────────
+function EditCardModal({ card, onClose, onSave, onDelete }) {
+  const [front, setFront] = useState(card.f);
+  const [back, setBack] = useState(card.b);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = async () => {
+    if (!front.trim() || !back.trim()) {
+      setError("Both fields are required");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    const ok = await onSave(front, back);
+    if (!ok) {
+      setError("Save failed");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={EM.overlay} onClick={saving ? null : onClose}>
+      <div style={EM.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={EM.header}>
+          <h2 style={EM.title}>Edit card</h2>
+          <button style={EM.closeBtn} onClick={onClose} disabled={saving}>×</button>
+        </div>
+        <label style={EM.label}>French</label>
+        <input
+          style={EM.input}
+          value={front}
+          onChange={(e) => setFront(e.target.value)}
+          disabled={saving}
+        />
+        <label style={EM.label}>English</label>
+        <textarea
+          style={EM.textarea}
+          value={back}
+          onChange={(e) => setBack(e.target.value)}
+          disabled={saving}
+        />
+        {error && <div style={EM.error}>{error}</div>}
+        <div style={EM.footer}>
+          <button style={EM.deleteBtn} onClick={onDelete} disabled={saving}>Delete card</button>
+          <div style={{flex:1}} />
+          <button style={EM.cancelBtn} onClick={onClose} disabled={saving}>Cancel</button>
+          <button style={EM.saveBtn} onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const EM = {
+  overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 },
+  modal: { background: "#fff", borderRadius: 12, maxWidth: 500, width: "100%", padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  title: { margin: 0, fontSize: 20, color: "#1d3557" },
+  closeBtn: { background: "none", border: "none", fontSize: 28, cursor: "pointer", color: "#888", padding: "0 8px", lineHeight: 1 },
+  label: { display: "block", fontSize: 13, fontWeight: 600, color: "#444", marginBottom: 6, marginTop: 12 },
+  input: { width: "100%", padding: 10, fontSize: 15, border: "1px solid #ccc", borderRadius: 6, boxSizing: "border-box", fontFamily: "'Georgia',serif" },
+  textarea: { width: "100%", minHeight: 80, padding: 10, fontSize: 14, border: "1px solid #ccc", borderRadius: 6, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" },
+  error: { padding: 10, background: "#fde8e8", color: "#c44536", borderRadius: 6, fontSize: 13, marginTop: 12 },
+  footer: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, alignItems: "center" },
+  deleteBtn: { padding: "8px 14px", background: "#fff", color: "#c44536", border: "1px solid #c44536", borderRadius: 6, cursor: "pointer", fontSize: 13 },
+  cancelBtn: { padding: "10px 20px", background: "#f0f0f0", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, color: "#444" },
+  saveBtn: { padding: "10px 24px", background: "#1d3557", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14, fontWeight: 600 },
+};
 
 // ─── FEEDBACK ADMIN VIEW ─────────────────────────────────────────────────
 // Shows pending feedback submissions with the LLM's verdict. Admin can
@@ -765,111 +977,109 @@ export default function FlashcardApp({ user, onSignOut }) {
 function FeedbackAdminView({ user, setMode, resetSession }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("pending"); // 'pending' | 'all'
+  const [acting, setActing] = useState(null); // id being acted on
 
-  const load = useCallback(async () => {
+  const load = async () => {
     setLoading(true);
-    let q = supabase
+    const { data, error } = await supabase
       .from("feedback_submissions")
       .select("*")
+      .eq("reviewed", false)
       .order("created_at", { ascending: false });
-    if (filter === "pending") q = q.eq("status", "pending");
-    const { data, error } = await q;
-    if (error) { console.error("Load feedback failed:", error); setItems([]); }
-    else setItems(data || []);
+    if (error) {
+      console.error("Failed to load feedback:", error);
+      setItems([]);
+    } else {
+      setItems(data || []);
+    }
     setLoading(false);
-  }, [filter]);
+  };
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, []);
 
   const approve = async (item) => {
-    // Insert alternate
+    setActing(item.id);
+    // Add alternate
     const { error: altErr } = await supabase.from("card_alternates").insert({
       card_id: item.card_id,
       direction: item.direction,
       alternate_text: item.user_answer,
       source_feedback_id: item.id,
     });
-    if (altErr && altErr.code !== "23505") { // 23505 = unique_violation (already exists)
-      console.error("Insert alternate failed:", altErr);
-      alert("Failed to add alternate: " + altErr.message);
-      return;
-    }
+    if (altErr) { console.error("Alt insert failed:", altErr); setActing(null); return; }
     // Mark reviewed
-    const { error: updErr } = await supabase
+    const { error: upErr } = await supabase
       .from("feedback_submissions")
-      .update({ status: "approved", reviewed_at: new Date().toISOString() })
+      .update({ reviewed: true, reviewed_at: new Date().toISOString(), action: "approved" })
       .eq("id", item.id);
-    if (updErr) { console.error(updErr); return; }
-    load();
+    if (upErr) console.error("Review mark failed:", upErr);
+    await load();
+    setActing(null);
   };
 
   const reject = async (item) => {
+    setActing(item.id);
     const { error } = await supabase
       .from("feedback_submissions")
-      .update({ status: "rejected", reviewed_at: new Date().toISOString() })
+      .update({ reviewed: true, reviewed_at: new Date().toISOString(), action: "rejected" })
       .eq("id", item.id);
-    if (error) { console.error(error); return; }
-    load();
+    if (error) console.error("Reject failed:", error);
+    await load();
+    setActing(null);
   };
 
   return (
     <div style={S.container}>
-      <div style={S.header}>
-        <div>
-          <h1 style={S.title}>Feedback Review</h1>
-          <p style={S.sub}>{items.length} {filter === "pending" ? "pending" : "total"} submissions</p>
-        </div>
-      </div>
+      <h1 style={S.title}>Feedback Review</h1>
       <div style={S.nav}>
-        {[["study","Cards"],["blank","Fill-in"],["stats","Stats"],["feedback","Feedback"]].map(([m,label]) => (
+        {[["study","Cards"],["stats","Stats"],["feedback","Feedback"]].map(([m,label]) => (
           <button key={m} style={m==="feedback" ? {...S.navBtn,...S.navActive} : S.navBtn} onClick={() => { if (m !== "feedback") { setMode(m); resetSession(); } }}>{label}</button>
         ))}
       </div>
-      <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-        <button style={filter === "pending" ? {...S.catBtn,...S.catBtnA} : S.catBtn} onClick={() => setFilter("pending")}>Pending</button>
-        <button style={filter === "all" ? {...S.catBtn,...S.catBtnA} : S.catBtn} onClick={() => setFilter("all")}>All</button>
-        <button style={S.catBtn} onClick={load}>Refresh</button>
-      </div>
       {loading ? (
-        <div style={S.loading}>Loading…</div>
+        <div style={S.empty}>Loading…</div>
       ) : items.length === 0 ? (
-        <div style={S.empty}><div style={{ fontSize:48 }}>📭</div><p>No submissions.</p></div>
+        <div style={S.empty}><div style={{fontSize:48}}>✨</div><p>No pending feedback.</p></div>
       ) : (
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        <div style={S.feedbackList}>
           {items.map(item => (
-            <div key={item.id} style={S.feedbackCard}>
-              <div style={S.feedbackMeta}>
-                <span>{item.user_email}</span>
-                <span>{new Date(item.created_at).toLocaleString()}</span>
-              </div>
-              <div style={S.feedbackCardBody}>
-                <div style={S.feedbackLine}><b>Card ({item.direction === "fr" ? "FR→EN" : "EN→FR"}):</b> {item.card_front}</div>
-                <div style={S.feedbackLine}><b>Expected:</b> {item.card_back}</div>
-                <div style={{...S.feedbackLine, color:"#2d6a4f", fontWeight:600 }}><b style={{ color:"#1a1a1a", fontWeight:700 }}>User typed:</b> {item.user_answer}</div>
-                {item.llm_verdict ? (
-                  <div style={{
-                    ...S.feedbackLlm,
-                    background: item.llm_verdict === "accept" ? "#e8f5ed" : item.llm_verdict === "reject" ? "#fce8e6" : "#fff4e0",
-                    borderColor: item.llm_verdict === "accept" ? "#2d6a4f" : item.llm_verdict === "reject" ? "#c44536" : "#b8860b",
-                  }}>
-                    <b>Claude's verdict: {item.llm_verdict}</b>
-                    <div>{item.llm_reasoning}</div>
-                  </div>
-                ) : (
-                  <div style={{ ...S.feedbackLlm, color:"#888", background:"#f5f5f5" }}>Awaiting LLM review…</div>
-                )}
-              </div>
-              {item.status === "pending" ? (
-                <div style={S.feedbackActions}>
-                  <button style={S.gotBtn} onClick={() => approve(item)}>✓ Approve</button>
-                  <button style={S.missBtn} onClick={() => reject(item)}>✗ Reject</button>
+            <div key={item.id} style={S.feedbackItem}>
+              <div style={S.feedbackCard}>
+                <div style={S.feedbackCardHeader}>
+                  <span style={S.feedbackDir}>{item.direction === "fr" ? "FR → EN" : "EN → FR"}</span>
+                  <span style={S.feedbackDate}>{new Date(item.created_at).toLocaleDateString()}</span>
                 </div>
-              ) : (
-                <div style={{ padding:"8px 12px", fontSize:12, color:"#888" }}>
-                  {item.status} on {item.reviewed_at ? new Date(item.reviewed_at).toLocaleString() : ""}
+                <div style={S.feedbackPrompt}>{item.direction === "fr" ? item.french : item.english}</div>
+              </div>
+              <div style={S.feedbackAnswers}>
+                <div style={S.feedbackAnsRow}>
+                  <span style={S.feedbackAnsLabel}>Expected:</span>
+                  <span style={S.feedbackExpected}>{item.expected_answer}</span>
+                </div>
+                <div style={S.feedbackAnsRow}>
+                  <span style={S.feedbackAnsLabel}>User typed:</span>
+                  <span style={S.feedbackUser}>{item.user_answer}</span>
+                </div>
+              </div>
+              {item.llm_verdict && (
+                <div style={S.llmBlock}>
+                  <div style={S.llmHead}>
+                    <span style={item.llm_verdict === "accept" ? S.llmAccept : item.llm_verdict === "reject" ? S.llmReject : S.llmUnclear}>
+                      Claude: {item.llm_verdict}
+                    </span>
+                    {item.llm_confidence && <span style={S.llmConf}>confidence: {item.llm_confidence}</span>}
+                  </div>
+                  {item.llm_reasoning && <div style={S.llmReasoning}>{item.llm_reasoning}</div>}
                 </div>
               )}
+              <div style={S.feedbackActions}>
+                <button style={S.feedbackApprove} onClick={() => approve(item)} disabled={acting === item.id}>
+                  {acting === item.id ? "…" : "Approve (add alternate)"}
+                </button>
+                <button style={S.feedbackReject} onClick={() => reject(item)} disabled={acting === item.id}>
+                  {acting === item.id ? "…" : "Reject"}
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -878,34 +1088,30 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
   );
 }
 
-// ─── AUDIO COMPONENTS ────────────────────────────────────────────────────
+// === src/FlashcardApp.jsx PART 4/5 END ===
 
-// Small button group inside the card: speaker + mic
+// === src/FlashcardApp.jsx PART 5/5 START ===
+
+// ─── AUDIO TOOLBAR ───────────────────────────────────────────────────────
 function AudioToolbar({ onSpeak, onMic, recState, sttAvailable }) {
-  const isRecording = recState === "recording";
   return (
     <div style={S.audioToolbar}>
-      <button
-        style={S.speakBtn}
-        onClick={onSpeak}
-        title="Listen to French pronunciation"
-        aria-label="Listen"
-      >🔊</button>
+      <button style={S.speakBtn} onClick={onSpeak} title="Play French pronunciation">🔊</button>
       {sttAvailable && (
         <button
-          style={isRecording ? {...S.micBtn, ...S.micBtnActive} : S.micBtn}
+          style={recState === "recording" ? {...S.micBtn, ...S.micBtnActive} : S.micBtn}
           onClick={onMic}
-          title={isRecording ? "Stop recording" : "Practice your pronunciation"}
-          aria-label={isRecording ? "Stop" : "Practice pronunciation"}
-        >{isRecording ? "⏹" : "🎤"}</button>
+          title={recState === "recording" ? "Stop recording" : "Record yourself speaking"}
+        >
+          {recState === "recording" ? "⏹" : "🎤"}
+        </button>
       )}
     </div>
   );
 }
 
-// Full pronunciation result panel below the card
+// ─── PRONUNCIATION PANEL ─────────────────────────────────────────────────
 function PronunciationPanel({ recState, result, error, referenceText, onCancel, onRetry, onSpeakWord, onDismiss }) {
-  // Recording state — show timer + stop hint
   if (recState === "recording") {
     return (
       <div style={S.pronPanel}>
@@ -917,7 +1123,6 @@ function PronunciationPanel({ recState, result, error, referenceText, onCancel, 
       </div>
     );
   }
-
   if (recState === "processing") {
     return (
       <div style={S.pronPanel}>
@@ -928,68 +1133,65 @@ function PronunciationPanel({ recState, result, error, referenceText, onCancel, 
       </div>
     );
   }
-
   if (recState === "error") {
     return (
       <div style={S.pronPanel}>
         <div style={S.pronError}>
-          <span>⚠ {error || "Something went wrong"}</span>
-          <div style={S.pronActions}>
-            <button style={S.pronBtn} onClick={onRetry}>Try again</button>
-            <button style={S.pronBtnGhost} onClick={onDismiss}>Dismiss</button>
+          <span>✗ {error || "Something went wrong"}</span>
+          <div style={{display:"flex", gap:8}}>
+            <button style={S.pronRetryBtn} onClick={onRetry}>Try again</button>
+            <button style={S.pronDismissBtn} onClick={onDismiss}>Dismiss</button>
           </div>
         </div>
       </div>
     );
   }
-
   if (recState === "result" && result) {
-    const overall = result.pronunciation ?? result.accuracy ?? 0;
     return (
       <div style={S.pronPanel}>
         <div style={S.pronHeader}>
           <div style={S.pronScoreBlock}>
-            <div style={{...S.pronScoreBig, color: scoreColor(overall)}}>{overall}</div>
-            <div style={S.pronScoreLabel}>overall</div>
+            <div style={{...S.pronScoreBig, color: scoreColor(result.pronunciation)}}>
+              {result.pronunciation ?? "—"}
+            </div>
+            <div style={S.pronScoreLabel}>Overall</div>
           </div>
           <div style={S.pronSubScores}>
-            <ScoreCell label="accuracy" value={result.accuracy} />
-            <ScoreCell label="fluency" value={result.fluency} />
-            <ScoreCell label="completeness" value={result.completeness} />
+            <ScoreCell label="Accuracy" value={result.accuracy} />
+            <ScoreCell label="Fluency" value={result.fluency} />
+            <ScoreCell label="Complete" value={result.completeness} />
           </div>
         </div>
         {result.words && result.words.length > 0 && (
-          <div style={S.pronWords}>
+          <div style={S.pronWordRow}>
             {result.words.map((w, i) => (
               <button
                 key={i}
                 style={{
                   ...S.pronWordChip,
-                  borderColor: scoreColor(w.accuracy),
-                  color: scoreColor(w.accuracy),
+                  background: scoreColor(w.accuracy),
+                  opacity: w.errorType === "Omission" ? 0.4 : 1,
                 }}
                 onClick={() => onSpeakWord(w.word)}
-                title={`${w.word}: ${w.accuracy}/100${w.errorType !== "None" ? " — " + w.errorType : ""}. Tap to hear it.`}
+                title={`${w.word} — ${w.accuracy ?? "—"}/100 · tap to hear`}
               >
                 {w.word}
-                <span style={S.pronWordScore}>{w.accuracy}</span>
               </button>
             ))}
           </div>
         )}
-        {result.transcribed && result.transcribed.toLowerCase() !== referenceText.toLowerCase() && (
-          <div style={S.pronTranscript}>
-            heard: <i>"{result.transcribed}"</i>
+        {result.transcribed && result.transcribed !== referenceText && (
+          <div style={S.pronTranscribed}>
+            Heard: <em>"{result.transcribed}"</em>
           </div>
         )}
-        <div style={S.pronActions}>
-          <button style={S.pronBtn} onClick={onRetry}>🎤 Try again</button>
-          <button style={S.pronBtnGhost} onClick={onDismiss}>Done</button>
+        <div style={S.pronBtnRow}>
+          <button style={S.pronRetryBtn} onClick={onRetry}>Try again</button>
+          <button style={S.pronDismissBtn} onClick={onDismiss}>Done</button>
         </div>
       </div>
     );
   }
-
   return null;
 }
 
@@ -1002,82 +1204,82 @@ function ScoreCell({ label, value }) {
   );
 }
 
-// ─── STYLES ──────────────────────────────────────────────────────────────
 const S = {
-  container: { maxWidth:560, margin:"0 auto", padding:"20px 16px 40px", fontFamily:"'Georgia','Garamond',serif", color:"#1a1a1a" },
-  loading: { textAlign:"center", padding:60, fontFamily:"'Georgia',serif", color:"#666", fontSize:18 },
-  header: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 },
-  userInfo: { display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 },
-  userEmail: { fontSize:10, color:"#999", fontFamily:"system-ui,sans-serif", maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
-  signOutBtn: { background:"none", border:"1px solid #ddd", borderRadius:6, padding:"3px 8px", fontSize:10, color:"#888", cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  title: { fontSize:24, fontWeight:700, margin:0, letterSpacing:"-0.5px", color:"#0a0a0a" },
-  sub: { fontSize:12, color:"#888", margin:"4px 0 0", fontFamily:"system-ui,sans-serif" },
-  nav: { display:"flex", gap:4, marginBottom:14, background:"#f5f3ef", borderRadius:12, padding:3 },
-  navBtn: { flex:1, padding:"8px 0", border:"none", borderRadius:10, background:"transparent", fontSize:13, fontFamily:"system-ui,sans-serif", cursor:"pointer", color:"#777", fontWeight:500, transition:"all 0.15s" },
-  navActive: { background:"#fff", color:"#111", fontWeight:700, boxShadow:"0 1px 4px rgba(0,0,0,0.08)" },
-  filters: { marginBottom:16 },
+  container: { maxWidth:720, margin:"0 auto", padding:"20px 16px", fontFamily:"'Georgia',serif", color:"#2a2a2a" },
+  loading: { textAlign:"center", padding:60, color:"#888" },
+  header: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, gap:12, flexWrap:"wrap" },
+  title: { fontSize:26, fontWeight:600, margin:"0 0 4px", color:"#1d3557" },
+  sub: { fontSize:13, color:"#666", margin:0, fontFamily:"system-ui,sans-serif" },
+  userInfo: { display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, fontFamily:"system-ui,sans-serif" },
+  userEmail: { fontSize:11, color:"#888" },
+  signOutBtn: { padding:"4px 10px", background:"none", border:"1px solid #ccc", borderRadius:6, cursor:"pointer", fontSize:11, color:"#666", fontFamily:"system-ui,sans-serif" },
+  nav: { display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" },
+  navBtn: { padding:"8px 14px", border:"1.5px solid #ddd", borderRadius:10, background:"#fff", cursor:"pointer", fontSize:13, fontFamily:"system-ui,sans-serif", color:"#555" },
+  navActive: { background:"#1d3557", color:"#fff", borderColor:"#1d3557" },
+  filters: { marginBottom:14 },
   catRow: { display:"flex", gap:5, flexWrap:"wrap", marginBottom:8 },
-  catBtn: { padding:"5px 12px", border:"1.5px solid #ddd", borderRadius:20, background:"#fafafa", fontSize:12, cursor:"pointer", fontFamily:"system-ui,sans-serif", color:"#555", transition:"all 0.15s" },
-  catBtnA: { background:"#fff", borderColor:"#333", color:"#111", fontWeight:600 },
+  catBtn: { padding:"5px 11px", border:"1px solid #ddd", borderRadius:18, background:"#fff", cursor:"pointer", fontSize:11, fontFamily:"system-ui,sans-serif", color:"#666" },
+  catBtnA: { background:"#f4f1ea", borderColor:"#b0a89a", color:"#1d3557", fontWeight:600 },
   toggleRow: { display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" },
-  toggle: { display:"flex", gap:5, alignItems:"center", cursor:"pointer", fontSize:12, fontFamily:"system-ui,sans-serif", color:"#666" },
-  dirGroup: { display:"flex", gap:0, marginLeft:"auto", background:"#f5f3ef", borderRadius:8, padding:2 },
-  dirBtn: { padding:"4px 9px", border:"none", borderRadius:6, background:"transparent", fontSize:11, fontFamily:"system-ui,sans-serif", cursor:"pointer", color:"#888", fontWeight:500 },
-  dirBtnA: { background:"#fff", color:"#111", fontWeight:700, boxShadow:"0 1px 3px rgba(0,0,0,0.08)" },
-  langBadge: { position:"absolute", top:12, right:14, fontSize:10, color:"#aaa", fontFamily:"system-ui,sans-serif", letterSpacing:0.5, fontWeight:600 },
-  counter: { textAlign:"center", fontSize:12, color:"#999", marginBottom:8, fontFamily:"system-ui,sans-serif", letterSpacing:1 },
-  counterRow: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8, gap:8 },
-  backBtn: { background:"none", border:"1px solid #ddd", borderRadius:8, padding:"4px 10px", fontSize:11, color:"#666", cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  backBtnSpacer: { width:55 },
-  cardWrap: { perspective:1000, cursor:"pointer", marginBottom:16 },
-  card: { position:"relative", width:"100%", minHeight:240, transformStyle:"preserve-3d", transition:"transform 0.45s cubic-bezier(0.4,0,0.2,1)" },
-  cardFront: { position:"absolute", inset:0, backfaceVisibility:"hidden", background:"linear-gradient(145deg,#fefefe,#f7f5f0)", border:"1.5px solid #e0dcd4", borderRadius:14, padding:"26px 22px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 3px 16px rgba(0,0,0,0.05)" },
-  cardBack: { position:"absolute", inset:0, backfaceVisibility:"hidden", transform:"rotateY(180deg)", background:"linear-gradient(145deg,#f0f4f0,#e8ede6)", border:"1.5px solid #c5cfc0", borderRadius:14, padding:"26px 22px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 3px 16px rgba(0,0,0,0.05)" },
-  cardCat: { position:"absolute", top:12, left:16, display:"flex", alignItems:"center", gap:5, fontSize:10, color:"#888", fontFamily:"system-ui,sans-serif", textTransform:"uppercase", letterSpacing:1 },
-  dot: { width:7, height:7, borderRadius:"50%", display:"inline-block" },
-  freqTag: { background:"#fff3cd", color:"#856404", padding:"1px 6px", borderRadius:10, fontSize:10, fontWeight:600, marginLeft:3 },
-  cardText: { fontSize:22, fontWeight:500, textAlign:"center", lineHeight:1.4, padding:"18px 0" },
-  cardTextB: { fontSize:18, textAlign:"center", lineHeight:1.5, padding:"18px 0", color:"#2d4a3e", fontFamily:"system-ui,sans-serif" },
-  hint: { position:"absolute", bottom:12, fontSize:10, color:"#bbb", fontFamily:"system-ui,sans-serif" },
-  dateH: { position:"absolute", bottom:12, fontSize:10, color:"#8a9a85", fontFamily:"system-ui,sans-serif" },
-  rateRow: { display:"flex", gap:10, justifyContent:"center", marginBottom:6 },
-  missBtn: { flex:1, maxWidth:180, padding:"12px 0", border:"2px solid #e0c4c0", borderRadius:12, background:"#fdf5f4", color:"#a63d2f", fontSize:15, fontWeight:600, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  gotBtn: { flex:1, maxWidth:180, padding:"12px 0", border:"2px solid #b8d4b0", borderRadius:12, background:"#f2f8f0", color:"#2d6a4f", fontSize:15, fontWeight:600, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  shortcuts: { textAlign:"center", fontSize:10, color:"#bbb", fontFamily:"system-ui,sans-serif", marginBottom:16 },
-  empty: { textAlign:"center", padding:"50px 20px", color:"#888" },
-  resetSBtn: { padding:"9px 22px", border:"1.5px solid #ddd", borderRadius:10, background:"#fff", cursor:"pointer", fontSize:13, fontFamily:"system-ui,sans-serif", marginTop:8 },
+  toggle: { display:"flex", gap:5, alignItems:"center", fontSize:12, color:"#666", fontFamily:"system-ui,sans-serif", cursor:"pointer" },
+  dirGroup: { display:"flex", gap:4, marginLeft:"auto" },
+  dirBtn: { padding:"4px 10px", border:"1px solid #ddd", borderRadius:6, background:"#fff", cursor:"pointer", fontSize:11, fontFamily:"system-ui,sans-serif", color:"#666" },
+  dirBtnA: { background:"#1d3557", color:"#fff", borderColor:"#1d3557" },
+  counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:6 },
+  counter: { textAlign:"center", fontSize:12, color:"#888", fontFamily:"system-ui,sans-serif" },
+  backBtn: { padding:"5px 11px", background:"none", border:"1px solid #d4d4d4", borderRadius:6, cursor:"pointer", fontSize:11, color:"#666", fontFamily:"system-ui,sans-serif" },
+  backBtnSpacer: { width:60 },
+  cardWrap: { perspective:1000, marginBottom:16 },
+  card: { position:"relative", transformStyle:"preserve-3d", transition:"transform 0.5s", minHeight:220 },
+  cardFront: { backfaceVisibility:"hidden", background:"linear-gradient(145deg,#fefefe,#f7f5f0)", border:"1.5px solid #e0dcd4", borderRadius:14, padding:"30px 22px", minHeight:220, display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 3px 16px rgba(0,0,0,0.05)", position:"relative" },
+  cardBack: { backfaceVisibility:"hidden", transform:"rotateY(180deg)", position:"absolute", top:0, left:0, right:0, background:"linear-gradient(145deg,#f4f1ea,#ece7db)", border:"1.5px solid #c8beab", borderRadius:14, padding:"30px 22px", minHeight:220, display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 3px 16px rgba(0,0,0,0.08)" },
+  cardCat: { position:"absolute", top:12, left:14, display:"flex", alignItems:"center", gap:6, fontSize:10, color:"#888", fontFamily:"system-ui,sans-serif", textTransform:"uppercase", letterSpacing:0.5 },
+  langBadge: { position:"absolute", top:12, right:14, fontSize:10, color:"#999", fontFamily:"system-ui,sans-serif", background:"rgba(255,255,255,0.6)", padding:"2px 8px", borderRadius:10 },
+  freqTag: { marginLeft:6, background:"#fff3cd", color:"#856404", padding:"1px 6px", borderRadius:8, fontSize:10 },
+  dot: { width:7, height:7, borderRadius:"50%" },
+  cardText: { fontSize:28, textAlign:"center", fontWeight:400, color:"#1a1a1a", lineHeight:1.3, padding:"0 10px" },
+  cardTextB: { fontSize:22, textAlign:"center", fontWeight:400, color:"#1a1a1a", lineHeight:1.3, padding:"0 10px" },
+  dateH: { position:"absolute", bottom:10, right:14, fontSize:10, color:"#999", fontFamily:"system-ui,sans-serif" },
+  hint: { position:"absolute", bottom:10, left:14, fontSize:10, color:"#aaa", fontFamily:"system-ui,sans-serif", fontStyle:"italic" },
+  btnRow: { display:"flex", gap:10, marginBottom:10 },
+  btnWrong: { flex:1, padding:"13px", border:"none", borderRadius:10, background:"#c44536", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"system-ui,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", gap:6 },
+  btnRight: { flex:1, padding:"13px", border:"none", borderRadius:10, background:"#2d6a4f", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"system-ui,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", gap:6 },
+  shortcuts: { textAlign:"center", fontSize:11, color:"#aaa", fontFamily:"system-ui,sans-serif" },
+  empty: { textAlign:"center", padding:40, color:"#888", fontFamily:"system-ui,sans-serif" },
   sessionDone: { textAlign:"center", padding:"18px", background:"#f8faf7", borderRadius:12, border:"1px solid #dde6d9", marginTop:8 },
-  doneText: { margin:"0 0 8px", fontSize:14, fontFamily:"system-ui,sans-serif", color:"#2d6a4f" },
+  doneText: { fontSize:14, color:"#2d6a4f", fontFamily:"system-ui,sans-serif", marginBottom:10 },
+  resetSBtn: { padding:"10px 24px", border:"1.5px solid #2d6a4f", borderRadius:10, background:"#fff", color:"#2d6a4f", fontSize:13, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
   // Stats
-  statsGrid: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 },
-  statCard: { padding:"16px 12px", border:"1.5px solid #ddd", borderRadius:12, textAlign:"center", background:"#fafafa" },
-  statNum: { fontSize:28, fontWeight:700, color:"#1a1a1a" },
-  statLabel: { fontSize:11, color:"#888", fontFamily:"system-ui,sans-serif", marginTop:3, textTransform:"uppercase", letterSpacing:0.5 },
-  pBarOut: { height:7, background:"#eee", borderRadius:4, overflow:"hidden", marginBottom:5 },
-  pBarIn: { height:"100%", background:"linear-gradient(90deg,#2d6a4f,#52b788)", borderRadius:4, transition:"width 0.4s" },
-  pText: { fontSize:12, color:"#666", textAlign:"center", fontFamily:"system-ui,sans-serif", marginBottom:24 },
-  subT: { fontSize:16, fontWeight:600, margin:"0 0 10px", color:"#333" },
-  catStats: { marginBottom:24, display:"flex", flexDirection:"column", gap:6 },
-  catStatRow: { display:"flex", alignItems:"center", gap:8, padding:"7px 10px", background:"#fafafa", borderRadius:8, fontFamily:"system-ui,sans-serif", fontSize:13 },
+  statsGrid: { display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:14 },
+  statCard: { textAlign:"center", padding:"14px 6px", background:"#fff", border:"1.5px solid #e0dcd4", borderRadius:12 },
+  statNum: { fontSize:26, fontWeight:700, color:"#1d3557", fontFamily:"'Georgia',serif" },
+  statLabel: { fontSize:10, color:"#888", textTransform:"uppercase", letterSpacing:0.6, marginTop:3, fontFamily:"system-ui,sans-serif" },
+  pBarOut: { height:8, background:"#f0ede4", borderRadius:4, overflow:"hidden", marginBottom:6 },
+  pBarIn: { height:"100%", background:"linear-gradient(90deg,#2d6a4f,#52b788)", transition:"width 0.5s" },
+  pText: { textAlign:"center", fontSize:12, color:"#666", marginBottom:18, fontFamily:"system-ui,sans-serif" },
+  subT: { fontSize:15, fontWeight:600, margin:"14px 0 8px", color:"#1d3557" },
+  catStats: { display:"flex", flexDirection:"column", gap:6, marginBottom:14 },
+  catStatRow: { display:"flex", alignItems:"center", gap:8, padding:"8px 11px", background:"#fff", border:"1px solid #e8e4dc", borderRadius:8, fontSize:13, fontFamily:"system-ui,sans-serif" },
   freqList: { display:"flex", flexDirection:"column", gap:5, marginBottom:24 },
   freqItem: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 10px", background:"#fffcf0", border:"1px solid #f0e8d0", borderRadius:8, fontSize:13 },
   freqWord: { fontFamily:"'Georgia',serif", fontStyle:"italic" },
   freqBadge: { background:"#fff3cd", color:"#856404", padding:"1px 8px", borderRadius:10, fontSize:11, fontWeight:700 },
   resetBtn: { display:"block", width:"100%", padding:"11px", border:"1.5px solid #e0c4c0", borderRadius:10, background:"#fdf5f4", color:"#a63d2f", fontSize:13, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  // Blank mode
-  blankCard: { background:"linear-gradient(145deg,#fefefe,#f7f5f0)", border:"1.5px solid #e0dcd4", borderRadius:14, padding:"28px 22px", marginBottom:16, boxShadow:"0 3px 16px rgba(0,0,0,0.05)" },
-  blankSentence: { fontSize:20, fontWeight:500, textAlign:"center", lineHeight:1.6, marginBottom:12 },
-  blankSlot: { display:"inline", padding:"2px 4px", borderBottom:"2px solid #c44536", color:"#c44536", fontWeight:700, minWidth:60 },
-  blankHint: { textAlign:"center", fontSize:12, color:"#999", fontFamily:"system-ui,sans-serif", marginBottom:16, fontStyle:"italic" },
-  blankInputRow: { display:"flex", gap:8, justifyContent:"center" },
-  blankInput: { flex:1, maxWidth:260, padding:"10px 14px", border:"1.5px solid #ddd", borderRadius:10, fontSize:16, fontFamily:"'Georgia',serif", outline:"none" },
-  blankSubmit: { padding:"10px 20px", border:"none", borderRadius:10, background:"#2d6a4f", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  blankFeedback: { textAlign:"center" },
-  blankCorrect: { fontSize:18, fontWeight:700, color:"#2d6a4f", marginBottom:12 },
-  blankWrong: { fontSize:16, fontWeight:600, color:"#c44536", marginBottom:12 },
-  blankTranslation: { fontSize:14, color:"#666", fontStyle:"italic", fontFamily:"'Georgia',serif", marginBottom:14, marginTop:-4 },
-  blankNext: { padding:"10px 24px", border:"1.5px solid #ddd", borderRadius:10, background:"#fff", cursor:"pointer", fontSize:14, fontFamily:"system-ui,sans-serif" },
-  blankStatsRow: { textAlign:"center", fontSize:12, color:"#888", fontFamily:"system-ui,sans-serif", marginBottom:8 },
+  // Onboarding (empty deck state)
+  onboarding: { maxWidth:520, margin:"40px auto", padding:"36px 28px", background:"#fff", border:"1.5px solid #e0dcd4", borderRadius:16, textAlign:"center", boxShadow:"0 4px 20px rgba(0,0,0,0.06)" },
+  onbTitle: { margin:"0 0 12px", fontSize:24, color:"#1d3557" },
+  onbText: { fontSize:15, color:"#555", lineHeight:1.5, marginBottom:24 },
+  onbPrimary: { padding:"14px 28px", background:"#1d3557", color:"#fff", border:"none", borderRadius:10, fontSize:15, fontWeight:600, cursor:"pointer", fontFamily:"system-ui,sans-serif", boxShadow:"0 2px 8px rgba(29,53,87,0.2)" },
+  onbSecondary: { padding:"11px 22px", background:"#f0f0f0", color:"#444", border:"1px solid #ddd", borderRadius:8, fontSize:13, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
+  onbDivider: { fontSize:12, color:"#999", margin:"16px 0", textTransform:"uppercase", letterSpacing:1 },
+  onbError: { marginTop:12, padding:10, background:"#fde8e8", color:"#c44536", borderRadius:6, fontSize:13 },
+  // Header buttons (Upload + Feedback above email)
+  headerBtnRow: { display:"flex", gap:6, marginBottom:6, justifyContent:"flex-end" },
+  headerBtn: { padding:"6px 12px", background:"#f0f0f0", border:"1px solid #ddd", borderRadius:6, cursor:"pointer", fontSize:12, color:"#444", fontFamily:"system-ui,sans-serif" },
+  // Per-card action buttons (edit / flag)
+  cardActions: { display:"flex", gap:8, justifyContent:"center", marginTop:10 },
+  cardActionBtn: { background:"rgba(255,255,255,0.8)", border:"1px solid #ddd", borderRadius:6, padding:"5px 10px", fontSize:11, cursor:"pointer", color:"#555", fontFamily:"system-ui,sans-serif" },
+  cardActionBtnFlagged: { background:"#fff3cd", borderColor:"#e0c060", color:"#856404", cursor:"default" },
   // Type mode (study input)
   typeInputRow: { display:"flex", gap:8, justifyContent:"center", marginBottom:8 },
   typeInput: { flex:1, maxWidth:280, padding:"11px 14px", border:"1.5px solid #ddd", borderRadius:10, fontSize:15, fontFamily:"'Georgia',serif", outline:"none", background:"#fff" },
@@ -1100,34 +1302,48 @@ const S = {
   pronScoreBig: { fontSize:42, fontWeight:700, lineHeight:1, fontFamily:"'Georgia',serif" },
   pronScoreLabel: { fontSize:10, color:"#888", textTransform:"uppercase", letterSpacing:0.5, marginTop:2 },
   pronSubScores: { display:"flex", gap:14, flex:1, flexWrap:"wrap" },
-  scoreCell: { display:"flex", flexDirection:"column", alignItems:"flex-start" },
-  scoreCellNum: { fontSize:18, fontWeight:600, lineHeight:1 },
+  scoreCell: { display:"flex", flexDirection:"column", alignItems:"center", minWidth:52 },
+  scoreCellNum: { fontSize:22, fontWeight:700, fontFamily:"'Georgia',serif", lineHeight:1 },
   scoreCellLabel: { fontSize:9, color:"#888", textTransform:"uppercase", letterSpacing:0.5, marginTop:2 },
-  pronWords: { display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 },
-  pronWordChip: { background:"#fff", border:"1.5px solid", borderRadius:16, padding:"5px 11px", fontSize:13, cursor:"pointer", fontFamily:"system-ui,sans-serif", display:"inline-flex", alignItems:"center", gap:6, fontWeight:500 },
-  pronWordScore: { fontSize:10, opacity:0.7, fontWeight:600 },
-  pronTranscript: { fontSize:11, color:"#888", marginBottom:10, fontStyle:"italic" },
-  pronActions: { display:"flex", gap:8, justifyContent:"flex-end" },
-  pronBtn: { background:"#2d6a4f", color:"#fff", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, cursor:"pointer", fontWeight:500, fontFamily:"system-ui,sans-serif" },
-  pronBtnGhost: { background:"none", color:"#666", border:"1.5px solid #ddd", borderRadius:8, padding:"7px 14px", fontSize:12, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  showAnswerRow: { textAlign:"center", marginBottom:12 },
-  showAnswerBtn: { background:"none", border:"none", color:"#888", fontSize:11, fontFamily:"system-ui,sans-serif", cursor:"pointer", textDecoration:"underline" },
-  // Feedback button shown after a wrong/close answer in typing mode
-  feedbackRow: { textAlign:"center", marginTop:6, marginBottom:6 },
-  feedbackBtn: { background:"none", border:"1px solid #c4a373", borderRadius:6, padding:"6px 12px", fontSize:11, fontFamily:"system-ui,sans-serif", color:"#8b6914", cursor:"pointer" },
-  feedbackStatus: { fontSize:11, color:"#888", fontFamily:"system-ui,sans-serif" },
-  feedbackError: { fontSize:11, color:"#c44536", fontFamily:"system-ui,sans-serif" },
-  feedbackSubmitted: { display:"flex", flexDirection:"column", alignItems:"center", gap:8, fontSize:12, color:"#2d6a4f", fontFamily:"system-ui,sans-serif" },
-  nextAfterFeedback: { background:"#2d6a4f", color:"#fff", border:"none", borderRadius:6, padding:"6px 14px", fontSize:12, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
-  // Admin feedback review view
-  feedbackCard: { background:"#fff", border:"1.5px solid #e0dcd4", borderRadius:12, overflow:"hidden" },
-  feedbackMeta: { display:"flex", justifyContent:"space-between", padding:"8px 14px", background:"#f5f1e8", fontSize:11, color:"#888", fontFamily:"system-ui,sans-serif", borderBottom:"1px solid #e0dcd4" },
-  feedbackCardBody: { padding:"14px", display:"flex", flexDirection:"column", gap:8, fontSize:13, fontFamily:"system-ui,sans-serif" },
-  feedbackLine: { lineHeight:1.5 },
-  feedbackLlm: { padding:"10px 12px", borderRadius:8, border:"1.5px solid", marginTop:4, fontSize:12, lineHeight:1.5 },
-  feedbackActions: { display:"flex", gap:8, padding:"10px 14px", borderTop:"1px solid #f0ede5" },
-  typeFeedback: { textAlign:"center", marginBottom:12, minHeight:40 },
-  typeCorrect: { display:"inline-block", padding:"10px 20px", borderRadius:10, background:"#f2f8f0", border:"2px solid #b8d4b0", color:"#2d6a4f", fontSize:16, fontWeight:700, fontFamily:"system-ui,sans-serif" },
-  typeClose: { display:"inline-block", padding:"10px 18px", borderRadius:10, background:"#fdf8e6", border:"2px solid #e9c46a", color:"#8a6d10", fontSize:14, fontWeight:600, fontFamily:"system-ui,sans-serif", maxWidth:"95%" },
-  typeWrong: { display:"inline-block", padding:"10px 20px", borderRadius:10, background:"#fdf5f4", border:"2px solid #e0c4c0", color:"#a63d2f", fontSize:15, fontWeight:600, fontFamily:"system-ui,sans-serif", maxWidth:"95%" },
+  pronWordRow: { display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 },
+  pronWordChip: { color:"#fff", border:"none", borderRadius:8, padding:"6px 12px", fontSize:13, cursor:"pointer", fontFamily:"'Georgia',serif" },
+  pronTranscribed: { fontSize:12, color:"#888", marginBottom:12, fontStyle:"italic" },
+  pronBtnRow: { display:"flex", gap:8 },
+  pronRetryBtn: { padding:"8px 18px", background:"#fff", border:"1.5px solid #2d6a4f", color:"#2d6a4f", borderRadius:8, cursor:"pointer", fontSize:13, fontFamily:"system-ui,sans-serif" },
+  pronDismissBtn: { padding:"8px 18px", background:"#f0f0f0", border:"none", color:"#666", borderRadius:8, cursor:"pointer", fontSize:13, fontFamily:"system-ui,sans-serif" },
+  // Typing feedback
+  typeFeedback: { marginBottom:10 },
+  typeCorrect: { textAlign:"center", padding:"12px", background:"#e8f5e9", color:"#2d6a4f", borderRadius:10, fontSize:15, fontWeight:600, marginBottom:10, fontFamily:"system-ui,sans-serif" },
+  typeClose: { textAlign:"center", padding:"12px", background:"#fff8e1", color:"#b8860b", borderRadius:10, fontSize:14, fontWeight:500, marginBottom:10, fontFamily:"system-ui,sans-serif" },
+  typeWrong: { textAlign:"center", padding:"12px", background:"#fde8e8", color:"#c44536", borderRadius:10, fontSize:14, fontWeight:500, marginBottom:10, fontFamily:"system-ui,sans-serif" },
+  typeBtnRow: { display:"flex", gap:10, marginTop:6 },
+  feedbackRow: { textAlign:"center", marginBottom:8, fontFamily:"system-ui,sans-serif", fontSize:12 },
+  feedbackBtn: { padding:"6px 14px", background:"#fff", border:"1px solid #b0c4de", color:"#1d3557", borderRadius:6, fontSize:12, cursor:"pointer", fontFamily:"system-ui,sans-serif" },
+  feedbackPending: { color:"#888" },
+  feedbackOk: { color:"#2d6a4f" },
+  feedbackErr: { color:"#c44536" },
+  // Feedback admin view
+  feedbackList: { display:"flex", flexDirection:"column", gap:16 },
+  feedbackItem: { padding:16, background:"#fff", border:"1.5px solid #e0dcd4", borderRadius:12, fontFamily:"system-ui,sans-serif" },
+  feedbackCard: { marginBottom:12 },
+  feedbackCardHeader: { display:"flex", justifyContent:"space-between", fontSize:11, color:"#888", marginBottom:6 },
+  feedbackDir: { background:"#f0f0f0", padding:"2px 8px", borderRadius:10 },
+  feedbackDate: {},
+  feedbackPrompt: { fontSize:18, fontFamily:"'Georgia',serif", color:"#1d3557", fontStyle:"italic" },
+  feedbackAnswers: { display:"flex", flexDirection:"column", gap:6, marginBottom:12, padding:"10px 12px", background:"#f8f6f1", borderRadius:8 },
+  feedbackAnsRow: { display:"flex", gap:10, fontSize:13 },
+  feedbackAnsLabel: { color:"#888", minWidth:80 },
+  feedbackExpected: { color:"#2d6a4f", fontWeight:600 },
+  feedbackUser: { color:"#1a1a1a" },
+  llmBlock: { padding:"10px 12px", background:"#f5f8fa", borderRadius:8, marginBottom:12, fontSize:12 },
+  llmHead: { display:"flex", gap:10, alignItems:"center", marginBottom:6 },
+  llmAccept: { color:"#2d6a4f", fontWeight:700, textTransform:"uppercase", fontSize:11 },
+  llmReject: { color:"#c44536", fontWeight:700, textTransform:"uppercase", fontSize:11 },
+  llmUnclear: { color:"#b8860b", fontWeight:700, textTransform:"uppercase", fontSize:11 },
+  llmConf: { color:"#888", fontSize:11 },
+  llmReasoning: { color:"#444", lineHeight:1.4 },
+  feedbackActions: { display:"flex", gap:8 },
+  feedbackApprove: { flex:1, padding:"10px", background:"#2d6a4f", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:600 },
+  feedbackReject: { flex:1, padding:"10px", background:"#fff", border:"1.5px solid #ddd", color:"#666", borderRadius:8, cursor:"pointer", fontSize:13 },
 };
+// === src/FlashcardApp.jsx PART 5/5 END ===
