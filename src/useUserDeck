@@ -1,3 +1,4 @@
+// === src/useUserDeck.js START ===
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase";
 
@@ -73,3 +74,4 @@ export function useUserDeck(user) {
 
   return { cards, loaded, reload };
 }
+// === src/useUserDeck.js END ===
