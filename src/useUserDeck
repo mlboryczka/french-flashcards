@@ -1,0 +1,75 @@
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "./supabase";
+
+// Loads the user's flashcard deck from the user_cards table.
+//
+// Shape it returns matches what the rest of FlashcardApp.jsx already expects:
+//   [{ f, b, cat, dates, freq, id, row_id, flagged }]
+//
+// Where:
+//   f         — French front (string)
+//   b         — English back (string)
+//   cat       — one of "vocab" | "expr" | "gram" | "pron" (mapped from V/E/G/P)
+//   dates     — array of ISO date strings
+//   freq      — dates.length (for the "Repeated 2×+" filter)
+//   id        — lowercase trimmed French front (stable across seeds, preserves progress)
+//   row_id    — Supabase row id (used for inline edits + flagging)
+//   flagged   — flagged_for_review boolean
+//
+// Why id is NOT row_id: the card_progress table is keyed by card_id = lowercased
+// French front. Keeping that convention means progress survives across reseeds
+// and deck rebuilds, as long as the French text itself doesn't change.
+
+// DB code → UI code
+const CAT_MAP = { V: "vocab", E: "expr", G: "gram", P: "pron" };
+
+export function useUserDeck(user) {
+  const [cards, setCards] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [reloadCounter, setReloadCounter] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) {
+      setCards([]);
+      setLoaded(true);
+      return;
+    }
+    setLoaded(false);
+    (async () => {
+      const { data, error } = await supabase
+        .from("user_cards")
+        .select("id, front, back, category, dates, flagged_for_review")
+        .eq("user_id", user.id);
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed to load user deck:", error);
+        setCards([]);
+      } else {
+        const shaped = (data || []).map((row) => ({
+          f: row.front,
+          b: row.back,
+          cat: CAT_MAP[row.category] || "vocab",
+          dates: Array.isArray(row.dates) ? row.dates : [],
+          freq: Array.isArray(row.dates) ? row.dates.length : 0,
+          id: row.front.toLowerCase().trim(),
+          row_id: row.id,
+          flagged: row.flagged_for_review === true,
+        }));
+        // Sort by frequency desc to match legacy buildDeck ordering
+        shaped.sort((a, b) => b.freq - a.freq);
+        setCards(shaped);
+      }
+      setLoaded(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, reloadCounter]);
+
+  const reload = useCallback(() => setReloadCounter((n) => n + 1), []);
+
+  return { cards, loaded, reload };
+}
