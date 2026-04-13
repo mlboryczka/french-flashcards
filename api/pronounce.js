@@ -54,12 +54,15 @@ export default async function handler(req, res) {
   }
 
   // Build the assessment params header (base64-encoded JSON)
+  // NOTE: EnableMiscue must be a JSON boolean, not the string "True".
+  // Passing a string silently degrades Azure's response to transcription-only,
+  // leaving PronunciationAssessment scores empty. Dimension is omitted — the
+  // REST endpoint returns all dimensions by default.
   const assessmentConfig = {
     ReferenceText: refText,
     GradingSystem: "HundredMark",
     Granularity: "Phoneme",
-    Dimension: "Comprehensive",
-    EnableMiscue: "True",
+    EnableMiscue: true,
   };
   const assessmentB64 = Buffer.from(JSON.stringify(assessmentConfig)).toString(
     "base64"
@@ -101,6 +104,29 @@ export default async function handler(req, res) {
         .status(502)
         .json({ error: "Provider returned non-JSON response" });
     }
+
+    // Debug logging — visible in Vercel function logs.
+    // If scores come back as nulls, this tells us exactly what Azure returned.
+    const nbest = data.NBest && data.NBest[0];
+    const pa = nbest && nbest.PronunciationAssessment;
+    console.log(
+      "[pronounce] status:",
+      data.RecognitionStatus,
+      "| bytes:",
+      audioBuffer.length,
+      "| ref:",
+      refText
+    );
+    console.log(
+      "[pronounce] transcribed:",
+      (nbest && (nbest.Display || nbest.Lexical)) || "(none)"
+    );
+    console.log(
+      "[pronounce] scores:",
+      pa
+        ? `acc=${pa.AccuracyScore} pron=${pa.PronScore} flu=${pa.FluencyScore} comp=${pa.CompletenessScore}`
+        : "(MISSING)"
+    );
 
     res.setHeader("Cache-Control", "no-store");
     res.status(200).json(data);
