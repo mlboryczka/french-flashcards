@@ -962,7 +962,12 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
             {card && (
               <div style={S.subToolbarRight}>
-                <button style={{...S.backBtn, visibility: idx === 0 ? "hidden" : "visible"}} onClick={goBack} title="Previous card">← Back</button>
+                <button
+                  style={idx === 0 ? S.backBtnDisabled : S.backBtn}
+                  onClick={idx === 0 ? undefined : goBack}
+                  disabled={idx === 0}
+                  title="Previous card"
+                >← Back</button>
                 <span style={S.counter}>Card {idx+1} of {deck.length}</span>
               </div>
             )}
@@ -1543,7 +1548,7 @@ const S = {
   // upload, beta feedback, email and sign-out. Replaces the old vertically
   // stacked header userInfo block.
   // Sticky glass-blur top app bar — direction toggle, type/auto-speak chips
-  topBar: { position:"sticky", top:0, zIndex:20, display:"flex", alignItems:"center", gap:12, padding:"16px 40px", background:"rgba(253,248,246,0.85)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", boxShadow:"0 8px 32px rgba(3,22,50,0.06)", flexWrap:"wrap" },
+  topBar: { position:"sticky", top:0, zIndex:20, display:"flex", alignItems:"center", gap:12, padding:"16px 40px", background:"rgba(253,248,246,0.92)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", borderBottom:"1px solid rgba(3,22,50,0.06)", flexWrap:"wrap" },
   topBarSpacer: { flex:1 },
   topBarBtn: { padding:"6px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
   topBarEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
@@ -1578,6 +1583,7 @@ const S = {
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   backBtn: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500 },
+  backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
   cardWrap: { perspective:1200, marginBottom:48, width:"100%", maxWidth:680, position:"relative", zIndex:1 },
   card: { position:"relative", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", minHeight:340 },
