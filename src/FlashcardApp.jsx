@@ -18,6 +18,12 @@ import {
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
+// Feature flag: hide the pronunciation assessment UI (mic button + results
+// panel) without removing any code. The Azure backend, audio.js parser, and
+// PronunciationPanel component all stay in place — they just don't render.
+// Flip to `true` to bring it back.
+const PRONUNCIATION_ENABLED = false;
+
 // UI code → DB code, used by the admin seed-deck action
 const CAT_TO_DB = { vocab: "V", expr: "E", gram: "G", pron: "P" };
 
@@ -298,7 +304,12 @@ export default function FlashcardApp({ user, onSignOut }) {
         setRecState("error");
         return;
       }
-      const result = await assessPronunciation(blob, card.f);
+      // For production-style grammar cards (front contains "→", e.g.
+      // "vivre (présent) → il/elle"), the back holds the answer the user
+      // is supposed to say ("il vit"). For everything else (vocab,
+      // expressions), the front IS the French word being practiced.
+      const refText = card.f.includes("→") ? card.b : card.f;
+      const result = await assessPronunciation(blob, refText);
       if (result.error) {
         setPronError(result.error);
         setRecState("error");
@@ -738,7 +749,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     onSpeak={(e) => { e.stopPropagation(); speakCard(); }}
                     onMic={(e) => { e.stopPropagation(); if (recState === "recording") stopRecording(); else startRecording(); }}
                     recState={recState}
-                    sttAvailable={STT_AVAILABLE}
+                    sttAvailable={STT_AVAILABLE && PRONUNCIATION_ENABLED}
                   />
                 )}
                 {!effectiveTypeMode && <div style={S.hint}>tap to flip</div>}
@@ -751,7 +762,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     onSpeak={(e) => { e.stopPropagation(); speakCard(); }}
                     onMic={(e) => { e.stopPropagation(); if (recState === "recording") stopRecording(); else startRecording(); }}
                     recState={recState}
-                    sttAvailable={STT_AVAILABLE}
+                    sttAvailable={STT_AVAILABLE && PRONUNCIATION_ENABLED}
                   />
                 )}
                 <div style={S.dateH}>Seen on: {card.dates[card.dates.length-1]}</div>
@@ -778,12 +789,12 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
           </div>
           {/* Pronunciation panel — appears below card when recording or showing results */}
-          {(recState !== "idle") && (
+          {PRONUNCIATION_ENABLED && (recState !== "idle") && (
             <PronunciationPanel
               recState={recState}
               result={pronResult}
               error={pronError}
-              referenceText={card.f}
+              referenceText={card.f.includes("→") ? card.b : card.f}
               onCancel={cancelRecording}
               onRetry={() => { setRecState("idle"); setPronResult(null); setPronError(""); setTimeout(startRecording, 100); }}
               onSpeakWord={speakText}
