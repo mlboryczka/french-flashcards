@@ -53,16 +53,29 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Recording too short" });
   }
 
-  // Build the assessment params header (base64-encoded JSON)
-  // NOTE: EnableMiscue must be a JSON boolean, not the string "True".
-  // Passing a string silently degrades Azure's response to transcription-only,
-  // leaving PronunciationAssessment scores empty. Dimension is omitted — the
-  // REST endpoint returns all dimensions by default.
+  // Build the assessment params header (base64-encoded JSON).
+  //
+  // CRITICAL: Dimension MUST be "Comprehensive" to get the full set of
+  // scores back. Without it, Azure defaults to returning ONLY AccuracyScore
+  // and silently omits FluencyScore, CompletenessScore, ProsodyScore, and
+  // PronScore. This is documented in Microsoft's REST API reference but
+  // not loudly enough — the omission causes the UI to render em-dashes
+  // for everything except accuracy.
+  //
+  // Microsoft's canonical sample (from rest-speech-to-text-short docs):
+  //   { ReferenceText, GradingSystem: "HundredMark", Granularity: "Word",
+  //     Dimension: "Comprehensive", EnableProsodyAssessment: "True" }
+  //
+  // We use Granularity "Phoneme" to also get per-syllable / per-phoneme
+  // scores. EnableMiscue stays a JSON boolean (works fine, doesn't need
+  // to be the string "True" despite some MS samples using strings).
   const assessmentConfig = {
     ReferenceText: refText,
     GradingSystem: "HundredMark",
     Granularity: "Phoneme",
+    Dimension: "Comprehensive",
     EnableMiscue: true,
+    EnableProsodyAssessment: "True",
   };
   const assessmentB64 = Buffer.from(JSON.stringify(assessmentConfig)).toString(
     "base64"
@@ -106,9 +119,9 @@ export default async function handler(req, res) {
     }
 
     // Debug logging — visible in Vercel function logs.
-    // If scores come back as nulls, this tells us exactly what Azure returned.
+    // The REST endpoint puts scores FLAT on NBest[0], not inside a
+    // PronunciationAssessment wrapper (that's the SDK shape).
     const nbest = data.NBest && data.NBest[0];
-    const pa = nbest && nbest.PronunciationAssessment;
     console.log(
       "[pronounce] status:",
       data.RecognitionStatus,
@@ -123,8 +136,8 @@ export default async function handler(req, res) {
     );
     console.log(
       "[pronounce] scores:",
-      pa
-        ? `acc=${pa.AccuracyScore} pron=${pa.PronScore} flu=${pa.FluencyScore} comp=${pa.CompletenessScore}`
+      nbest
+        ? `acc=${nbest.AccuracyScore} pron=${nbest.PronScore} flu=${nbest.FluencyScore} comp=${nbest.CompletenessScore} pros=${nbest.ProsodyScore}`
         : "(MISSING)"
     );
 
