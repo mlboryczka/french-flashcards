@@ -175,6 +175,18 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Inline card edit state
   const [editingCard, setEditingCard] = useState(null); // null | card object
 
+  // Viewport-narrow flag — used by the bento grid in the Stats view to
+  // collapse to a single column on phones. Inline-style based, so we track
+  // window width with a tiny resize listener instead of a CSS media query.
+  const [isNarrow, setIsNarrow] = useState(
+    typeof window !== "undefined" && window.innerWidth < 768
+  );
+  useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth < 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // Feedback & alternates state
   const [alternates, setAlternates] = useState({}); // { "cardId:direction": ["alt1", "alt2"] }
   const [feedbackState, setFeedbackState] = useState(null); // null | 'submitting' | 'submitted' | 'error'
@@ -661,30 +673,202 @@ export default function FlashcardApp({ user, onSignOut }) {
     const total = userCards.length;
     const learned = userCards.filter(c => (progress[c.id]?.score??0) >= 3).length;
     const inProg = userCards.filter(c => { const s=progress[c.id]?.score??0; return s>0&&s<3; }).length;
+    const newCount = total - learned - inProg;
+    const masteryPct = total > 0 ? Math.round((learned/total)*100) : 0;
+
+    // Per-category totals
     const byCat = {};
-    for (const c of userCards) { if (!byCat[c.cat]) byCat[c.cat]={total:0,learned:0}; byCat[c.cat].total++; if ((progress[c.id]?.score??0)>=3) byCat[c.cat].learned++; }
-    const topFreq = userCards.filter(c=>c.freq>=3).slice(0,20);
+    for (const c of userCards) {
+      if (!byCat[c.cat]) byCat[c.cat] = {total:0, learned:0};
+      byCat[c.cat].total++;
+      if ((progress[c.id]?.score??0) >= 3) byCat[c.cat].learned++;
+    }
+    // Force a stable display order: V, E, G, P
+    const catOrder = ["vocab", "expr", "gram", "pron"].filter(k => byCat[k]);
+
+    // Streak: walk back from today, count consecutive days where any card was
+    // studied. We allow today itself to be empty (you might not have studied
+    // yet) but not any earlier day. Dates are ISO yyyy-mm-dd strings.
+    const allDates = new Set();
+    for (const c of userCards) for (const d of (c.dates || [])) allDates.add(d);
+    const todayISO = new Date().toISOString().slice(0,10);
+    let streak = 0;
+    for (let i = 0; i < 365; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().slice(0,10);
+      if (allDates.has(iso)) streak++;
+      else if (iso !== todayISO) break;
+    }
+
+    // Activity heatmap: 12 columns of 7 rows. dayCounts[iso] = total cards
+    // touched that day across the whole deck. Older weeks on the left.
+    const dayCounts = {};
+    for (const c of userCards) {
+      for (const d of (c.dates || [])) dayCounts[d] = (dayCounts[d] || 0) + 1;
+    }
+    const heatmapWeeks = [];
+    for (let w = 11; w >= 0; w--) {
+      const week = [];
+      for (let day = 0; day < 7; day++) {
+        const d = new Date();
+        d.setDate(d.getDate() - (w*7 + (6-day)));
+        const iso = d.toISOString().slice(0,10);
+        week.push({ iso, count: dayCounts[iso] || 0 });
+      }
+      heatmapWeeks.push(week);
+    }
+    const heatColor = (count) => {
+      if (count === 0) return T.color.surfaceHigh;
+      if (count <= 2) return "rgba(156, 66, 52, 0.3)";
+      if (count <= 5) return "rgba(156, 66, 52, 0.6)";
+      return T.color.secondary;
+    };
+
+    // Hardest cards: persistent strugglers (seen ≥ 2, score ≤ 1), ordered by
+    // most-seen first so the UI surfaces the cards you keep flunking.
+    const hardest = userCards
+      .map(c => ({ ...c, _score: progress[c.id]?.score ?? 0, _seen: progress[c.id]?.seen ?? 0 }))
+      .filter(c => c._seen >= 2 && c._score <= 1)
+      .sort((a, b) => b._seen - a._seen || a._score - b._score)
+      .slice(0, 4);
+
+    // Bento grid spans collapse to full width on narrow viewports
+    const span = (n) => ({ gridColumn: isNarrow ? "1 / -1" : `span ${n}` });
+
     return (
       <div style={S.container}>
-        <h1 style={S.title}>My Statistics</h1>
         <NavBar />
-        <div style={S.statsGrid}>
-          <div style={S.statCard}><div style={S.statNum}>{total}</div><div style={S.statLabel}>Cards</div></div>
-          <div style={{...S.statCard,borderColor:"#2d6a4f"}}><div style={{...S.statNum,color:"#2d6a4f"}}>{learned}</div><div style={S.statLabel}>Mastered</div></div>
-          <div style={{...S.statCard,borderColor:"#e9c46a"}}><div style={{...S.statNum,color:"#b8860b"}}>{inProg}</div><div style={S.statLabel}>In Progress</div></div>
-          <div style={{...S.statCard,borderColor:"#c44536"}}><div style={{...S.statNum,color:"#c44536"}}>{total-learned-inProg}</div><div style={S.statLabel}>To Learn</div></div>
+        <h1 style={S.statsHeading}>Progress</h1>
+
+        <div style={isNarrow ? S.bentoNarrow : S.bento}>
+
+          {/* Mastery gauge — col 8 */}
+          <div style={{...S.bentoCard, ...span(8)}}>
+            <div style={S.masteryRow}>
+              <div style={S.gaugeBox}>
+                <svg width="180" height="180" style={{transform:"rotate(-90deg)"}}>
+                  <circle cx="90" cy="90" r="78" fill="transparent"
+                    stroke={T.color.surfaceHigh} strokeWidth="10" />
+                  <circle cx="90" cy="90" r="78" fill="transparent"
+                    stroke={T.color.secondary} strokeWidth="14"
+                    strokeLinecap="round"
+                    strokeDasharray={`${2*Math.PI*78}`}
+                    strokeDashoffset={`${2*Math.PI*78*(1 - masteryPct/100)}`} />
+                </svg>
+                <div style={S.gaugeLabel}>
+                  <div style={S.gaugePct}>{masteryPct}%</div>
+                  <div style={S.gaugeSub}>Mastered</div>
+                </div>
+              </div>
+              <div style={S.masteryText}>
+                <h3 style={S.bentoTitle}>Mastery</h3>
+                <p style={S.masteryDesc}>
+                  {learned} of {total} cards mastered.
+                  {inProg > 0 && ` ${inProg} in progress.`}
+                  {newCount > 0 && ` ${newCount} new.`}
+                </p>
+                <div style={S.pillRow}>
+                  <span style={S.pillSecondary}>{total} CARDS</span>
+                  {inProg > 0 && <span style={S.pillNeutral}>{inProg} LEARNING</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Streak — col 4, dark primary-container background */}
+          <div style={{...S.bentoCard, ...S.bentoStreak, ...span(4)}}>
+            <div style={S.streakTop}>
+              <div style={S.streakIcon}>🔥</div>
+              <h3 style={S.streakTitle}>Streak</h3>
+              <p style={S.streakLabel}>{streak === 1 ? "1 day" : `${streak} days`}</p>
+            </div>
+            <div style={S.streakBig}>{streak}</div>
+          </div>
+
+          {/* By Category — col 4 */}
+          <div style={{...S.bentoCard, ...span(4)}}>
+            <h3 style={S.bentoTitle}>By Category</h3>
+            <div style={S.catBars}>
+              {catOrder.map(k => {
+                const v = byCat[k];
+                const pct = v.total > 0 ? Math.round((v.learned/v.total)*100) : 0;
+                return (
+                  <div key={k}>
+                    <div style={S.catBarHead}>
+                      <span>{CAT_LABELS[k]}</span>
+                      <span>{pct}%</span>
+                    </div>
+                    <div style={S.catBarTrack}>
+                      <div style={{...S.catBarFill, width:`${pct}%`, background:CAT_COLORS[k]}} />
+                    </div>
+                    <div style={S.catBarMeta}>{v.learned} of {v.total}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Activity heatmap — col 8 */}
+          <div style={{...S.bentoCard, ...span(8)}}>
+            <div style={S.bentoHead}>
+              <h3 style={S.bentoTitle}>Activity</h3>
+              <div style={S.heatLegend}>
+                <span style={S.heatLegendLabel}>Less</span>
+                <div style={{...S.heatCell, background:T.color.surfaceHigh}} />
+                <div style={{...S.heatCell, background:"rgba(156, 66, 52, 0.3)"}} />
+                <div style={{...S.heatCell, background:"rgba(156, 66, 52, 0.6)"}} />
+                <div style={{...S.heatCell, background:T.color.secondary}} />
+                <span style={S.heatLegendLabel}>More</span>
+              </div>
+            </div>
+            <div style={S.heatGrid}>
+              {heatmapWeeks.map((week, wi) => (
+                <div key={wi} style={S.heatCol}>
+                  {week.map((day, di) => (
+                    <div
+                      key={di}
+                      style={{...S.heatCell, background:heatColor(day.count)}}
+                      title={`${day.iso} · ${day.count} card${day.count===1?"":"s"}`}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div style={S.heatFootnote}>
+              <span>Past 12 weeks</span>
+              <span>Today</span>
+            </div>
+          </div>
+
+          {/* Hardest cards — col 12 (only if there are any) */}
+          {hardest.length > 0 && (
+            <div style={{...S.bentoCard, ...span(12)}}>
+              <h3 style={S.bentoTitle}>Hardest Cards</h3>
+              <p style={S.bentoSub}>Cards you've seen multiple times but keep missing.</p>
+              <div style={S.hardGrid}>
+                {hardest.map(c => (
+                  <div key={c.id} style={S.hardCard}>
+                    <div style={S.hardHead}>
+                      <span style={{
+                        ...S.hardTag,
+                        background: CAT_COLORS[c.cat] + "22",
+                        color: CAT_COLORS[c.cat],
+                      }}>
+                        {CAT_LABELS[c.cat]}
+                      </span>
+                    </div>
+                    <h4 style={S.hardWord}>{c.f}</h4>
+                    <p style={S.hardMeta}>Score {c._score}/5 · seen {c._seen}×</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
-        <div style={S.pBarOut}><div style={{...S.pBarIn, width:`${total > 0 ? (learned/total)*100 : 0}%`}} /></div>
-        <div style={S.pText}>{total > 0 ? Math.round((learned/total)*100) : 0}% mastered</div>
-        <h2 style={S.subT}>By Category</h2>
-        <div style={S.catStats}>{Object.entries(byCat).map(([k,v]) => (
-          <div key={k} style={S.catStatRow}><span style={{...S.dot,background:CAT_COLORS[k]}} /><span style={{flex:1}}>{CAT_LABELS[k]}</span><span style={{fontWeight:600}}>{v.learned}/{v.total}</span></div>
-        ))}</div>
-        <h2 style={S.subT}>Most Repeated (prioritize these)</h2>
-        <div style={S.freqList}>{topFreq.map(c => (
-          <div key={c.id} style={S.freqItem}><span style={S.freqWord}>{c.f}</span><span style={S.freqBadge}>{c.freq}×</span></div>
-        ))}</div>
-        <button style={S.resetBtn} onClick={resetAll}>Reset All Progress</button>
+
+        <button style={S.resetBtn} onClick={resetAll}>Reset all progress</button>
       </div>
     );
   }
@@ -1247,21 +1431,52 @@ const S = {
   sessionDone: { textAlign:"center", padding:24, background:T.color.surfaceLow, borderRadius:T.radius.xl, marginTop:12 },
   doneText: { fontSize:14, color:T.color.primary, fontFamily:T.font.sans, marginBottom:14, fontWeight:500 },
   resetSBtn: { padding:"11px 26px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceLowest, color:T.color.primary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, boxShadow:T.shadow.focus },
-  // Stats
-  statsGrid: { display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:18 },
-  statCard: { textAlign:"center", padding:"18px 8px", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, boxShadow:T.shadow.card },
-  statNum: { fontSize:30, fontWeight:700, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.02em" },
-  statLabel: { fontSize:10, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.1em", marginTop:5, fontFamily:T.font.sans, fontWeight:600 },
-  pBarOut: { height:8, background:T.color.surfaceHigh, borderRadius:T.radius.full, overflow:"hidden", marginBottom:8 },
-  pBarIn: { height:"100%", background:T.gradient.ink, transition:"width 0.5s" },
-  pText: { textAlign:"center", fontSize:12, color:T.color.onSurfaceVariant, marginBottom:24, fontFamily:T.font.sans, fontWeight:500 },
-  subT: { fontSize:18, fontWeight:600, margin:"24px 0 12px", color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.01em" },
-  catStats: { display:"flex", flexDirection:"column", gap:8, marginBottom:18 },
-  catStatRow: { display:"flex", alignItems:"center", gap:10, padding:"12px 14px", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.lg, fontSize:13, fontFamily:T.font.sans, boxShadow:T.shadow.card },
-  freqList: { display:"flex", flexDirection:"column", gap:6, marginBottom:24 },
-  freqItem: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.lg, fontSize:13, boxShadow:T.shadow.card },
-  freqWord: { fontFamily:T.font.serif, fontStyle:"italic", color:T.color.primary, fontSize:15 },
-  freqBadge: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 10px", borderRadius:T.radius.full, fontSize:11, fontWeight:700 },
+  // Stats — bento dashboard
+  statsHeading: { fontSize:36, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.02em", margin:"8px 0 28px" },
+  bento: { display:"grid", gridTemplateColumns:"repeat(12, minmax(0, 1fr))", gap:24, marginBottom:32 },
+  bentoNarrow: { display:"flex", flexDirection:"column", gap:18, marginBottom:32 },
+  bentoCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"28px 30px", boxShadow:T.shadow.card, border:"none" },
+  bentoTitle: { fontSize:20, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.01em", margin:"0 0 4px" },
+  bentoSub: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:"0 0 18px" },
+  bentoHead: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 },
+  // Mastery card
+  masteryRow: { display:"flex", flexDirection:"row", alignItems:"center", gap:32, flexWrap:"wrap" },
+  gaugeBox: { position:"relative", width:180, height:180, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 },
+  gaugeLabel: { position:"absolute", display:"flex", flexDirection:"column", alignItems:"center" },
+  gaugePct: { fontSize:38, fontFamily:T.font.serif, fontWeight:700, color:T.color.primary, letterSpacing:"-0.02em" },
+  gaugeSub: { fontSize:10, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.12em", marginTop:2 },
+  masteryText: { flex:1, minWidth:200 },
+  masteryDesc: { fontSize:14, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, lineHeight:1.55, margin:"8px 0 16px" },
+  pillRow: { display:"flex", gap:8, flexWrap:"wrap" },
+  pillSecondary: { padding:"6px 14px", background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, fontSize:10, fontWeight:700, fontFamily:T.font.sans, borderRadius:T.radius.full, letterSpacing:"0.08em" },
+  pillNeutral: { padding:"6px 14px", background:T.color.surfaceHigh, color:T.color.primary, fontSize:10, fontWeight:700, fontFamily:T.font.sans, borderRadius:T.radius.full, letterSpacing:"0.08em" },
+  // Streak card — dark navy background (Stitch primary-container #1a2b48)
+  bentoStreak: { background:"#1a2b48", color:T.color.onPrimary, display:"flex", flexDirection:"column", justifyContent:"space-between", minHeight:240, position:"relative", overflow:"hidden" },
+  streakTop: { zIndex:1 },
+  streakIcon: { fontSize:36, marginBottom:8, lineHeight:1 },
+  streakTitle: { fontSize:20, fontWeight:600, fontFamily:T.font.serif, color:T.color.onPrimary, margin:"0 0 4px" },
+  streakLabel: { fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:"rgba(255,255,255,0.7)", textTransform:"uppercase", letterSpacing:"0.12em", margin:0 },
+  streakBig: { fontSize:88, fontFamily:T.font.serif, fontStyle:"italic", fontWeight:700, color:T.color.onPrimary, lineHeight:1, alignSelf:"flex-end", zIndex:1 },
+  // Category bars
+  catBars: { display:"flex", flexDirection:"column", gap:18, marginTop:14 },
+  catBarHead: { display:"flex", justifyContent:"space-between", fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6 },
+  catBarTrack: { width:"100%", height:6, background:T.color.surfaceHigh, borderRadius:T.radius.full, overflow:"hidden" },
+  catBarFill: { height:"100%", borderRadius:T.radius.full, transition:"width 0.5s" },
+  catBarMeta: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, marginTop:4 },
+  // Heatmap
+  heatLegend: { display:"flex", alignItems:"center", gap:4 },
+  heatLegendLabel: { fontSize:9, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.1em", padding:"0 4px" },
+  heatGrid: { display:"flex", gap:6, marginTop:8 },
+  heatCol: { display:"grid", gridTemplateRows:"repeat(7, 1fr)", gap:6, flex:1 },
+  heatCell: { width:"100%", aspectRatio:"1", borderRadius:3, minWidth:10, minHeight:10 },
+  heatFootnote: { display:"flex", justifyContent:"space-between", marginTop:14, fontSize:9, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.12em" },
+  // Hardest cards
+  hardGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:14 },
+  hardCard: { background:T.color.surfaceLow, borderRadius:T.radius.xl, padding:"18px 20px", display:"flex", flexDirection:"column", gap:8, transition:"background 0.15s", cursor:"default" },
+  hardHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start" },
+  hardTag: { fontSize:9, fontFamily:T.font.sans, fontWeight:700, padding:"3px 8px", borderRadius:T.radius.sm, textTransform:"uppercase", letterSpacing:"0.08em" },
+  hardWord: { fontSize:18, fontFamily:T.font.serif, fontStyle:"italic", color:T.color.primary, margin:"4px 0 0", letterSpacing:"-0.01em", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  hardMeta: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:0 },
   resetBtn: { display:"block", width:"100%", padding:"13px", border:"none", borderRadius:T.radius.md, background:"transparent", color:T.color.secondary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600 },
   // Onboarding (empty deck state)
   onboarding: { maxWidth:520, margin:"60px auto", padding:"48px 36px", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, textAlign:"center", boxShadow:T.shadow.card },
