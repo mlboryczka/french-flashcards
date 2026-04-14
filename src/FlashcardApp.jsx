@@ -1,4 +1,3 @@
-// === src/FlashcardApp.jsx PART 1/5 START ===
 import { useState, useEffect, useCallback, useRef } from "react";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { useProgress } from "./useProgress";
@@ -344,9 +343,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     };
   }, [idx]);
 
-// === src/FlashcardApp.jsx PART 1/5 END ===
-
-// === src/FlashcardApp.jsx PART 2/5 START ===
 
   // Answer handling: update progress
   const answer = async (got) => {
@@ -648,9 +644,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     </div>
   );
 
-// === src/FlashcardApp.jsx PART 2/5 END ===
-
-// === src/FlashcardApp.jsx PART 3/5 START ===
 
   // ── STATS VIEW ──────────────────────────────────────────────────────
   if (mode === "stats") {
@@ -798,9 +791,6 @@ export default function FlashcardApp({ user, onSignOut }) {
             />
           )}
 
-// === src/FlashcardApp.jsx PART 3/5 END ===
-
-          // === src/FlashcardApp.jsx PART 4/5 START ===
 
           {effectiveTypeMode ? (
             typeResult ? (
@@ -1088,9 +1078,6 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
   );
 }
 
-// === src/FlashcardApp.jsx PART 4/5 END ===
-
-// === src/FlashcardApp.jsx PART 5/5 START ===
 
 // ─── AUDIO TOOLBAR ───────────────────────────────────────────────────────
 function AudioToolbar({ onSpeak, onMic, recState, sttAvailable }) {
@@ -1346,4 +1333,4 @@ const S = {
   feedbackApprove: { flex:1, padding:"10px", background:"#2d6a4f", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontWeight:600 },
   feedbackReject: { flex:1, padding:"10px", background:"#fff", border:"1.5px solid #ddd", color:"#666", borderRadius:8, cursor:"pointer", fontSize:13 },
 };
-// === src/FlashcardApp.jsx PART 5/5 END ===
+
