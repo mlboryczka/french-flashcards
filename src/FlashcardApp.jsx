@@ -169,6 +169,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // Upload & onboarding state
   const [showUpload, setShowUpload] = useState(false);
+  const [uploadInitialTab, setUploadInitialTab] = useState("paste");
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState("");
 
@@ -574,47 +575,93 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // ── ONBOARDING (empty deck) ─────────────────────────────────────────
   if (userCards.length === 0 && mode !== "feedback") {
+    const openUpload = (tab) => { setUploadInitialTab(tab); setShowUpload(true); };
     return (
-      <div style={S.container}>
-        <div style={S.header}>
-          <div>
-            <h1 style={S.title}>French Flashcards</h1>
-            <p style={S.sub}>Let's set up your deck</p>
+      <div style={S.onbPage}>
+        {/* Sign out cluster top right */}
+        {user && (
+          <div style={S.onbTopBar}>
+            <span style={S.onbTopEmail}>{user.email}</span>
+            <button style={S.onbTopSignOut} onClick={onSignOut}>Sign out</button>
           </div>
-          {user && (
-            <div style={S.userInfo}>
-              <div style={S.userEmail}>{user.email}</div>
-              <button style={S.signOutBtn} onClick={onSignOut}>Sign out</button>
+        )}
+
+        <div style={S.onbInner}>
+          {/* Hero — left text + right typographic preview */}
+          <section style={S.onbHero}>
+            <div style={S.onbHeroLeft}>
+              <h1 style={S.onbHeroTitle}>Welcome.</h1>
+              <p style={S.onbHeroText}>
+                Upload your cahier to get started. We'll turn your lesson notes into a personal deck — vocabulary, expressions, grammar, and conjugation drills.
+              </p>
+              <button style={S.onbHeroCta} onClick={() => openUpload("paste")}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                Upload your cahier
+              </button>
             </div>
-          )}
-        </div>
-        <div style={S.onboarding}>
-          <h2 style={S.onbTitle}>Welcome back</h2>
-          <p style={S.onbText}>
-            Upload your cahier to get started. We'll turn your lesson notes into a personal deck —
-            vocabulary, expressions, grammar, and conjugation drills.
-          </p>
-          <button style={S.onbPrimary} onClick={() => setShowUpload(true)}>
-            Upload your cahier
-          </button>
+            <div style={S.onbHeroRight}>
+              <div style={{...S.onbSample, ...S.onbSample1}}>
+                <div style={S.onbSampleEyebrow}>Vocabulaire</div>
+                <div style={S.onbSampleWord}>vivre</div>
+                <div style={S.onbSampleEn}>to live</div>
+              </div>
+              <div style={{...S.onbSample, ...S.onbSample2}}>
+                <div style={S.onbSampleEyebrow}>Expressions</div>
+                <div style={S.onbSampleWord}>Tu en es où ?</div>
+                <div style={S.onbSampleEn}>where are you with it?</div>
+              </div>
+              <div style={{...S.onbSample, ...S.onbSample3}}>
+                <div style={S.onbSampleEyebrow}>Grammaire</div>
+                <div style={S.onbSampleWord}>vivre → je vis</div>
+                <div style={S.onbSampleEn}>présent</div>
+              </div>
+            </div>
+          </section>
+
+          {/* Import methods bento */}
+          <section style={S.onbBento}>
+            <button style={S.onbCard} onClick={() => openUpload("paste")}>
+              <div style={S.onbCardIcon}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+              </div>
+              <h3 style={S.onbCardTitle}>Paste text</h3>
+              <p style={S.onbCardDesc}>Paste your cahier contents directly from your clipboard.</p>
+              <div style={S.onbCardArrow}>→</div>
+            </button>
+            <button style={{...S.onbCard, ...S.onbCardFeatured}} onClick={() => openUpload("file")}>
+              <div style={{...S.onbCardIcon, ...S.onbCardIconFeatured}}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+              </div>
+              <h3 style={S.onbCardTitle}>Upload .txt file</h3>
+              <p style={S.onbCardDesc}>Drag and drop a plain text file from your computer.</p>
+              <div style={S.onbCardArrow}>→</div>
+            </button>
+            <button style={S.onbCard} onClick={() => openUpload("link")}>
+              <div style={S.onbCardIcon}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              </div>
+              <h3 style={S.onbCardTitle}>Google Doc link</h3>
+              <p style={S.onbCardDesc}>Paste a public Google Doc URL and we'll fetch the contents.</p>
+              <div style={S.onbCardArrow}>→</div>
+            </button>
+          </section>
+
+          {/* Admin seed button — small, below */}
           {isAdmin && (
-            <>
-              <div style={S.onbDivider}>or</div>
-              <button
-                style={S.onbSecondary}
-                onClick={seedDemoDeck}
-                disabled={seeding}
-              >
+            <div style={S.onbAdmin}>
+              <button onClick={seedDemoDeck} disabled={seeding} style={S.onbAdminBtn}>
                 {seeding ? "Seeding…" : "Seed demo deck (admin)"}
               </button>
               {seedError && <div style={S.onbError}>{seedError}</div>}
-            </>
+            </div>
           )}
         </div>
+
         <CahierUpload
           open={showUpload}
           onClose={() => setShowUpload(false)}
           hasExisting={false}
+          initialTab={uploadInitialTab}
           onSuccess={(result) => {
             setShowUpload(false);
             reloadDeck();
@@ -1165,6 +1212,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           open={showUpload}
           onClose={() => setShowUpload(false)}
           hasExisting={userCards.length > 0}
+          initialTab={uploadInitialTab}
           onSuccess={(result) => {
             setShowUpload(false);
             reloadDeck();
@@ -1652,10 +1700,46 @@ const S = {
   hardWord: { fontSize:18, fontFamily:T.font.serif, fontStyle:"italic", color:T.color.primary, margin:"4px 0 0", letterSpacing:"-0.01em", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   hardMeta: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:0 },
   resetBtn: { display:"block", width:"100%", padding:"13px", border:"none", borderRadius:T.radius.md, background:"transparent", color:T.color.secondary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600 },
-  // Onboarding (empty deck state)
+  // ── Onboarding (empty deck state) ─────────────────────────────────
+  // Full-bleed page (no sidebar) with hero on top and import method
+  // bento below. Sign-out lives in a small top-right cluster.
+  onbPage: { minHeight:"100vh", background:T.color.background, position:"relative", overflow:"hidden" },
+  onbTopBar: { position:"absolute", top:24, right:32, display:"flex", alignItems:"center", gap:14, zIndex:10 },
+  onbTopEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
+  onbTopSignOut: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
+  onbInner: { maxWidth:1100, margin:"0 auto", padding:"96px 40px 80px", boxSizing:"border-box" },
+  onbHero: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:64, alignItems:"center", marginBottom:88 },
+  onbHeroLeft: { display:"flex", flexDirection:"column", gap:24 },
+  onbHeroTitle: { fontSize:64, fontWeight:700, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.03em", lineHeight:1.05, margin:0 },
+  onbHeroText: { fontSize:17, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, lineHeight:1.6, maxWidth:440, margin:0 },
+  onbHeroCta: { display:"inline-flex", alignItems:"center", gap:10, padding:"16px 28px", background:T.gradient.ink, color:T.color.onPrimary, border:"none", borderRadius:T.radius.lg, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, boxShadow:"0 8px 32px rgba(3,22,50,0.16)", letterSpacing:"0.02em", alignSelf:"flex-start", marginTop:8 },
+  // Right side: stack of 3 typographic sample card previews (no photos)
+  onbHeroRight: { position:"relative", height:420 },
+  onbSample: { position:"absolute", width:300, padding:"24px 28px", background:T.color.surfaceLowest, borderRadius:T.radius.xl, boxShadow:"0 16px 48px rgba(3,22,50,0.08)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", minHeight:140 },
+  onbSample1: { top:0, left:20, transform:"rotate(-3deg)", borderTop:`3px solid ${T.color.secondary}` },
+  onbSample2: { top:130, left:90, transform:"rotate(2deg)", borderTop:"3px solid #76261b", zIndex:2 },
+  onbSample3: { top:260, left:30, transform:"rotate(-1deg)", borderTop:"3px solid #1a2b48" },
+  onbSampleEyebrow: { fontSize:9, fontFamily:T.font.sans, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.18em", marginBottom:10 },
+  onbSampleWord: { fontSize:24, fontFamily:T.font.serif, fontWeight:700, color:T.color.primary, letterSpacing:"-0.015em", lineHeight:1.2 },
+  onbSampleEn: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, marginTop:8, fontStyle:"italic" },
+
+  // ── Import methods bento (3 cards) ────────────────────────────────
+  onbBento: { display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:20, marginBottom:32 },
+  onbCard: { display:"flex", flexDirection:"column", gap:16, padding:"32px 28px", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, boxShadow:"0 8px 32px rgba(3,22,50,0.06)", textAlign:"left", cursor:"pointer", fontFamily:T.font.sans, transition:"all 0.2s", color:T.color.onSurface, position:"relative" },
+  onbCardFeatured: { background:T.color.surfaceHigh },
+  onbCardIcon: { width:48, height:48, borderRadius:T.radius.lg, background:T.color.surfaceHigh, display:"flex", alignItems:"center", justifyContent:"center", color:T.color.secondary },
+  onbCardIconFeatured: { background:T.color.primary, color:T.color.onPrimary },
+  onbCardTitle: { fontSize:22, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, margin:"4px 0 0", letterSpacing:"-0.015em" },
+  onbCardDesc: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, lineHeight:1.55, margin:0 },
+  onbCardArrow: { marginTop:"auto", alignSelf:"flex-end", fontSize:18, color:T.color.onSurfaceVariant, fontWeight:700 },
+
+  // Admin seed deck button — small text link below the bento
+  onbAdmin: { marginTop:24, textAlign:"center" },
+  onbAdminBtn: { padding:"10px 20px", background:"transparent", border:"none", color:T.color.onSurfaceVariant, fontSize:11, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.05em", textTransform:"uppercase", textDecoration:"underline" },
+
+  // Legacy onboarding styles kept as fallbacks
   onboarding: { maxWidth:520, margin:"60px auto", padding:"48px 36px", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, textAlign:"center", boxShadow:T.shadow.card },
   onbTitle: { margin:"0 0 14px", fontSize:32, color:T.color.primary, fontFamily:T.font.serif, fontWeight:600, letterSpacing:"-0.02em" },
-  onbText: { fontSize:15, color:T.color.onSurfaceVariant, lineHeight:1.6, marginBottom:28, fontFamily:T.font.sans },
   onbPrimary: { padding:"15px 32px", background:T.gradient.ink, color:T.color.onPrimary, border:"none", borderRadius:T.radius.md, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, boxShadow:T.shadow.button, letterSpacing:"0.02em" },
   onbSecondary: { padding:"12px 24px", background:"transparent", color:T.color.onSurfaceVariant, border:"none", borderRadius:T.radius.md, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:500 },
   onbDivider: { fontSize:10, color:T.color.onSurfaceVariant, margin:"20px 0", textTransform:"uppercase", letterSpacing:"0.2em", fontWeight:600 },
