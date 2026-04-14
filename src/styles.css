@@ -1,34 +1,91 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   The Academic Atelier — global styles & font loading
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;0,700;1,400;1,700&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+/* ───────────────────────────────────────────────────────────────────────
+   Design tokens as CSS custom properties.
+   Most values are also exported from src/theme.js for JS consumption —
+   keep them in sync if you change either. CSS vars are used sparingly,
+   mostly for the body background and selection color.
+   ─────────────────────────────────────────────────────────────────────── */
+:root {
+  --color-primary: #031632;
+  --color-primary-container: #1a2b48;
+  --color-secondary: #9c4234;
+  --color-secondary-container: #fe8f7c;
+  --color-background: #fdf8f6;
+  --color-surface-lowest: #ffffff;
+  --color-surface-low: #f7f3f1;
+  --color-surface-high: #ebe7e5;
+  --color-on-surface: #1c1b1b;
+  --color-on-surface-variant: #44474d;
+
+  --font-serif: 'Noto Serif', Georgia, serif;
+  --font-sans: 'Manrope', system-ui, -apple-system, sans-serif;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Base
+   ─────────────────────────────────────────────────────────────────────── */
 * {
   box-sizing: border-box;
 }
 
-html, body, #root {
+html, body {
   margin: 0;
   padding: 0;
-  min-height: 100vh;
-  background: #faf8f4;
-  color: #1a1a1a;
+  background: var(--color-background);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  font-family: 'Georgia', 'Garamond', serif;
+#root {
+  min-height: 100vh;
 }
 
-input, button, textarea {
-  font-family: inherit;
+/* Text selection — terracotta tint */
+::selection {
+  background: rgba(156, 66, 52, 0.2);
+  color: var(--color-primary);
 }
 
-button {
-  -webkit-tap-highlight-color: transparent;
+/* Links inherit the primary ink color */
+a {
+  color: var(--color-primary);
+  text-decoration-color: rgba(3, 22, 50, 0.3);
+  text-underline-offset: 2px;
+}
+a:hover {
+  text-decoration-color: var(--color-secondary);
 }
 
+/* Remove focus outlines that fight the design, but keep accessible focus for keyboard nav */
+button:focus,
+input:focus,
+textarea:focus {
+  outline: none;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-secondary);
+  outline-offset: 2px;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Keyframes (required by the pronunciation panel — do not remove)
+   ─────────────────────────────────────────────────────────────────────── */
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.6; transform: scale(0.9); }
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
