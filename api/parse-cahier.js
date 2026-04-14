@@ -128,7 +128,10 @@ export default async function handler(req, res) {
   const allCards = [];
   const errors = [];
 
-  const BATCH_SIZE = 5;
+  // Concurrency: 20 in flight is well within Anthropic's per-org rate limits
+  // for Haiku and gets the whole cahier through in ~30-60s instead of ~3min.
+  // If you start hitting 429s, drop this to 10.
+  const BATCH_SIZE = 20;
   for (let i = 0; i < blocks.length; i += BATCH_SIZE) {
     const batch = blocks.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(
@@ -345,7 +348,10 @@ async function extractCardsFromBlock(anthropic, block) {
   const prompt = EXTRACTION_PROMPT.replace("{BLOCK_TEXT}", block.text);
 
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5",
+    // Haiku is ~3-5× faster than Sonnet and just as accurate on this task,
+    // since the cahier format is very regular and Claude is just doing
+    // structured extraction, not reasoning. Sonnet was overkill.
+    model: "claude-haiku-4-5",
     max_tokens: 4000,
     messages: [{ role: "user", content: prompt }],
   });
