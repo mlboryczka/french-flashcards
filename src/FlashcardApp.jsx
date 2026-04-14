@@ -652,10 +652,25 @@ export default function FlashcardApp({ user, onSignOut }) {
       </div>
       {mode === "study" && (
         <div style={S.toggleRow}>
-          <label style={S.toggle}><input type="checkbox" checked={freqOnly} onChange={e => setFreqOnly(e.target.checked)} /><span>Repeated 2×+</span></label>
-          <label style={S.toggle}><input type="checkbox" checked={typeMode} onChange={e => { setTypeMode(e.target.checked); setTypedAnswer(""); setTypeResult(null); setFlipped(false); }} /><span>Type answer</span></label>
+          <button
+            style={freqOnly ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+            onClick={() => setFreqOnly(v => !v)}
+          >
+            Repeated 2×+
+          </button>
+          <button
+            style={typeMode ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+            onClick={() => { setTypeMode(v => !v); setTypedAnswer(""); setTypeResult(null); setFlipped(false); }}
+          >
+            Type answer
+          </button>
           {TTS_AVAILABLE && (
-            <label style={S.toggle}><input type="checkbox" checked={autoSpeak} onChange={e => setAutoSpeak(e.target.checked)} /><span>Auto-speak FR</span></label>
+            <button
+              style={autoSpeak ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+              onClick={() => setAutoSpeak(v => !v)}
+            >
+              Auto-speak FR
+            </button>
           )}
           <div style={S.dirGroup}>
             {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
@@ -897,29 +912,35 @@ export default function FlashcardApp({ user, onSignOut }) {
   const effectiveTypeMode = typeMode && isTypable;
   return (
     <div style={S.container}>
-      <div style={S.header}>
-        <div>
-          <h1 style={S.title}>French Flashcards</h1>
-          <p style={S.sub}>{deck.length} cards · {stats.seen} seen · {stats.got} ✓ · {stats.missed} ✗</p>
+      {user && (
+        <div style={S.topBar}>
+          <button style={S.topBarBtn} onClick={() => setShowUpload(true)} title="Upload or re-upload your cahier">📄 Upload cahier</button>
+          <BetaFeedback user={user} currentPage={mode} />
+          <div style={S.topBarSpacer} />
+          <span style={S.topBarEmail}>{user.email}</span>
+          <button style={S.topBarBtn} onClick={onSignOut}>Sign out</button>
         </div>
-        {user && (
-          <div style={S.userInfo}>
-            <div style={S.headerBtnRow}>
-              <button style={S.headerBtn} onClick={() => setShowUpload(true)} title="Upload or re-upload your cahier">📄 Upload cahier</button>
-              <BetaFeedback user={user} currentPage={mode} />
-            </div>
-            <div style={S.userEmail}>{user.email}</div>
-            <button style={S.signOutBtn} onClick={onSignOut}>Sign out</button>
-          </div>
+      )}
+      <NavBar />
+      <div style={S.sessionRibbon}>
+        <span>{deck.length} cards</span>
+        <span style={S.ribbonDot}>·</span>
+        <span>{stats.seen} seen</span>
+        <span style={S.ribbonDot}>·</span>
+        <span>{stats.got} correct</span>
+        {stats.missed > 0 && (
+          <>
+            <span style={S.ribbonDot}>·</span>
+            <span>{stats.missed} missed</span>
+          </>
         )}
       </div>
-      <NavBar />
       <Filters />
       {card ? (
         <>
           <div style={S.counterRow}>
             <button style={{...S.backBtn, visibility: idx === 0 ? "hidden" : "visible"}} onClick={goBack} title="Previous card">← Back</button>
-            <div style={{...S.counter, flex:1, marginBottom:0}}>{idx+1} / {deck.length}</div>
+            <div style={{...S.counter, flex:1, marginBottom:0}}>Card {idx+1} of {deck.length}</div>
             <div style={S.backBtnSpacer} />
           </div>
           <div style={S.cardWrap} onClick={effectiveTypeMode ? undefined : flip}>
@@ -1389,6 +1410,19 @@ function ScoreCell({ label, value }) {
 const S = {
   container: { maxWidth:760, margin:"0 auto", padding:"24px 16px 64px", fontFamily:T.font.sans, color:T.color.onSurface },
   loading: { textAlign:"center", padding:60, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
+  // Top utility bar — single horizontal row at the top of the page with
+  // upload, beta feedback, email and sign-out. Replaces the old vertically
+  // stacked header userInfo block.
+  topBar: { display:"flex", alignItems:"center", gap:10, marginBottom:14, flexWrap:"wrap" },
+  topBarSpacer: { flex:1 },
+  topBarBtn: { padding:"6px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
+  topBarEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
+  // Session ribbon — small uppercase metadata line beneath the navbar,
+  // replacing the old "8 cards · 0 seen · 0 ✓ · 0 ✗" subtitle.
+  sessionRibbon: { display:"flex", alignItems:"center", gap:8, fontSize:10, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.12em", margin:"4px 2px 18px" },
+  ribbonDot: { opacity:0.4 },
+  // Legacy header styles kept for screens that still reference them
+  // (onboarding, feedback admin view). Study view no longer uses these.
   header: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:18, gap:12, flexWrap:"wrap" },
   title: { fontSize:30, fontWeight:600, margin:"0 0 4px", color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.02em", lineHeight:1.1 },
   sub: { fontSize:13, color:T.color.onSurfaceVariant, margin:"4px 0 0", fontFamily:T.font.sans },
@@ -1402,8 +1436,12 @@ const S = {
   catRow: { display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 },
   catBtn: { padding:"6px 14px", border:"none", borderRadius:T.radius.full, background:T.color.surfaceLow, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em" },
   catBtnA: { background:T.color.primary, color:T.color.onPrimary, fontWeight:600 },
-  toggleRow: { display:"flex", gap:14, alignItems:"center", flexWrap:"wrap" },
+  toggleRow: { display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" },
   toggle: { display:"flex", gap:6, alignItems:"center", fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, cursor:"pointer" },
+  // Chip-style toggle button — used in the study filter row in place of
+  // raw checkboxes. Same pill shape as catBtn but with an active state.
+  chipToggle: { padding:"6px 13px", border:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}`, borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
+  chipToggleA: { background:T.color.primary, color:T.color.onPrimary, borderColor:T.color.primary, fontWeight:600 },
   dirGroup: { display:"flex", gap:2, marginLeft:"auto", padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md },
   dirBtn: { padding:"5px 12px", border:"none", borderRadius:T.radius.sm, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500 },
   dirBtnA: { background:T.color.surfaceLowest, color:T.color.primary, fontWeight:600, boxShadow:T.shadow.focus },
