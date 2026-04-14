@@ -20,6 +20,8 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting }) {
   const [tab, setTab] = useState("paste"); // paste | file | link
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
   const [replace, setReplace] = useState(hasExisting ? false : true);
   const [status, setStatus] = useState("idle"); // idle | uploading | error
   const [error, setError] = useState("");
@@ -28,19 +30,42 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting }) {
 
   if (!open) return null;
 
-  async function handleFileUpload(e) {
-    const file = e.target.files?.[0];
+  async function processFile(file) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".txt")) {
       setError(
-        "For now, only .txt files are supported. Copy your Google Doc to plain text and try again, or paste the text directly."
+        "Only .txt files are supported. Copy your Google Doc to plain text and try again, or paste the text directly."
       );
       return;
     }
     const content = await file.text();
     setText(content);
-    setTab("paste");
+    setFileName(file.name);
     setError("");
+  }
+
+  async function handleFileUpload(e) {
+    await processFile(e.target.files?.[0]);
+  }
+
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  }
+
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }
+
+  async function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer?.files?.[0];
+    await processFile(file);
   }
 
   async function handleSubmit() {
@@ -159,28 +184,44 @@ fonder / créer une entreprise
 
           {tab === "file" && (
             <>
-              <label style={M.label}>
-                Upload a .txt file of your cahier:
-              </label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".txt,text/plain"
-                onChange={handleFileUpload}
-                disabled={status === "uploading"}
-                style={M.fileInput}
-              />
-              <div style={M.hint}>
-                Only .txt files are supported for now. If your cahier is in
-                Google Docs, use the "Google Doc link" tab or copy-paste the
-                text.
+              <label style={M.label}>Upload your cahier</label>
+              <div
+                style={isDragging ? { ...M.dropZone, ...M.dropZoneActive } : M.dropZone}
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragEnter={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                <div style={M.dropZoneIcon}>📄</div>
+                {fileName ? (
+                  <>
+                    <div style={M.dropZoneTextStrong}>{fileName}</div>
+                    <div style={M.dropZoneTextSub}>
+                      {text.length.toLocaleString()} characters loaded · click to choose a different file
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={M.dropZoneTextStrong}>
+                      {isDragging ? "Drop your file here" : "Drop a .txt file here"}
+                    </div>
+                    <div style={M.dropZoneTextSub}>or click to browse</div>
+                  </>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".txt,text/plain"
+                  onChange={handleFileUpload}
+                  disabled={status === "uploading"}
+                  style={{ display: "none" }}
+                />
               </div>
-              {text && (
-                <div style={M.filePreview}>
-                  Loaded {text.length.toLocaleString()} characters from file.
-                  Click Upload below to process.
-                </div>
-              )}
+              <div style={M.hint}>
+                Only .txt files are supported. If your cahier is in Google Docs,
+                use the "Google Doc link" tab or copy-paste the text.
+              </div>
             </>
           )}
 
@@ -360,6 +401,35 @@ const M = {
     fontSize: 14,
     marginBottom: 8,
     fontFamily: T.font.sans,
+  },
+  dropZone: {
+    border: `2px dashed ${T.color.outlineGhost}`,
+    borderRadius: T.radius.lg,
+    background: T.color.surfaceLow,
+    padding: "44px 24px",
+    textAlign: "center",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+    fontFamily: T.font.sans,
+  },
+  dropZoneActive: {
+    borderColor: T.color.secondary,
+    background: T.color.tertiaryFixed,
+  },
+  dropZoneIcon: {
+    fontSize: 36,
+    marginBottom: 12,
+    opacity: 0.7,
+  },
+  dropZoneTextStrong: {
+    fontSize: 15,
+    color: T.color.primary,
+    fontWeight: 600,
+    marginBottom: 6,
+  },
+  dropZoneTextSub: {
+    fontSize: 12,
+    color: T.color.onSurfaceVariant,
   },
   filePreview: {
     padding: 12,
