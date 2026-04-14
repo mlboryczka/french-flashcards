@@ -629,59 +629,42 @@ export default function FlashcardApp({ user, onSignOut }) {
     );
   }
 
-  // ── NAV BAR ─────────────────────────────────────────────────────────
-  const NavBar = () => {
-    const items = [["study","Cards"],["stats","Stats"]];
-    if (isAdmin) items.push(["feedback","Feedback"]);
-    return (
-      <div style={S.nav}>
-        {items.map(([m,label]) => (
-          <button key={m} style={mode===m ? {...S.navBtn,...S.navActive} : S.navBtn} onClick={() => { setMode(m); resetSession(); }}>{label}</button>
-        ))}
-      </div>
-    );
-  };
-
-  // ── FILTERS ─────────────────────────────────────────────────────────
-  const Filters = () => (
-    <div style={S.filters}>
-      <div style={S.catRow}>
-        {Object.entries(CAT_LABELS).map(([k,v]) => (
-          <button key={k} style={cat===k ? {...S.catBtn,...S.catBtnA,...(k!=="all"?{borderColor:CAT_COLORS[k],color:CAT_COLORS[k]}:{})} : S.catBtn} onClick={() => setCat(k)}>{v}</button>
-        ))}
-      </div>
-      {mode === "study" && (
-        <div style={S.toggleRow}>
-          <button
-            style={freqOnly ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
-            onClick={() => setFreqOnly(v => !v)}
-          >
-            Repeated 2×+
-          </button>
-          <button
-            style={typeMode ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
-            onClick={() => { setTypeMode(v => !v); setTypedAnswer(""); setTypeResult(null); setFlipped(false); }}
-          >
-            Type answer
-          </button>
-          {TTS_AVAILABLE && (
+  // ── SHELL: SIDEBAR ──────────────────────────────────────────────────
+  // The sidebar is the global app shell. On wide screens it's a fixed
+  // 256px-wide column; on phones it collapses to a fixed bottom nav.
+  // Defined here (inside the component) so it captures all the closure
+  // variables it needs without prop-drilling.
+  const navItems = [["study", "Cards"], ["stats", "Stats"]];
+  if (isAdmin) navItems.push(["feedback", "Feedback"]);
+  const sidebar = (
+    <aside style={isNarrow ? S.sideBarBottom : S.sideBar}>
+      <nav style={isNarrow ? S.sideNavBottom : S.sideNav}>
+        {navItems.map(([m, label]) => {
+          const baseStyle = isNarrow ? S.sideItemBottom : S.sideItem;
+          const activeStyle = isNarrow ? S.sideItemBottomActive : S.sideItemActive;
+          return (
             <button
-              style={autoSpeak ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
-              onClick={() => setAutoSpeak(v => !v)}
+              key={m}
+              style={mode === m ? {...baseStyle, ...activeStyle} : baseStyle}
+              onClick={() => { setMode(m); resetSession(); }}
             >
-              Auto-speak FR
+              {label}
             </button>
-          )}
-          <div style={S.dirGroup}>
-            {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
-              <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
-            ))}
-          </div>
+          );
+        })}
+      </nav>
+      {!isNarrow && user && (
+        <div style={S.sideFoot}>
+          <button style={S.sideUtilBtn} onClick={() => setShowUpload(true)} title="Upload or re-upload your cahier">
+            Upload cahier
+          </button>
+          <BetaFeedback user={user} currentPage={mode} />
+          <div style={S.sideEmail}>{user.email}</div>
+          <button style={S.sideUtilBtn} onClick={onSignOut}>Sign out</button>
         </div>
       )}
-    </div>
+    </aside>
   );
-
 
   // ── STATS VIEW ──────────────────────────────────────────────────────
   if (mode === "stats") {
@@ -752,9 +735,11 @@ export default function FlashcardApp({ user, onSignOut }) {
     const span = (n) => ({ gridColumn: isNarrow ? "1 / -1" : `span ${n}` });
 
     return (
-      <div style={S.container}>
-        <NavBar />
-        <h1 style={S.statsHeading}>Progress</h1>
+      <div style={isNarrow ? S.shellNarrow : S.shell}>
+        {sidebar}
+        <main style={S.main}>
+          <div style={S.mainInner}>
+            <h1 style={S.statsHeading}>Progress</h1>
 
         <div style={isNarrow ? S.bentoNarrow : S.bento}>
 
@@ -884,6 +869,8 @@ export default function FlashcardApp({ user, onSignOut }) {
         </div>
 
         <button style={S.resetBtn} onClick={resetAll}>Reset all progress</button>
+          </div>
+        </main>
       </div>
     );
   }
@@ -892,13 +879,26 @@ export default function FlashcardApp({ user, onSignOut }) {
   if (mode === "feedback") {
     if (!isAdmin) {
       return (
-        <div style={S.container}>
-          <NavBar />
-          <div style={S.empty}><p>Admins only.</p></div>
+        <div style={isNarrow ? S.shellNarrow : S.shell}>
+          {sidebar}
+          <main style={S.main}>
+            <div style={S.mainInner}>
+              <div style={S.empty}><p>Admins only.</p></div>
+            </div>
+          </main>
         </div>
       );
     }
-    return <FeedbackAdminView user={user} setMode={setMode} resetSession={resetSession} />;
+    return (
+      <div style={isNarrow ? S.shellNarrow : S.shell}>
+        {sidebar}
+        <main style={S.main}>
+          <div style={S.mainInner}>
+            <FeedbackAdminView user={user} setMode={setMode} resetSession={resetSession} />
+          </div>
+        </main>
+      </div>
+    );
   }
 
   // ── STUDY MODE ──────────────────────────────────────────────────────
@@ -911,196 +911,282 @@ export default function FlashcardApp({ user, onSignOut }) {
   const isTypable = card && (card.flippable || (back && back.length <= 25));
   const effectiveTypeMode = typeMode && isTypable;
   return (
-    <div style={S.container}>
-      {user && (
+    <div style={isNarrow ? S.shellNarrow : S.shell}>
+      {sidebar}
+      <main style={S.main}>
+        {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
-          <button style={S.topBarBtn} onClick={() => setShowUpload(true)} title="Upload or re-upload your cahier">📄 Upload cahier</button>
-          <BetaFeedback user={user} currentPage={mode} />
           <div style={S.topBarSpacer} />
-          <span style={S.topBarEmail}>{user.email}</span>
-          <button style={S.topBarBtn} onClick={onSignOut}>Sign out</button>
-        </div>
-      )}
-      <NavBar />
-      <div style={S.sessionRibbon}>
-        <span>{deck.length} cards</span>
-        <span style={S.ribbonDot}>·</span>
-        <span>{stats.seen} seen</span>
-        <span style={S.ribbonDot}>·</span>
-        <span>{stats.got} correct</span>
-        {stats.missed > 0 && (
-          <>
-            <span style={S.ribbonDot}>·</span>
-            <span>{stats.missed} missed</span>
-          </>
-        )}
-      </div>
-      <Filters />
-      {card ? (
-        <>
-          <div style={S.counterRow}>
-            <button style={{...S.backBtn, visibility: idx === 0 ? "hidden" : "visible"}} onClick={goBack} title="Previous card">← Back</button>
-            <div style={{...S.counter, flex:1, marginBottom:0}}>Card {idx+1} of {deck.length}</div>
-            <div style={S.backBtnSpacer} />
+          <div style={S.dirGroup}>
+            {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
+              <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
+            ))}
           </div>
-          <div style={S.cardWrap} onClick={effectiveTypeMode ? undefined : flip}>
-            <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", cursor: effectiveTypeMode ? "default" : "pointer"}}>
-              <div style={S.cardFront}>
-                <div style={S.cardCat}><span style={{...S.dot,background:CAT_COLORS[card.cat]}} />{CAT_LABELS[card.cat]}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
-                <div style={S.langBadge}>{card.flippable ? (card.shownDir==="fr" ? "FR → EN" : "EN → FR") : "RULE"}</div>
-                <div style={S.cardText}>{front}</div>
-                {TTS_AVAILABLE && card.shownDir === "fr" && (
-                  <AudioToolbar
-                    onSpeak={(e) => { e.stopPropagation(); speakCard(); }}
-                    onMic={(e) => { e.stopPropagation(); if (recState === "recording") stopRecording(); else startRecording(); }}
-                    recState={recState}
-                    sttAvailable={STT_AVAILABLE && PRONUNCIATION_ENABLED}
-                  />
-                )}
-                {!effectiveTypeMode && <div style={S.hint}>tap to flip</div>}
-              </div>
-              <div style={S.cardBack}>
-                <div style={S.cardCat}><span style={{...S.dot,background:CAT_COLORS[card.cat]}} />{card.shownDir==="fr"?"English":"French"}</div>
-                <div style={S.cardTextB}>{back}</div>
-                {TTS_AVAILABLE && card.shownDir === "en" && (
-                  <AudioToolbar
-                    onSpeak={(e) => { e.stopPropagation(); speakCard(); }}
-                    onMic={(e) => { e.stopPropagation(); if (recState === "recording") stopRecording(); else startRecording(); }}
-                    recState={recState}
-                    sttAvailable={STT_AVAILABLE && PRONUNCIATION_ENABLED}
-                  />
-                )}
-                <div style={S.dateH}>Seen on: {card.dates[card.dates.length-1]}</div>
-                <div style={S.cardActions}>
-                  <button
-                    style={S.cardActionBtn}
-                    onClick={(e) => { e.stopPropagation(); setEditingCard(card); }}
-                    title="Edit this card"
-                  >
-                    ✏️ Edit
-                  </button>
-                  <button
-                    style={card.flagged ? {...S.cardActionBtn, ...S.cardActionBtnFlagged} : S.cardActionBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!card.flagged) flagCard(card.row_id);
-                    }}
-                    title={card.flagged ? "Already flagged" : "Flag this card's translation for review"}
-                  >
-                    {card.flagged ? "🚩 Flagged" : "🚩 Flag"}
-                  </button>
-                </div>
-              </div>
+          <button
+            style={typeMode ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+            onClick={() => { setTypeMode(v => !v); setTypedAnswer(""); setTypeResult(null); setFlipped(false); }}
+          >
+            Type answer
+          </button>
+          {TTS_AVAILABLE && (
+            <button
+              style={autoSpeak ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+              onClick={() => setAutoSpeak(v => !v)}
+              title="Auto-speak French side"
+            >
+              Auto-speak
+            </button>
+          )}
+        </div>
+
+        <div style={S.mainInner}>
+          {/* Sub-toolbar: category filter + counter */}
+          <div style={S.subToolbar}>
+            <div style={S.catRow}>
+              {Object.entries(CAT_LABELS).map(([k,v]) => (
+                <button
+                  key={k}
+                  style={cat===k ? {...S.catBtn,...S.catBtnA,...(k!=="all"?{borderColor:CAT_COLORS[k],color:CAT_COLORS[k]}:{})} : S.catBtn}
+                  onClick={() => setCat(k)}
+                >
+                  {v}
+                </button>
+              ))}
+              <button
+                style={freqOnly ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+                onClick={() => setFreqOnly(v => !v)}
+                title="Only show cards repeated 2 or more times"
+              >
+                Repeated 2×+
+              </button>
             </div>
+            {card && (
+              <div style={S.subToolbarRight}>
+                <button style={{...S.backBtn, visibility: idx === 0 ? "hidden" : "visible"}} onClick={goBack} title="Previous card">← Back</button>
+                <span style={S.counter}>Card {idx+1} of {deck.length}</span>
+              </div>
+            )}
           </div>
-          {/* Pronunciation panel — appears below card when recording or showing results */}
-          {PRONUNCIATION_ENABLED && (recState !== "idle") && (
-            <PronunciationPanel
-              recState={recState}
-              result={pronResult}
-              error={pronError}
-              referenceText={card.f.includes("→") ? card.b : card.f}
-              onCancel={cancelRecording}
-              onRetry={() => { setRecState("idle"); setPronResult(null); setPronError(""); setTimeout(startRecording, 100); }}
-              onSpeakWord={speakText}
-              onDismiss={() => { setRecState("idle"); setPronResult(null); setPronError(""); }}
-            />
-          )}
 
+          {card ? (
+            <div style={S.cardArea}>
+              {/* Decorative blur shapes (per Stitch design) */}
+              <div style={S.blurTL} />
+              <div style={S.blurBR} />
 
-          {effectiveTypeMode ? (
-            typeResult ? (
-              <div style={S.typeFeedback}>
-                <div style={typeResult==="correct" ? S.typeCorrect : typeResult==="close" ? S.typeClose : S.typeWrong}>
-                  {typeResult==="correct" && "✓ Correct!"}
-                  {typeResult==="close" && `✓ Close enough — answer: ${back}`}
-                  {typeResult==="wrongArticle" && `✗ Wrong article — answer: ${back}`}
-                  {typeResult==="wrong" && `✗ Answer: ${back}`}
-                </div>
-                {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
-                  <div style={S.feedbackRow}>
-                    {feedbackState === null && (
-                      <button style={S.feedbackBtn} onClick={submitFeedback}>
-                        My answer should have been accepted
-                      </button>
+              <div style={S.cardWrap} onClick={effectiveTypeMode ? undefined : flip}>
+                <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", cursor: effectiveTypeMode ? "default" : "pointer"}}>
+                  <div style={S.cardFront}>
+                    <div style={S.cardEyebrow}>{CAT_LABELS[card.cat]}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
+                    <div style={S.cardText}>{front}</div>
+                    {TTS_AVAILABLE && card.shownDir === "fr" && (
+                      <div style={S.cardAudio}>
+                        <button
+                          style={S.cardAudioBtn}
+                          onClick={(e) => { e.stopPropagation(); speakCard(); }}
+                          title="Play French pronunciation"
+                        >
+                          🔊
+                        </button>
+                        {STT_AVAILABLE && PRONUNCIATION_ENABLED && (
+                          <button
+                            style={recState === "recording" ? {...S.cardAudioBtn, ...S.cardAudioMicActive} : {...S.cardAudioBtn, ...S.cardAudioMic}}
+                            onClick={(e) => { e.stopPropagation(); if (recState === "recording") stopRecording(); else startRecording(); }}
+                            title="Record yourself speaking"
+                          >
+                            🎤
+                          </button>
+                        )}
+                      </div>
                     )}
-                    {feedbackState === "submitting" && <span style={S.feedbackPending}>Sending…</span>}
-                    {feedbackState === "submitted" && <span style={S.feedbackOk}>Thanks! Your answer is being reviewed.</span>}
-                    {feedbackState === "error" && <span style={S.feedbackErr}>Couldn't send — try again</span>}
+                    {!effectiveTypeMode && <div style={S.cardHint}>tap to flip</div>}
                   </div>
-                )}
-                <div style={S.typeBtnRow}>
-                  <button style={S.btnWrong} onClick={() => answer(false)}>Again</button>
-                  <button style={S.btnRight} onClick={() => answer(true)}>Got It</button>
+                  <div style={S.cardBack}>
+                    <div style={S.cardEyebrow}>{card.shownDir==="fr"?"English":"French"}</div>
+                    <div style={S.cardTextB}>{back}</div>
+                    {TTS_AVAILABLE && card.shownDir === "en" && (
+                      <div style={S.cardAudio}>
+                        <button
+                          style={S.cardAudioBtn}
+                          onClick={(e) => { e.stopPropagation(); speakCard(); }}
+                          title="Play French pronunciation"
+                        >
+                          🔊
+                        </button>
+                      </div>
+                    )}
+                    <div style={S.cardActionsFloat}>
+                      <button
+                        style={S.cardActionBtn}
+                        onClick={(e) => { e.stopPropagation(); setEditingCard(card); }}
+                        title="Edit this card"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        style={card.flagged ? {...S.cardActionBtn, ...S.cardActionBtnFlagged} : S.cardActionBtn}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!card.flagged) flagCard(card.row_id);
+                        }}
+                        title={card.flagged ? "Already flagged" : "Flag this card's translation for review"}
+                      >
+                        🚩
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-            ) : (
-              <div style={S.typeInputRow}>
-                <input
-                  ref={studyInputRef}
-                  style={S.typeInput}
-                  value={typedAnswer}
-                  onChange={e => setTypedAnswer(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") submitTyped(); }}
-                  placeholder={`Type ${card.shownDir==="fr" ? "English" : "French"}…`}
-                  autoFocus
+
+              {/* Pronunciation panel — appears below card when recording or showing results */}
+              {PRONUNCIATION_ENABLED && (recState !== "idle") && (
+                <PronunciationPanel
+                  recState={recState}
+                  result={pronResult}
+                  error={pronError}
+                  referenceText={card.f.includes("→") ? card.b : card.f}
+                  onCancel={cancelRecording}
+                  onRetry={() => { setRecState("idle"); setPronResult(null); setPronError(""); setTimeout(startRecording, 100); }}
+                  onSpeakWord={speakText}
+                  onDismiss={() => { setRecState("idle"); setPronResult(null); setPronError(""); }}
                 />
-                <button style={S.typeSubmit} onClick={submitTyped}>Check</button>
-              </div>
-            )
+              )}
+
+              {effectiveTypeMode ? (
+                typeResult ? (
+                  <div style={S.typeFeedback}>
+                    <div style={typeResult==="correct" ? S.typeCorrect : typeResult==="close" ? S.typeClose : S.typeWrong}>
+                      {typeResult==="correct" && "✓ Correct!"}
+                      {typeResult==="close" && `✓ Close enough — answer: ${back}`}
+                      {typeResult==="wrongArticle" && `✗ Wrong article — answer: ${back}`}
+                      {typeResult==="wrong" && `✗ Answer: ${back}`}
+                    </div>
+                    {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
+                      <div style={S.feedbackRow}>
+                        {feedbackState === null && (
+                          <button style={S.feedbackBtn} onClick={submitFeedback}>
+                            My answer should have been accepted
+                          </button>
+                        )}
+                        {feedbackState === "submitting" && <span style={S.feedbackPending}>Sending…</span>}
+                        {feedbackState === "submitted" && <span style={S.feedbackOk}>Thanks! Your answer is being reviewed.</span>}
+                        {feedbackState === "error" && <span style={S.feedbackErr}>Couldn't send — try again</span>}
+                      </div>
+                    )}
+                    <div style={S.actionRow}>
+                      <button style={S.actionBtn} onClick={() => answer(false)} title="Again">
+
+                        <div style={S.actionBoxAgain}>
+
+                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+
+                        </div>
+
+                        <span style={S.actionLabel}>AGAIN</span>
+
+                      </button>
+
+                      <button style={S.actionBtn} onClick={() => answer(true)} title="Got It">
+
+                        <div style={S.actionBoxGot}>
+
+                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>
+
+                        </div>
+
+                        <span style={{...S.actionLabel, color: "#9c4234"}}>GOT IT</span>
+
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={S.typeInputRow}>
+                    <input
+                      ref={studyInputRef}
+                      style={S.typeInput}
+                      value={typedAnswer}
+                      onChange={e => setTypedAnswer(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") submitTyped(); }}
+                      placeholder={`Type ${card.shownDir==="fr" ? "English" : "French"}…`}
+                      autoFocus
+                    />
+                    <button style={S.typeSubmit} onClick={submitTyped}>Check</button>
+                  </div>
+                )
+              ) : (
+                <>
+                  <div style={S.actionRow}>
+                    <button style={S.actionBtn} onClick={() => answer(false)} title="Again">
+
+                      <div style={S.actionBoxAgain}>
+
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+
+                      </div>
+
+                      <span style={S.actionLabel}>AGAIN</span>
+
+                    </button>
+
+                    <button style={S.actionBtn} onClick={() => answer(true)} title="Got It">
+
+                      <div style={S.actionBoxGot}>
+
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>
+
+                      </div>
+
+                      <span style={{...S.actionLabel, color: "#9c4234"}}>GOT IT</span>
+
+                    </button>
+                  </div>
+                  <div style={S.shortcuts}>Space = flip · ← = again · → = got it · ↑ = back</div>
+                </>
+              )}
+            </div>
           ) : (
-            <>
-              <div style={S.btnRow}>
-                <button style={S.btnWrong} onClick={() => answer(false)}>
-                  <span style={{fontSize:18}}>✗</span> Again
-                </button>
-                <button style={S.btnRight} onClick={() => answer(true)}>
-                  <span style={{fontSize:18}}>✓</span> Got It
-                </button>
-              </div>
-              <div style={S.shortcuts}>Space = flip · ← = again · → = got it · ↑ = back</div>
-            </>
+            <div style={S.empty}><div style={{fontSize:48}}>🎉</div><p>No cards in this selection.</p><button style={S.resetSBtn} onClick={resetSession}>Start Over</button></div>
           )}
-        </>
-      ) : (
-        <div style={S.empty}><div style={{fontSize:48}}>🎉</div><p>No cards in this selection.</p><button style={S.resetSBtn} onClick={resetSession}>Start Over</button></div>
-      )}
-      {idx >= deck.length-1 && deck.length > 0 && stats.seen > 0 && (
-        <div style={S.sessionDone}>
-          <p style={S.doneText}>Session complete! {stats.got}/{stats.seen} ({Math.round(stats.got/Math.max(stats.seen,1)*100)}%)</p>
-          <button style={S.resetSBtn} onClick={resetSession}>New Session</button>
+
+          {idx >= deck.length-1 && deck.length > 0 && stats.seen > 0 && (
+            <div style={S.sessionDone}>
+              <p style={S.doneText}>Session complete! {stats.got}/{stats.seen} ({Math.round(stats.got/Math.max(stats.seen,1)*100)}%)</p>
+              <button style={S.resetSBtn} onClick={resetSession}>New Session</button>
+            </div>
+          )}
         </div>
-      )}
-      <CahierUpload
-        open={showUpload}
-        onClose={() => setShowUpload(false)}
-        hasExisting={userCards.length > 0}
-        onSuccess={(result) => {
-          setShowUpload(false);
-          reloadDeck();
-          alert(
-            `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
-            (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
-            (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
-          );
-        }}
-      />
-      {editingCard && (
-        <EditCardModal
-          card={editingCard}
-          onClose={() => setEditingCard(null)}
-          onSave={async (newFront, newBack) => {
-            const ok = await saveCardEdit(editingCard.row_id, newFront, newBack);
-            if (ok) setEditingCard(null);
-            return ok;
-          }}
-          onDelete={async () => {
-            if (!confirm("Delete this card? This cannot be undone.")) return;
-            const ok = await deleteCard(editingCard.row_id);
-            if (ok) setEditingCard(null);
+
+        <CahierUpload
+          open={showUpload}
+          onClose={() => setShowUpload(false)}
+          hasExisting={userCards.length > 0}
+          onSuccess={(result) => {
+            setShowUpload(false);
+            reloadDeck();
+            alert(
+              `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
+              (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
+              (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
+            );
           }}
         />
-      )}
+        {editingCard && (
+          <EditCardModal
+            card={editingCard}
+            onClose={() => setEditingCard(null)}
+            onSave={async (newFront, newBack) => {
+              const ok = await saveCardEdit(editingCard.row_id, newFront, newBack);
+              if (ok) setEditingCard(null);
+              return ok;
+            }}
+            onDelete={async () => {
+              if (!confirm("Delete this card? This cannot be undone.")) return;
+              const ok = await deleteCard(editingCard.row_id);
+              if (ok) setEditingCard(null);
+            }}
+          />
+        )}
+      </main>
     </div>
   );
 }
@@ -1235,13 +1321,8 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
   };
 
   return (
-    <div style={S.container}>
-      <h1 style={S.title}>Feedback Review</h1>
-      <div style={S.nav}>
-        {[["study","Cards"],["stats","Stats"],["feedback","Feedback"]].map(([m,label]) => (
-          <button key={m} style={m==="feedback" ? {...S.navBtn,...S.navActive} : S.navBtn} onClick={() => { if (m !== "feedback") { setMode(m); resetSession(); } }}>{label}</button>
-        ))}
-      </div>
+    <>
+      <h1 style={S.statsHeading}>Feedback Review</h1>
       {loading ? (
         <div style={S.empty}>Loading…</div>
       ) : items.length === 0 ? (
@@ -1290,10 +1371,9 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
-
 
 // ─── AUDIO TOOLBAR ───────────────────────────────────────────────────────
 function AudioToolbar({ onSpeak, onMic, recState, sttAvailable }) {
@@ -1410,10 +1490,60 @@ function ScoreCell({ label, value }) {
 const S = {
   container: { maxWidth:760, margin:"0 auto", padding:"24px 16px 64px", fontFamily:T.font.sans, color:T.color.onSurface },
   loading: { textAlign:"center", padding:60, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
+
+  // ── App shell: sidebar + main ─────────────────────────────────────
+  shell: { display:"flex", minHeight:"100vh", background:T.color.background },
+  shellNarrow: { display:"flex", flexDirection:"column", minHeight:"100vh", background:T.color.background },
+  main: { flex:1, display:"flex", flexDirection:"column", minWidth:0 },
+  mainInner: { flex:1, padding:"32px 40px 120px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
+
+  // ── Sidebar ───────────────────────────────────────────────────────
+  // Fixed 256px column on desktop. The sticky positioning + 100vh height
+  // means the sidebar stays fixed while the main content scrolls.
+  sideBar: { width:256, background:T.color.surfaceLow, padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
+  sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
+  sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
+  sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
+  sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderTop:"3px solid transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
+  sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
+  sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderRight:"4px solid transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
+  sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
+  sideFoot: { padding:"16px 24px 0", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)", display:"flex", flexDirection:"column", gap:6, alignItems:"flex-start" },
+  sideUtilBtn: { padding:"8px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, textAlign:"left", width:"100%", letterSpacing:"0.02em" },
+  sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
+
+  // ── Sub-toolbar (category filter + counter, below sticky top bar) ─
+  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:24, flexWrap:"wrap" },
+  subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
+
+  // ── Card area: centered with decorative blur shapes ───────────────
+  cardArea: { position:"relative", display:"flex", flexDirection:"column", alignItems:"center", paddingTop:24 },
+  blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
+  blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
+
+  // ── Card content (eyebrow, hint, audio circles, hover actions) ────
+  cardEyebrow: { position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.18em", display:"flex", alignItems:"center", gap:8, whiteSpace:"nowrap" },
+  cardHint: { position:"absolute", bottom:18, left:"50%", transform:"translateX(-50%)", fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontStyle:"italic", opacity:0.45 },
+  cardAudio: { display:"flex", gap:14, marginTop:28, justifyContent:"center" },
+  cardAudioBtn: { width:52, height:52, display:"flex", alignItems:"center", justifyContent:"center", border:"none", borderRadius:"50%", background:T.color.surfaceLow, cursor:"pointer", fontSize:20, color:T.color.primary, transition:"all 0.15s" },
+  cardAudioMic: { background:T.color.surfaceLow, color:T.color.secondary },
+  cardAudioMicActive: { background:T.color.secondary, color:T.color.onSecondary, animation:"pulse 1.2s infinite" },
+  cardActionsFloat: { position:"absolute", top:18, right:18, display:"flex", gap:6 },
+
+  // ── Big icon-button actions: AGAIN / GOT IT ───────────────────────
+  // The button itself is a borderless flex column. The colored 80×80
+  // box wraps the SVG, and the uppercase label sits below it.
+  actionRow: { display:"flex", gap:32, justifyContent:"center", marginTop:8, marginBottom:24 },
+  actionBtn: { display:"flex", flexDirection:"column", alignItems:"center", gap:12, background:"transparent", border:"none", cursor:"pointer", padding:0, fontFamily:T.font.sans },
+  actionBoxAgain: { width:80, height:80, borderRadius:T.radius.lg, background:T.color.surfaceHigh, color:T.color.primary, display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.2s" },
+  actionBoxGot: { width:80, height:80, borderRadius:T.radius.lg, background:T.color.secondary, color:T.color.onSecondary, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 8px 24px rgba(156,66,52,0.25)", transition:"all 0.2s" },
+  actionLabel: { fontSize:11, fontWeight:800, letterSpacing:"0.18em", color:T.color.onSurfaceVariant, textTransform:"uppercase" },
+
   // Top utility bar — single horizontal row at the top of the page with
   // upload, beta feedback, email and sign-out. Replaces the old vertically
   // stacked header userInfo block.
-  topBar: { display:"flex", alignItems:"center", gap:10, marginBottom:14, flexWrap:"wrap" },
+  // Sticky glass-blur top app bar — direction toggle, type/auto-speak chips
+  topBar: { position:"sticky", top:0, zIndex:20, display:"flex", alignItems:"center", gap:12, padding:"16px 40px", background:"rgba(253,248,246,0.85)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", boxShadow:"0 8px 32px rgba(3,22,50,0.06)", flexWrap:"wrap" },
   topBarSpacer: { flex:1 },
   topBarBtn: { padding:"6px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
   topBarEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
@@ -1449,16 +1579,16 @@ const S = {
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   backBtn: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500 },
   backBtnSpacer: { width:60 },
-  cardWrap: { perspective:1200, marginBottom:20 },
-  card: { position:"relative", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", minHeight:260 },
-  cardFront: { backfaceVisibility:"hidden", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"36px 28px", minHeight:260, display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:T.shadow.card, position:"relative", overflow:"hidden" },
-  cardBack: { backfaceVisibility:"hidden", transform:"rotateY(180deg)", position:"absolute", top:0, left:0, right:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"36px 28px", minHeight:260, display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:T.shadow.card, overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
+  cardWrap: { perspective:1200, marginBottom:48, width:"100%", maxWidth:680, position:"relative", zIndex:1 },
+  card: { position:"relative", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", minHeight:340 },
+  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"56px 36px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
+  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"56px 36px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
   freqTag: { marginLeft:6, background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
   dot: { width:7, height:7, borderRadius:"50%" },
-  cardText: { fontSize:32, textAlign:"center", fontWeight:400, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
-  cardTextB: { fontSize:28, textAlign:"center", fontWeight:400, color:T.color.primary, lineHeight:1.3, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.01em" },
+  cardText: { fontSize:48, textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
+  cardTextB: { fontSize:36, textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
   hint: { position:"absolute", bottom:12, left:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontStyle:"italic", opacity:0.7 },
   btnRow: { display:"flex", gap:12, marginBottom:12 },
