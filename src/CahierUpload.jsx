@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 
@@ -16,8 +16,12 @@ import { T } from "./theme";
 //   onSuccess     — called with the server response on successful upload
 //   hasExisting   — if true, shows a "replace existing deck" checkbox
 
-export function CahierUpload({ open, onClose, onSuccess, hasExisting }) {
-  const [tab, setTab] = useState("paste"); // paste | file | link
+export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab }) {
+  const [tab, setTab] = useState(initialTab || "paste"); // paste | file | link
+  // When the modal is reopened with a different initialTab, switch to it.
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab, open]);
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [fileName, setFileName] = useState("");
@@ -298,27 +302,28 @@ const M = {
   modal: {
     background: T.color.surfaceLowest,
     borderRadius: T.radius.xl,
-    maxWidth: 600,
+    maxWidth: 640,
     width: "100%",
     maxHeight: "90vh",
     overflowY: "auto",
-    padding: 32,
-    boxShadow: T.shadow.modal,
+    padding: "40px 44px",
+    boxShadow: "0 32px 96px rgba(3,22,50,0.18)",
     fontFamily: T.font.sans,
   },
   header: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
+    alignItems: "flex-start",
+    marginBottom: 12,
   },
   title: {
     margin: 0,
-    fontSize: 26,
+    fontSize: 36,
     color: T.color.primary,
     fontFamily: T.font.serif,
-    fontWeight: 600,
-    letterSpacing: "-0.015em",
+    fontWeight: 700,
+    letterSpacing: "-0.025em",
+    lineHeight: 1.1,
   },
   closeBtn: {
     background: "none",
@@ -403,29 +408,32 @@ const M = {
     fontFamily: T.font.sans,
   },
   dropZone: {
-    border: `2px dashed ${T.color.outlineGhost}`,
-    borderRadius: T.radius.lg,
+    border: `2px dashed rgba(3,22,50,0.12)`,
+    borderRadius: T.radius.xl,
     background: T.color.surfaceLow,
-    padding: "44px 24px",
+    padding: "60px 24px",
     textAlign: "center",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "all 0.2s ease",
     fontFamily: T.font.sans,
   },
   dropZoneActive: {
     borderColor: T.color.secondary,
     background: T.color.tertiaryFixed,
+    transform: "scale(1.01)",
   },
   dropZoneIcon: {
-    fontSize: 36,
-    marginBottom: 12,
+    fontSize: 44,
+    marginBottom: 14,
     opacity: 0.7,
   },
   dropZoneTextStrong: {
-    fontSize: 15,
+    fontSize: 17,
     color: T.color.primary,
-    fontWeight: 600,
+    fontWeight: 700,
     marginBottom: 6,
+    fontFamily: T.font.serif,
+    letterSpacing: "-0.01em",
   },
   dropZoneTextSub: {
     fontSize: 12,
