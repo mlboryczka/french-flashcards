@@ -376,6 +376,37 @@ export async function assessPronunciation(audioBlob, referenceText, lang = "fr-F
   }
 }
 
+// Azure returns scores in TWO different shapes depending on which interface
+// you use:
+//
+//   REST endpoint (cognitiveservices/v1, what we use):
+//     NBest[0].AccuracyScore, .PronScore, .FluencyScore, .CompletenessScore,
+//             .ProsodyScore   ← flat properties on NBest
+//     Words[i].AccuracyScore, .ErrorType   ← also flat
+//     Phonemes[i].AccuracyScore   ← also flat
+//
+//   Speech SDK (WebSocket):
+//     NBest[0].PronunciationAssessment = { AccuracyScore, PronScore, ... }
+//     Words[i].PronunciationAssessment = { AccuracyScore, ErrorType }
+//     Phonemes[i].PronunciationAssessment = { AccuracyScore }
+//
+// `pick(obj, key)` looks at both — flat first, then the wrapper as fallback.
+// This makes the parser tolerant if Azure ever changes shape on us, and lets
+// us swap to the SDK later without rewriting this function.
+//
+// Additionally: French (and several other non-English locales) return EMPTY
+// Phoneme strings — Azure doesn't have IPA labels for those locales. But
+// Syllables[].Grapheme is populated ("vi", "vre", etc), so when phonemes
+// lack labels we map syllables as the per-unit breakdown instead.
+function pick(obj, key) {
+  if (obj == null) return undefined;
+  if (obj[key] != null) return obj[key];
+  if (obj.PronunciationAssessment && obj.PronunciationAssessment[key] != null) {
+    return obj.PronunciationAssessment[key];
+  }
+  return undefined;
+}
+
 function parseAssessment(data, refText) {
   if (data.RecognitionStatus && data.RecognitionStatus !== "Success") {
     return {
@@ -387,24 +418,42 @@ function parseAssessment(data, refText) {
   const best = Array.isArray(data.NBest) && data.NBest[0];
   if (!best) return { error: "No transcription returned" };
 
-  const pa = best.PronunciationAssessment || {};
-  const words = (best.Words || []).map((w) => ({
-    word: w.Word,
-    accuracy: round(w.PronunciationAssessment?.AccuracyScore),
-    errorType: w.PronunciationAssessment?.ErrorType || "None",
-    phonemes: (w.Phonemes || []).map((p) => ({
-      phoneme: p.Phoneme,
-      accuracy: round(p.PronunciationAssessment?.AccuracyScore),
-    })),
-  }));
+  const words = (best.Words || []).map((w) => {
+    // Prefer real phonemes when Azure gave us labels; otherwise fall back to
+    // syllables (Grapheme) so French has something to render.
+    const rawPhonemes = w.Phonemes || [];
+    const hasPhonemeLabels = rawPhonemes.some((p) => p.Phoneme && p.Phoneme.length > 0);
+
+    let phonemes;
+    if (hasPhonemeLabels) {
+      phonemes = rawPhonemes.map((p) => ({
+        phoneme: p.Phoneme,
+        accuracy: round(pick(p, "AccuracyScore")),
+      }));
+    } else {
+      // Syllable fallback for locales without phoneme labels (French et al)
+      phonemes = (w.Syllables || []).map((s) => ({
+        phoneme: s.Grapheme || s.Syllable || "·",
+        accuracy: round(pick(s, "AccuracyScore")),
+      }));
+    }
+
+    return {
+      word: w.Word,
+      accuracy: round(pick(w, "AccuracyScore")),
+      errorType: pick(w, "ErrorType") || "None",
+      phonemes,
+    };
+  });
 
   return {
     transcribed: best.Display || best.Lexical || "",
     referenceText: refText,
-    accuracy: round(pa.AccuracyScore),
-    pronunciation: round(pa.PronScore ?? pa.PronunciationScore),
-    completeness: round(pa.CompletenessScore),
-    fluency: round(pa.FluencyScore),
+    accuracy: round(pick(best, "AccuracyScore")),
+    pronunciation: round(pick(best, "PronScore") ?? pick(best, "PronunciationScore")),
+    completeness: round(pick(best, "CompletenessScore")),
+    fluency: round(pick(best, "FluencyScore")),
+    prosody: round(pick(best, "ProsodyScore")),
     words,
   };
 }
