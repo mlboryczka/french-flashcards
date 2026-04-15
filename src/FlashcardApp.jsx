@@ -727,33 +727,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   if (isAdmin) navItems.push(["feedback", "Feedback"]);
   const sidebar = (
     <aside style={isNarrow ? S.sideBarBottom : S.sideBar}>
-      {/* Profile section — top of sidebar (desktop only) */}
-      {!isNarrow && user && (
-        <div style={S.sideProfile}>
-          <button
-            style={S.profileBtn}
-            onClick={() => setShowProfileMenu(v => !v)}
-          >
-            <div style={S.profileAvatar}>{user.email[0].toUpperCase()}</div>
-            <span style={S.profileChevron}>{showProfileMenu ? "▴" : "▾"}</span>
-          </button>
-          {showProfileMenu && (
-            <div style={S.profileMenu}>
-              <div style={S.profileMenuEmail}>{user.email}</div>
-              <button
-                style={S.profileMenuItem}
-                onClick={() => { setUploadInitialTab("paste"); setShowUpload(true); setShowProfileMenu(false); }}
-              >
-                Upload document
-              </button>
-              <button style={S.profileMenuItem} onClick={onSignOut}>
-                Sign out
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Nav items with icons */}
       <nav style={isNarrow ? S.sideNavBottom : S.sideNav}>
         {navItems.map(([m, label]) => {
@@ -772,10 +745,33 @@ export default function FlashcardApp({ user, onSignOut }) {
         })}
       </nav>
 
-      {/* End Session + Feedback — bottom of sidebar (desktop only) */}
-      {!isNarrow && (
-        <div style={S.sideFeedback}>
-          {user && <BetaFeedback user={user} currentPage={mode} />}
+      {/* Bottom: profile + feedback (desktop only) */}
+      {!isNarrow && user && (
+        <div style={S.sideBottom}>
+          <BetaFeedback user={user} currentPage={mode} />
+          <div style={S.sideProfileRow}>
+            <button
+              style={S.profileBtn}
+              onClick={() => setShowProfileMenu(v => !v)}
+            >
+              <div style={S.profileAvatar}>{user.email[0].toUpperCase()}</div>
+              <span style={S.profileChevron}>{showProfileMenu ? "▴" : "▾"}</span>
+            </button>
+            {showProfileMenu && (
+              <div style={S.profileMenuBottom}>
+                <div style={S.profileMenuEmail}>{user.email}</div>
+                <button
+                  style={S.profileMenuItem}
+                  onClick={() => { setUploadInitialTab("paste"); setShowUpload(true); setShowProfileMenu(false); }}
+                >
+                  Upload document
+                </button>
+                <button style={S.profileMenuItem} onClick={onSignOut}>
+                  Sign out
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </aside>
@@ -1623,8 +1619,13 @@ const S = {
   sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderRight:"4px solid transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
   sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideIcon: { display:"flex", alignItems:"center", flexShrink:0 },
-  // ── Sidebar profile dropdown (top) ─────────────────────────────────
+  // ── Sidebar bottom: profile + feedback ─────────────────────────────
+  sideBottom: { padding:"16px 20px 20px", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)", display:"flex", flexDirection:"column", gap:12 },
+  sideProfileRow: { position:"relative" },
+  profileMenuBottom: { position:"absolute", bottom:"100%", left:0, right:0, marginBottom:8, background:T.color.surfaceLowest, borderRadius:T.radius.lg, boxShadow:"0 -8px 32px rgba(3,22,50,0.12)", padding:"8px 0", zIndex:20, fontFamily:T.font.sans },
+  // Legacy styles kept for reference
   sideProfile: { padding:"16px 20px 8px", position:"relative" },
+  sideFeedback: { padding:"12px 20px 20px", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)", display:"flex", flexDirection:"column", gap:10 },
   profileBtn: { display:"flex", alignItems:"center", gap:10, width:"100%", padding:"8px 12px", background:"transparent", border:"none", borderRadius:T.radius.lg, cursor:"pointer", fontFamily:T.font.sans, transition:"background 0.15s" },
   profileAvatar: { width:34, height:34, borderRadius:"50%", background:T.color.primary, color:T.color.onPrimary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, fontFamily:T.font.sans, flexShrink:0 },
   profileChevron: { marginLeft:"auto", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.5 },
