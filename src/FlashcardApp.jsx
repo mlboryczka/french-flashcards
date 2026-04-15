@@ -1007,13 +1007,6 @@ export default function FlashcardApp({ user, onSignOut }) {
                   {v}
                 </button>
               ))}
-              <button
-                style={freqOnly ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
-                onClick={() => setFreqOnly(v => !v)}
-                title="Only show cards repeated 2 or more times"
-              >
-                Repeated 2×+
-              </button>
             </div>
             {card && (
               <div style={S.subToolbarRight}>
@@ -1134,28 +1127,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </div>
                     )}
                     <div style={S.actionRow}>
-                      <button style={S.actionBtn} onClick={() => answer(false)} title="Again">
-
-                        <div style={S.actionBoxAgain}>
-
-                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-
-                        </div>
-
-                        <span style={S.actionLabel}>AGAIN</span>
-
+                      <button style={S.actionAgainRect} onClick={() => answer(false)}>
+                        <span style={{fontSize:16}}>✗</span> Again
                       </button>
-
-                      <button style={S.actionBtn} onClick={() => answer(true)} title="Got It">
-
-                        <div style={S.actionBoxGot}>
-
-                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>
-
-                        </div>
-
-                        <span style={{...S.actionLabel, color: "#9c4234"}}>GOT IT</span>
-
+                      <button style={S.actionGotRect} onClick={() => answer(true)}>
+                        <span style={{fontSize:16}}>✓</span> Got It
                       </button>
                     </div>
                   </div>
@@ -1183,31 +1159,14 @@ export default function FlashcardApp({ user, onSignOut }) {
               ) : (
                 <>
                   <div style={S.actionRow}>
-                    <button style={S.actionBtn} onClick={() => answer(false)} title="Again">
-
-                      <div style={S.actionBoxAgain}>
-
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-
-                      </div>
-
-                      <span style={S.actionLabel}>AGAIN</span>
-
+                    <button style={S.actionAgainRect} onClick={() => answer(false)}>
+                      <span style={{fontSize:16}}>✗</span> Again
                     </button>
-
-                    <button style={S.actionBtn} onClick={() => answer(true)} title="Got It">
-
-                      <div style={S.actionBoxGot}>
-
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>
-
-                      </div>
-
-                      <span style={{...S.actionLabel, color: "#9c4234"}}>GOT IT</span>
-
+                    <button style={S.actionGotRect} onClick={() => answer(true)}>
+                      <span style={{fontSize:16}}>✓</span> Got It
                     </button>
                   </div>
-                  <div style={S.shortcuts}>Space = flip · ← = again · → = got it · ↑ = back</div>
+                  <ShortcutsTooltip />
                 </>
               )}
             </div>
@@ -1443,6 +1402,34 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
   );
 }
 
+// ─── SHORTCUTS TOOLTIP ────────────────────────────────────────────────────
+// Small ⓘ circle in the bottom-right of the card area. Hover reveals
+// keyboard shortcuts in a styled tooltip. Keeps the study view clean
+// while remaining discoverable.
+function ShortcutsTooltip() {
+  const [show, setShow] = useState(false);
+  return (
+    <div style={S.infoWrap}>
+      <div
+        style={S.infoBtn}
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        onClick={() => setShow(s => !s)}
+      >
+        ⓘ
+      </div>
+      {show && (
+        <div style={S.infoTip}>
+          <div><b>Space</b> flip card</div>
+          <div><b>←</b> again</div>
+          <div><b>→</b> got it</div>
+          <div><b>↑</b> previous card</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── AUDIO TOOLBAR ───────────────────────────────────────────────────────
 function AudioToolbar({ onSpeak, onMic, recState, sttAvailable }) {
   return (
@@ -1601,7 +1588,17 @@ const S = {
   // ── Big icon-button actions: AGAIN / GOT IT ───────────────────────
   // The button itself is a borderless flex column. The colored 80×80
   // box wraps the SVG, and the uppercase label sits below it.
-  actionRow: { display:"flex", gap:32, justifyContent:"center", marginTop:8, marginBottom:24 },
+  // ── Rectangular action buttons: AGAIN / GOT IT ─────────────────────
+  actionRow: { display:"flex", gap:16, justifyContent:"center", marginTop:8, marginBottom:24, width:"100%", maxWidth:480, alignSelf:"center" },
+  actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceHigh, color:T.color.primary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", transition:"all 0.15s" },
+  actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.color.secondary, color:T.color.onSecondary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", boxShadow:"0 8px 24px rgba(156,66,52,0.2)", transition:"all 0.15s" },
+
+  // ── Info tooltip (ⓘ keyboard shortcuts) ───────────────────────────
+  infoWrap: { display:"flex", justifyContent:"center", position:"relative" },
+  infoBtn: { width:28, height:28, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:14, color:T.color.onSurfaceVariant, opacity:0.4, transition:"opacity 0.15s", userSelect:"none" },
+  infoTip: { position:"absolute", bottom:36, left:"50%", transform:"translateX(-50%)", background:T.color.primary, color:T.color.onPrimary, padding:"14px 18px", borderRadius:T.radius.lg, fontSize:12, fontFamily:T.font.sans, lineHeight:1.7, whiteSpace:"nowrap", boxShadow:"0 8px 32px rgba(3,22,50,0.2)", zIndex:10 },
+
+  // Legacy action styles (kept for reference, no longer rendered)
   actionBtn: { display:"flex", flexDirection:"column", alignItems:"center", gap:12, background:"transparent", border:"none", cursor:"pointer", padding:0, fontFamily:T.font.sans },
   actionBoxAgain: { width:80, height:80, borderRadius:T.radius.lg, background:T.color.surfaceHigh, color:T.color.primary, display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.2s" },
   actionBoxGot: { width:80, height:80, borderRadius:T.radius.lg, background:T.color.secondary, color:T.color.onSecondary, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 8px 24px rgba(156,66,52,0.25)", transition:"all 0.2s" },
