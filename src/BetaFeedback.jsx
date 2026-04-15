@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 
@@ -124,7 +125,7 @@ export function BetaFeedback({ user, currentPage }) {
         Send feedback
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
           style={BF.overlay}
           onClick={status === "submitting" ? null : () => setOpen(false)}
@@ -210,7 +211,8 @@ export function BetaFeedback({ user, currentPage }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
