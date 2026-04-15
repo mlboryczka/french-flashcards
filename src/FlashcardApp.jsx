@@ -27,7 +27,18 @@ const PRONUNCIATION_ENABLED = false;
 // UI code → DB code, used by the admin seed-deck action
 const CAT_TO_DB = { vocab: "V", expr: "E", gram: "G", pron: "P" };
 
-const CAT_LABELS = { all:"All", vocab:"Vocabulaire", expr:"Expressions", gram:"Grammaire", pron:"Prononciation" };
+// Simplified two-category system: Vocabulary (single words) vs Phrases
+// (expressions, grammar, pronunciation). The underlying card data still
+// carries the original 4-way category; these constants control the tabs
+// and display labels only.
+const TAB_LABELS = { all: "All", vocab: "Vocabulary", phrases: "Phrases" };
+const TAB_COLORS = { vocab: "#9c4234", phrases: "#1a2b48" };
+// Map underlying card.cat → display tab key
+const catToTab = (cat) => cat === "vocab" ? "vocab" : "phrases";
+// Map underlying card.cat → eyebrow display label
+const catToLabel = (cat) => cat === "vocab" ? "Vocabulary" : "Phrase";
+// Legacy — kept for stats bar colors and any remaining references
+const CAT_LABELS = { all:"All", vocab:"Vocabulary", expr:"Phrases", gram:"Phrases", pron:"Phrases" };
 const CAT_COLORS = { vocab:"#9c4234", expr:"#76261b", gram:"#1a2b48", pron:"#031632" };
 
 // ─── STORAGE ─────────────────────────────────────────────────────────────
@@ -235,7 +246,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Build flashcard deck - only rebuilds when filters/mode change, NOT on every answer
   useEffect(() => {
     if (!loaded) return;
-    let cards = cat === "all" ? [...userCards] : userCards.filter(c => c.cat === cat);
+    let cards = cat === "all"
+      ? [...userCards]
+      : cat === "phrases"
+        ? userCards.filter(c => c.cat !== "vocab")
+        : userCards.filter(c => c.cat === cat);
     if (freqOnly) cards = cards.filter(c => c.freq >= 2);
     for (let i = cards.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [cards[i],cards[j]]=[cards[j],cards[i]]; }
     // Sort by current progress score (worst first) at build time only
@@ -729,15 +744,14 @@ export default function FlashcardApp({ user, onSignOut }) {
     const newCount = total - learned - inProg;
     const masteryPct = total > 0 ? Math.round((learned/total)*100) : 0;
 
-    // Per-category totals
-    const byCat = {};
+    // Per-category totals (two groups: Vocabulary vs Phrases)
+    const byTab = { vocab: {total:0, learned:0}, phrases: {total:0, learned:0} };
     for (const c of userCards) {
-      if (!byCat[c.cat]) byCat[c.cat] = {total:0, learned:0};
-      byCat[c.cat].total++;
-      if ((progress[c.id]?.score??0) >= 3) byCat[c.cat].learned++;
+      const tab = catToTab(c.cat);
+      byTab[tab].total++;
+      if ((progress[c.id]?.score??0) >= 3) byTab[tab].learned++;
     }
-    // Force a stable display order: V, E, G, P
-    const catOrder = ["vocab", "expr", "gram", "pron"].filter(k => byCat[k]);
+    const tabOrder = ["vocab", "phrases"].filter(k => byTab[k].total > 0);
 
     // Streak: walk back from today, count consecutive days where any card was
     // studied. We allow today itself to be empty (you might not have studied
@@ -845,17 +859,17 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div style={{...S.bentoCard, ...span(4)}}>
             <h3 style={S.bentoTitle}>By Category</h3>
             <div style={S.catBars}>
-              {catOrder.map(k => {
-                const v = byCat[k];
+              {tabOrder.map(k => {
+                const v = byTab[k];
                 const pct = v.total > 0 ? Math.round((v.learned/v.total)*100) : 0;
                 return (
                   <div key={k}>
                     <div style={S.catBarHead}>
-                      <span>{CAT_LABELS[k]}</span>
+                      <span>{TAB_LABELS[k]}</span>
                       <span>{pct}%</span>
                     </div>
                     <div style={S.catBarTrack}>
-                      <div style={{...S.catBarFill, width:`${pct}%`, background:CAT_COLORS[k]}} />
+                      <div style={{...S.catBarFill, width:`${pct}%`, background:TAB_COLORS[k]}} />
                     </div>
                     <div style={S.catBarMeta}>{v.learned} of {v.total}</div>
                   </div>
@@ -907,10 +921,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                     <div style={S.hardHead}>
                       <span style={{
                         ...S.hardTag,
-                        background: CAT_COLORS[c.cat] + "22",
-                        color: CAT_COLORS[c.cat],
+                        background: TAB_COLORS[catToTab(c.cat)] + "22",
+                        color: TAB_COLORS[catToTab(c.cat)],
                       }}>
-                        {CAT_LABELS[c.cat]}
+                        {catToLabel(c.cat)}
                       </span>
                     </div>
                     <h4 style={S.hardWord}>{c.f}</h4>
@@ -998,10 +1012,10 @@ export default function FlashcardApp({ user, onSignOut }) {
           {/* Sub-toolbar: category filter + counter */}
           <div style={S.subToolbar}>
             <div style={S.catRow}>
-              {Object.entries(CAT_LABELS).map(([k,v]) => (
+              {Object.entries(TAB_LABELS).map(([k,v]) => (
                 <button
                   key={k}
-                  style={cat===k ? {...S.catBtn,...S.catBtnA,...(k!=="all"?{borderColor:CAT_COLORS[k],color:CAT_COLORS[k]}:{})} : S.catBtn}
+                  style={cat===k ? {...S.catBtn,...S.catBtnA,...(k!=="all"?{borderColor:TAB_COLORS[k],color:TAB_COLORS[k]}:{})} : S.catBtn}
                   onClick={() => setCat(k)}
                 >
                   {v}
@@ -1030,7 +1044,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.cardWrap} onClick={effectiveTypeMode ? undefined : flip}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", cursor: effectiveTypeMode ? "default" : "pointer"}}>
                   <div style={S.cardFront}>
-                    <div style={S.cardEyebrow}>{CAT_LABELS[card.cat]}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
+                    <div style={S.cardEyebrow}>{catToLabel(card.cat)}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -1053,6 +1067,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </div>
                     )}
                     {!effectiveTypeMode && <div style={S.cardHint}>tap to flip</div>}
+                    <ShortcutsTooltip />
                   </div>
                   <div style={S.cardBack}>
                     <div style={S.cardEyebrow}>{card.shownDir==="fr"?"English":"French"}</div>
@@ -1166,8 +1181,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <span style={{fontSize:16}}>✓</span> Got It
                     </button>
                   </div>
-                  <ShortcutsTooltip />
-                </>
+                  </>
               )}
             </div>
           ) : (
@@ -1409,7 +1423,7 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
 function ShortcutsTooltip() {
   const [show, setShow] = useState(false);
   return (
-    <div style={S.infoWrap}>
+    <div style={S.infoWrap} onClick={(e) => e.stopPropagation()}>
       <div
         style={S.infoBtn}
         onMouseEnter={() => setShow(true)}
@@ -1594,9 +1608,9 @@ const S = {
   actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.color.secondary, color:T.color.onSecondary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", boxShadow:"0 8px 24px rgba(156,66,52,0.2)", transition:"all 0.15s" },
 
   // ── Info tooltip (ⓘ keyboard shortcuts) ───────────────────────────
-  infoWrap: { display:"flex", justifyContent:"center", position:"relative" },
-  infoBtn: { width:28, height:28, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:14, color:T.color.onSurfaceVariant, opacity:0.4, transition:"opacity 0.15s", userSelect:"none" },
-  infoTip: { position:"absolute", bottom:36, left:"50%", transform:"translateX(-50%)", background:T.color.primary, color:T.color.onPrimary, padding:"14px 18px", borderRadius:T.radius.lg, fontSize:12, fontFamily:T.font.sans, lineHeight:1.7, whiteSpace:"nowrap", boxShadow:"0 8px 32px rgba(3,22,50,0.2)", zIndex:10 },
+  infoWrap: { position:"absolute", bottom:14, right:18, zIndex:5 },
+  infoBtn: { width:22, height:22, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.25, transition:"opacity 0.15s", userSelect:"none" },
+  infoTip: { position:"absolute", bottom:30, right:0, background:T.color.surfaceLow, color:T.color.onSurfaceVariant, padding:"12px 16px", borderRadius:T.radius.lg, fontSize:11, fontFamily:T.font.sans, lineHeight:1.8, whiteSpace:"nowrap", boxShadow:"0 4px 16px rgba(3,22,50,0.08)", zIndex:10 },
 
   // Legacy action styles (kept for reference, no longer rendered)
   actionBtn: { display:"flex", flexDirection:"column", alignItems:"center", gap:12, background:"transparent", border:"none", cursor:"pointer", padding:0, fontFamily:T.font.sans },
