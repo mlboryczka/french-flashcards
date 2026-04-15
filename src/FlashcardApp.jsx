@@ -716,6 +716,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   // 256px-wide column; on phones it collapses to a fixed bottom nav.
   // Defined here (inside the component) so it captures all the closure
   // variables it needs without prop-drilling.
+  // Icon SVGs for sidebar nav (14×14, inline, match Material Symbols style)
+  const NAV_ICONS = {
+    study: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>,
+    stats: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>,
+    feedback: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>,
+  };
+
   const navItems = [["study", "Cards"], ["stats", "Stats"]];
   if (isAdmin) navItems.push(["feedback", "Feedback"]);
   const sidebar = (
@@ -747,7 +754,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         </div>
       )}
 
-      {/* Nav items */}
+      {/* Nav items with icons */}
       <nav style={isNarrow ? S.sideNavBottom : S.sideNav}>
         {navItems.map(([m, label]) => {
           const baseStyle = isNarrow ? S.sideItemBottom : S.sideItem;
@@ -758,16 +765,22 @@ export default function FlashcardApp({ user, onSignOut }) {
               style={mode === m ? {...baseStyle, ...activeStyle} : baseStyle}
               onClick={() => { setMode(m); resetSession(); }}
             >
+              <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
               {label}
             </button>
           );
         })}
       </nav>
 
-      {/* Feedback — bottom of sidebar (desktop only) */}
-      {!isNarrow && user && (
+      {/* End Session + Feedback — bottom of sidebar (desktop only) */}
+      {!isNarrow && (
         <div style={S.sideFeedback}>
-          <BetaFeedback user={user} currentPage={mode} />
+          {mode === "study" && (
+            <button style={S.endSessionBtn} onClick={resetSession}>
+              End Session
+            </button>
+          )}
+          {user && <BetaFeedback user={user} currentPage={mode} />}
         </div>
       )}
     </aside>
@@ -1103,7 +1116,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         )}
                       </div>
                     )}
-                    {!effectiveTypeMode && <div style={S.cardHint}>tap to flip</div>}
+                    {!effectiveTypeMode && <div style={S.cardHint}>Tap to reveal translation</div>}
                     <ShortcutsTooltip />
                   </div>
                   <div style={S.cardBack}>
@@ -1180,10 +1193,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                     )}
                     <div style={S.actionRow}>
                       <button style={S.actionAgainRect} onClick={() => answer(false)}>
-                        <span style={{fontSize:16}}>✗</span> Again
+                        Again
                       </button>
                       <button style={S.actionGotRect} onClick={() => answer(true)}>
-                        <span style={{fontSize:16}}>✓</span> Got It
+                        Got It
                       </button>
                     </div>
                   </div>
@@ -1212,10 +1225,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <>
                   <div style={S.actionRow}>
                     <button style={S.actionAgainRect} onClick={() => answer(false)}>
-                      <span style={{fontSize:16}}>✗</span> Again
+                      Again
                     </button>
                     <button style={S.actionGotRect} onClick={() => answer(true)}>
-                      <span style={{fontSize:16}}>✓</span> Got It
+                      Got It
                     </button>
                   </div>
                   </>
@@ -1614,6 +1627,7 @@ const S = {
   sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderRight:"4px solid transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
   sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
+  sideIcon: { display:"flex", alignItems:"center", flexShrink:0 },
   // ── Sidebar profile dropdown (top) ─────────────────────────────────
   sideProfile: { padding:"16px 20px 8px", position:"relative" },
   profileBtn: { display:"flex", alignItems:"center", gap:10, width:"100%", padding:"8px 12px", background:"transparent", border:"none", borderRadius:T.radius.lg, cursor:"pointer", fontFamily:T.font.sans, transition:"background 0.15s" },
@@ -1623,7 +1637,8 @@ const S = {
   profileMenuEmail: { padding:"10px 16px 6px", fontSize:11, color:T.color.onSurfaceVariant, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", borderBottom:"1px solid rgba(3,22,50,0.06)", marginBottom:4 },
   profileMenuItem: { display:"block", width:"100%", padding:"10px 16px", background:"transparent", border:"none", borderRadius:0, cursor:"pointer", fontSize:12, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurface, textAlign:"left", transition:"background 0.1s" },
   // ── Sidebar feedback (bottom) ─────────────────────────────────────
-  sideFeedback: { padding:"12px 20px 20px", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)" },
+  sideFeedback: { padding:"12px 20px 20px", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)", display:"flex", flexDirection:"column", gap:10 },
+  endSessionBtn: { width:"100%", padding:"12px", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, background:"transparent", color:T.color.secondary, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", transition:"background 0.15s" },
   // Legacy sidebar footer styles — no longer rendered but kept so the
   // BetaFeedback component (which may reference S.sideFoot) doesn't crash
   sideFoot: { padding:"16px 24px 0", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)", display:"flex", flexDirection:"column", gap:6, alignItems:"flex-start" },
@@ -1653,8 +1668,8 @@ const S = {
   // box wraps the SVG, and the uppercase label sits below it.
   // ── Rectangular action buttons: AGAIN / GOT IT ─────────────────────
   actionRow: { display:"flex", gap:16, justifyContent:"center", marginTop:8, marginBottom:24, width:"100%", maxWidth:480, alignSelf:"center" },
-  actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceHigh, color:T.color.primary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", transition:"all 0.15s" },
-  actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },
+  actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"20px 28px", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, background:"transparent", color:T.color.onSurfaceVariant, fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", transition:"all 0.15s" },
+  actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"20px 28px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },
 
   // ── Info tooltip (ⓘ keyboard shortcuts) ───────────────────────────
   infoWrap: { position:"absolute", bottom:14, right:18, zIndex:5 },
