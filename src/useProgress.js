@@ -17,21 +17,33 @@ export function useProgress(user) {
     }
     setLoaded(false);
     (async () => {
-      const { data, error } = await supabase
-        .from("card_progress")
-        .select("card_id, score, seen, got")
-        .eq("user_id", user.id);
-      if (cancelled) return;
-      if (error) {
-        console.error("Failed to load progress:", error);
-        setProgress({});
-      } else {
-        const obj = {};
-        for (const row of data || []) {
-          obj[row.card_id] = { score: row.score, seen: row.seen, got: row.got };
+      // Supabase caps responses at 1000 rows. Paginate to fetch all progress.
+      const PAGE = 1000;
+      let allRows = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from("card_progress")
+          .select("card_id, score, seen, got")
+          .eq("user_id", user.id)
+          .range(from, from + PAGE - 1);
+        if (cancelled) return;
+        if (error) {
+          console.error("Failed to load progress:", error);
+          setProgress({});
+          setLoaded(true);
+          return;
         }
-        setProgress(obj);
+        allRows = allRows.concat(data || []);
+        if (!data || data.length < PAGE) break;
+        from += PAGE;
       }
+      if (cancelled) return;
+      const obj = {};
+      for (const row of allRows) {
+        obj[row.card_id] = { score: row.score, seen: row.seen, got: row.got };
+      }
+      setProgress(obj);
       setLoaded(true);
     })();
     return () => {
