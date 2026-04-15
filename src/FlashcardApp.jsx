@@ -496,6 +496,17 @@ export default function FlashcardApp({ user, onSignOut }) {
     return () => window.removeEventListener("keydown", handler);
   }, [card, mode, typeMode]);
 
+  // In type mode, after a result is showing (input gone), Enter = Got It
+  useEffect(() => {
+    if (mode !== "study" || !typeMode || !typeResult) return;
+    const handler = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.key === "Enter") { e.preventDefault(); answerRef.current(true); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [mode, typeMode, typeResult]);
+
   // Submit a feedback claim: "my answer should have been accepted"
   const [feedbackErrMsg, setFeedbackErrMsg] = useState("");
   const [feedbackVerdict, setFeedbackVerdict] = useState(null); // {verdict, reasoning}
@@ -543,6 +554,47 @@ export default function FlashcardApp({ user, onSignOut }) {
       setFeedbackState("submitted");
     } catch (e) {
       console.error("Feedback failed:", e);
+      setFeedbackErrMsg(e.message);
+      setFeedbackState("error");
+    }
+  };
+
+  // Force-accept: user overrides Claude's reject/uncertain verdict
+  const forceAcceptAnswer = async () => {
+    if (!card || !typedAnswer.trim()) return;
+    setFeedbackState("submitting");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/review-answer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          card_id: card.id,
+          direction: card.shownDir,
+          french: card.f,
+          english: card.b,
+          user_answer: typedAnswer,
+          expected_answer: card.shownDir === "fr" ? card.b : card.f,
+          force: true,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setFeedbackErrMsg(data?.error || `HTTP ${res.status}`);
+        setFeedbackState("error");
+        return;
+      }
+      // Update local alternates
+      const key = `${card.id}:${card.shownDir}`;
+      setAlternates(prev => ({
+        ...prev,
+        [key]: [...(prev[key] || []), typedAnswer],
+      }));
+      setFeedbackState("accepted");
+    } catch (e) {
       setFeedbackErrMsg(e.message);
       setFeedbackState("error");
     }
@@ -920,69 +972,11 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
           </div>
 
-          {/* Streak — col 4, dark primary-container background */}
+          {/* Streak — col 4, compact */}
           <div style={{...S.bentoCard, ...S.bentoStreak, ...span(4)}}>
-            <div style={S.streakTop}>
-              <div style={S.streakIcon}>🔥</div>
-              <h3 style={S.streakTitle}>Streak</h3>
-              <p style={S.streakLabel}>{streak === 1 ? "1 day" : `${streak} days`}</p>
-            </div>
+            <div style={S.streakIcon}>🔥</div>
             <div style={S.streakBig}>{streak}</div>
-          </div>
-
-          {/* By Category — col 4 */}
-          <div style={{...S.bentoCard, ...span(4)}}>
-            <h3 style={S.bentoTitle}>By Category</h3>
-            <div style={S.catBars}>
-              {tabOrder.map(k => {
-                const v = byTab[k];
-                const pct = v.total > 0 ? Math.round((v.learned/v.total)*100) : 0;
-                return (
-                  <div key={k}>
-                    <div style={S.catBarHead}>
-                      <span>{TAB_LABELS[k]}</span>
-                      <span>{pct}%</span>
-                    </div>
-                    <div style={S.catBarTrack}>
-                      <div style={{...S.catBarFill, width:`${pct}%`, background:TAB_COLORS[k]}} />
-                    </div>
-                    <div style={S.catBarMeta}>{v.learned} of {v.total}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Activity heatmap — col 8 */}
-          <div style={{...S.bentoCard, ...span(8)}}>
-            <div style={S.bentoHead}>
-              <h3 style={S.bentoTitle}>Activity</h3>
-              <div style={S.heatLegend}>
-                <span style={S.heatLegendLabel}>Less</span>
-                <div style={{...S.heatCell, background:T.color.surfaceHigh}} />
-                <div style={{...S.heatCell, background:"rgba(156, 66, 52, 0.3)"}} />
-                <div style={{...S.heatCell, background:"rgba(156, 66, 52, 0.6)"}} />
-                <div style={{...S.heatCell, background:T.color.secondary}} />
-                <span style={S.heatLegendLabel}>More</span>
-              </div>
-            </div>
-            <div style={S.heatGrid}>
-              {heatmapWeeks.map((week, wi) => (
-                <div key={wi} style={S.heatCol}>
-                  {week.map((day, di) => (
-                    <div
-                      key={di}
-                      style={{...S.heatCell, background:heatColor(day.count)}}
-                      title={`${day.iso} · ${day.count} card${day.count===1?"":"s"}`}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-            <div style={S.heatFootnote}>
-              <span>Past 12 weeks</span>
-              <span>Today</span>
-            </div>
+            <p style={S.streakLabel}>{streak === 1 ? "day streak" : "day streak"}</p>
           </div>
 
           {/* Hardest cards — col 12 (only if there are any) */}
@@ -1200,13 +1194,18 @@ export default function FlashcardApp({ user, onSignOut }) {
                         )}
                         {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
                         {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
-                          <span style={S.feedbackAccept}>✓ Accepted — this answer will be remembered.</span>
+                          <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
                         )}
-                        {feedbackState === "submitted" && feedbackVerdict?.verdict === "reject" && (
-                          <span style={S.feedbackReject}>✗ Not accepted: {feedbackVerdict.reasoning}</span>
+                        {feedbackState === "submitted" && (feedbackVerdict?.verdict === "reject" || feedbackVerdict?.verdict === "uncertain") && (
+                          <div style={S.feedbackMsg}>
+                            <div style={S.feedbackReasoning}>{feedbackVerdict.reasoning}</div>
+                            <button style={S.feedbackOverrideBtn} onClick={forceAcceptAnswer}>
+                              Accept anyway
+                            </button>
+                          </div>
                         )}
-                        {feedbackState === "submitted" && feedbackVerdict?.verdict === "uncertain" && (
-                          <span style={S.feedbackPending}>Uncertain: {feedbackVerdict.reasoning}</span>
+                        {feedbackState === "accepted" && (
+                          <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
                         )}
                         {feedbackState === "error" && <span style={S.feedbackErr}>{feedbackErrMsg || "Couldn't send — try again"}</span>}
                       </div>
@@ -1789,12 +1788,12 @@ const S = {
   pillSecondary: { padding:"6px 14px", background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, fontSize:10, fontWeight:700, fontFamily:T.font.sans, borderRadius:T.radius.full, letterSpacing:"0.08em" },
   pillNeutral: { padding:"6px 14px", background:T.color.surfaceHigh, color:T.color.primary, fontSize:10, fontWeight:700, fontFamily:T.font.sans, borderRadius:T.radius.full, letterSpacing:"0.08em" },
   // Streak card — dark navy background (Stitch primary-container #1a2b48)
-  bentoStreak: { background:"#1a2b48", color:T.color.onPrimary, display:"flex", flexDirection:"column", justifyContent:"space-between", minHeight:240, position:"relative", overflow:"hidden" },
+  bentoStreak: { background:"#1a2b48", color:T.color.onPrimary, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:200, position:"relative", overflow:"hidden", textAlign:"center" },
   streakTop: { zIndex:1 },
-  streakIcon: { fontSize:36, marginBottom:8, lineHeight:1 },
+  streakIcon: { fontSize:28, marginBottom:4, lineHeight:1 },
   streakTitle: { fontSize:20, fontWeight:600, fontFamily:T.font.serif, color:T.color.onPrimary, margin:"0 0 4px" },
-  streakLabel: { fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:"rgba(255,255,255,0.7)", textTransform:"uppercase", letterSpacing:"0.12em", margin:0 },
-  streakBig: { fontSize:88, fontFamily:T.font.serif, fontStyle:"italic", fontWeight:700, color:T.color.onPrimary, lineHeight:1, alignSelf:"flex-end", zIndex:1 },
+  streakLabel: { fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:"rgba(255,255,255,0.5)", textTransform:"uppercase", letterSpacing:"0.12em", margin:0 },
+  streakBig: { fontSize:64, fontFamily:T.font.serif, fontWeight:700, color:T.color.onPrimary, lineHeight:1, margin:"4px 0 6px" },
   // Category bars
   catBars: { display:"flex", flexDirection:"column", gap:18, marginTop:14 },
   catBarHead: { display:"flex", justifyContent:"space-between", fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6 },
@@ -1912,6 +1911,9 @@ const S = {
   feedbackOk: { color:T.color.primary, fontWeight:500 },
   feedbackAccept: { color:"#1d9e75", fontWeight:600, fontSize:12, fontFamily:T.font.sans },
   feedbackReject: { color:T.color.secondary, fontWeight:500, fontSize:12, fontFamily:T.font.sans },
+  feedbackMsg: { textAlign:"center", fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, lineHeight:1.5, maxWidth:480, margin:"0 auto" },
+  feedbackReasoning: { padding:"10px 16px", background:T.color.surfaceLow, borderRadius:T.radius.lg, marginBottom:8, fontSize:12, lineHeight:1.5 },
+  feedbackOverrideBtn: { padding:"6px 14px", background:"transparent", border:"1px solid rgba(3,22,50,0.15)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontWeight:600, fontFamily:T.font.sans, color:T.color.primary, letterSpacing:"0.02em" },
   feedbackErr: { color:T.color.secondary, fontWeight:500 },
   // Feedback admin view
   feedbackList: { display:"flex", flexDirection:"column", gap:18 },
