@@ -951,20 +951,6 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
 
-            {/* Row 2: Due for review · Total mastered */}
-            <div style={S.statsRow2}>
-              <div style={S.metricCard}>
-                <div style={S.metricLabel}>Due for review</div>
-                <div style={S.metricVal}>{dueForReview}</div>
-                <div style={S.metricSub}>cards you've started but not mastered</div>
-              </div>
-              <div style={S.metricCard}>
-                <div style={S.metricLabel}>Total mastered</div>
-                <div style={S.metricVal}>{learned}</div>
-                <div style={S.metricSub}>of {total.toLocaleString()} (score 3+)</div>
-              </div>
-            </div>
-
             {/* Hardest Cards */}
             {hardest.length > 0 && (
               <div style={{marginTop:24}}>
