@@ -486,19 +486,17 @@ export default function FlashcardApp({ user, onSignOut }) {
   useEffect(() => { giveUpRef.current = giveUpTyped; });
 
   useEffect(() => {
-    if (mode !== "study") return;
+    if (mode !== "study" || typeMode) return;
     const handler = (e) => {
       if (!card) return;
-      // Don't intercept keys when user is typing in an input/textarea
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.key === " ") { e.preventDefault(); flipRef.current(); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); answerRef.current(false); }
       else if (e.key === "ArrowRight" || e.key === "Enter") { e.preventDefault(); answerRef.current(true); }
-      else if (e.key === "Escape") { e.preventDefault(); giveUpRef.current(); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [card, mode]);
+  }, [card, mode, typeMode]);
 
   // Submit a feedback claim: "my answer should have been accepted"
   const submitFeedback = async () => {
@@ -1084,6 +1082,9 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
             {card && (
               <div style={S.subToolbarRight}>
+                {effectiveTypeMode && idx > 0 && (
+                  <button style={S.backBtn} onClick={goBack}>← Back</button>
+                )}
                 <span style={S.counter}>Card {idx+1} of {deck.length}</span>
               </div>
             )}
@@ -1121,7 +1122,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </div>
                     )}
                     {!effectiveTypeMode && <div style={S.cardHint}>Tap to reveal translation</div>}
-                    <ShortcutsTooltip />
+                    {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
                   <div style={S.cardBack}>
                     <div style={S.cardEyebrow}>{card.shownDir==="fr"?"English":"French"}</div>
@@ -1491,7 +1492,6 @@ function ShortcutsTooltip() {
           <div><b>Space</b> flip card</div>
           <div><b>←</b> again</div>
           <div><b>→</b> or <b>Enter</b> got it</div>
-          <div><b>Esc</b> show answer</div>
         </div>
       )}
     </div>
