@@ -409,6 +409,14 @@ export default function FlashcardApp({ user, onSignOut }) {
     }
   };
 
+  // Give up: reveal the answer without typing, count as wrong. Used when
+  // the user can't recall the word and wants to see it instead of guessing.
+  const giveUpTyped = () => {
+    if (!card) return;
+    setTypeResult("wrong");
+    setFlipped(true);
+  };
+
   const goBack = () => {
     if (idx === 0) return;
     if (autoAdvanceTimer.current) {
@@ -1152,18 +1160,25 @@ export default function FlashcardApp({ user, onSignOut }) {
                     </div>
                   </div>
                 ) : (
-                  <div style={S.typeInputRow}>
-                    <input
-                      ref={studyInputRef}
-                      style={S.typeInput}
-                      value={typedAnswer}
-                      onChange={e => setTypedAnswer(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter") submitTyped(); }}
-                      placeholder={`Type ${card.shownDir==="fr" ? "English" : "French"}…`}
-                      autoFocus
-                    />
-                    <button style={S.typeSubmit} onClick={submitTyped}>Check</button>
-                  </div>
+                  <>
+                    <div style={S.typeInputRow}>
+                      <input
+                        ref={studyInputRef}
+                        style={S.typeInput}
+                        value={typedAnswer}
+                        onChange={e => setTypedAnswer(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") submitTyped(); }}
+                        placeholder={`Type ${card.shownDir==="fr" ? "English" : "French"}…`}
+                        autoFocus
+                      />
+                      <button style={S.typeSubmit} onClick={submitTyped}>Check</button>
+                    </div>
+                    <div style={S.giveUpRow}>
+                      <button style={S.giveUpBtn} onClick={giveUpTyped}>
+                        Show answer
+                      </button>
+                    </div>
+                  </>
                 )
               ) : (
                 <>
@@ -1753,6 +1768,8 @@ const S = {
   cardActionBtnFlagged: { background:T.color.tertiaryFixed, color:T.color.onSecondaryContainer, cursor:"default", fontWeight:700 },
   // Type mode (study input)
   typeInputRow: { display:"flex", gap:10, justifyContent:"center", marginBottom:10 },
+  giveUpRow: { display:"flex", justifyContent:"center", marginBottom:14 },
+  giveUpBtn: { padding:"6px 14px", background:"transparent", border:"none", cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em", textDecoration:"underline" },
   typeInput: { flex:1, maxWidth:300, padding:"13px 16px", border:"none", background:T.color.surfaceLowest, borderRadius:T.radius.lg, fontSize:16, fontFamily:T.font.serif, outline:"none", color:T.color.primary, boxShadow:T.shadow.focus },
   typeSubmit: { padding:"13px 26px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   // Audio: speak/mic toolbar inside the card
