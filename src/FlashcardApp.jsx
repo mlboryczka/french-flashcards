@@ -168,6 +168,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [deck, setDeck] = useState([]);
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const skipFlipAnim = useRef(false); // temporarily disables the card flip transition
   const [cat, setCat] = useState("all");
   const [mode, setMode] = useState("study"); // study | stats | feedback
   const [stats, setStats] = useState({ seen:0, got:0, missed:0 });
@@ -396,12 +397,15 @@ export default function FlashcardApp({ user, onSignOut }) {
     };
     await updateCard(card.id, newProg);
     setStats(s => ({ seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }));
-    setTimeout(() => {
-      setFlipped(false);
-      setIdx(i => Math.min(i+1, deck.length-1));
-      setTypedAnswer("");
-      setTypeResult(null);
-    }, 100);
+    // Skip the un-flip animation — snap instantly to the next card's front
+    skipFlipAnim.current = true;
+    setFlipped(false);
+    setTypeResult(null);
+    setTypedAnswer("");
+    setFeedbackState(null);
+    setIdx(i => Math.min(i+1, deck.length-1));
+    // Re-enable the flip animation on the next frame
+    requestAnimationFrame(() => { skipFlipAnim.current = false; });
   };
 
   // Submit typed answer
@@ -1085,7 +1089,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.blurBR} />
 
               <div style={S.cardWrap} onClick={effectiveTypeMode ? undefined : flip}>
-                <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", cursor: effectiveTypeMode ? "default" : "pointer"}}>
+                <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: effectiveTypeMode ? "default" : "pointer"}}>
                   <div style={S.cardFront}>
                     <div style={S.cardEyebrow}>{catToLabel(card.cat)}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
                     <div style={S.cardText}>{front}</div>
