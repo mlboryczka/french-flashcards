@@ -187,6 +187,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [showUsersModal, setShowUsersModal] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState("");
 
@@ -857,14 +858,20 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     Upload document
                   </button>
-                  {isAdmin && (
+                  {isAdmin && (<>
                     <button
                       style={S.profileMenuItem}
                       onClick={() => { setShowFeedbackModal(true); setShowProfileMenu(false); }}
                     >
                       View feedback
                     </button>
-                  )}
+                    <button
+                      style={S.profileMenuItem}
+                      onClick={() => { setShowUsersModal(true); setShowProfileMenu(false); }}
+                    >
+                      View users
+                    </button>
+                  </>)}
                   <button style={S.profileMenuItem} onClick={onSignOut}>
                     Sign out
                   </button>
@@ -1245,6 +1252,9 @@ export default function FlashcardApp({ user, onSignOut }) {
         {showFeedbackModal && (
           <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />
         )}
+        {showUsersModal && (
+          <UsersModal onClose={() => setShowUsersModal(false)} />
+        )}
         {editingCard && (
           <EditCardModal
             card={editingCard}
@@ -1318,6 +1328,85 @@ function FeedbackReviewModal({ onClose }) {
                 <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Dismiss</button>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── USERS MODAL (admin only) ─────────────────────────────────────────────
+function UsersModal({ onClose }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch("/api/admin-users", {
+          headers: { Authorization: `Bearer ${session?.access_token}` },
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        setUsers(data.users || []);
+      } catch (e) {
+        setError(e.message);
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  const timeAgo = (iso) => {
+    if (!iso) return "never";
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  };
+
+  return createPortal(
+    <div style={S.feedbackModalOverlay} onClick={onClose}>
+      <div style={{...S.feedbackModalBox, maxWidth:700}} onClick={e => e.stopPropagation()}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20}}>
+          <h2 style={{margin:0, fontSize:24, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary}}>Users</h2>
+          <button style={{background:"none", border:"none", fontSize:24, cursor:"pointer", color:T.color.onSurfaceVariant, padding:"0 4px"}} onClick={onClose}>×</button>
+        </div>
+        {loading ? (
+          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>Loading…</div>
+        ) : error ? (
+          <div style={{textAlign:"center", padding:32, color:T.color.secondary, fontFamily:T.font.sans}}>{error}</div>
+        ) : users.length === 0 ? (
+          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>No users yet.</div>
+        ) : (
+          <div style={{overflowX:"auto"}}>
+            <table style={S.usersTable}>
+              <thead>
+                <tr>
+                  <th style={S.usersTh}>Email</th>
+                  <th style={S.usersTh}>Deck</th>
+                  <th style={S.usersTh}>Studied</th>
+                  <th style={S.usersTh}>Mastered</th>
+                  <th style={S.usersTh}>Last active</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id}>
+                    <td style={S.usersTd}>{u.email}</td>
+                    <td style={S.usersTdNum}>{u.deck_size}</td>
+                    <td style={S.usersTdNum}>{u.studied}</td>
+                    <td style={S.usersTdNum}>{u.mastered}</td>
+                    <td style={S.usersTd}>{timeAgo(u.last_sign_in)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -2014,5 +2103,10 @@ const S = {
   fbItemMsg: { fontSize:14, fontFamily:T.font.sans, color:T.color.onSurface, lineHeight:1.6, marginBottom:10 },
   fbItemImg: { maxWidth:"100%", maxHeight:240, borderRadius:T.radius.md, marginBottom:10, objectFit:"contain" },
   fbItemDismiss: { padding:"5px 12px", background:"transparent", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurfaceVariant },
+  // Users table
+  usersTable: { width:"100%", borderCollapse:"collapse", fontFamily:T.font.sans, fontSize:13 },
+  usersTh: { textAlign:"left", padding:"10px 12px", fontSize:10, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.08em", borderBottom:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}` },
+  usersTd: { padding:"10px 12px", borderBottom:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.04)"}`, color:T.color.onSurface },
+  usersTdNum: { padding:"10px 12px", borderBottom:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.04)"}`, color:T.color.primary, fontWeight:600, textAlign:"center" },
 };
 
