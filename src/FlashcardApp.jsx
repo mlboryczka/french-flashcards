@@ -499,9 +499,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [card, mode, typeMode]);
 
   // Submit a feedback claim: "my answer should have been accepted"
+  const [feedbackErrMsg, setFeedbackErrMsg] = useState("");
+
   const submitFeedback = async () => {
     if (!card || !typedAnswer.trim()) return;
     setFeedbackState("submitting");
+    setFeedbackErrMsg("");
     const correctText = card.shownDir === "fr" ? card.b : card.f;
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -520,13 +523,18 @@ export default function FlashcardApp({ user, onSignOut }) {
           expected_answer: correctText,
         }),
       });
+      const responseText = await res.text();
+      let data;
+      try { data = JSON.parse(responseText); } catch { data = null; }
       if (!res.ok) {
+        setFeedbackErrMsg(data?.error || `HTTP ${res.status}: ${responseText.slice(0, 200)}`);
         setFeedbackState("error");
         return;
       }
       setFeedbackState("submitted");
     } catch (e) {
       console.error("Feedback failed:", e);
+      setFeedbackErrMsg(e.message);
       setFeedbackState("error");
     }
   };
@@ -1183,7 +1191,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         )}
                         {feedbackState === "submitting" && <span style={S.feedbackPending}>Sending…</span>}
                         {feedbackState === "submitted" && <span style={S.feedbackOk}>Thanks! Your answer is being reviewed.</span>}
-                        {feedbackState === "error" && <span style={S.feedbackErr}>Couldn't send — try again</span>}
+                        {feedbackState === "error" && <span style={S.feedbackErr}>{feedbackErrMsg || "Couldn't send — try again"}</span>}
                       </div>
                     )}
                     <div style={S.actionRow}>
