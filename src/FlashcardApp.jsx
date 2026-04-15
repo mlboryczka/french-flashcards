@@ -408,7 +408,11 @@ export default function FlashcardApp({ user, onSignOut }) {
       got: prev.got + (got?1:0),
     };
     await updateCard(card.id, newProg);
-    setStats(s => ({ seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }));
+    // Session stats only count typed answers (verifiable). Flip-mode
+    // "got it" is self-reported and doesn't count toward accuracy.
+    if (typeMode) {
+      setStats(s => ({ seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }));
+    }
     // Skip the un-flip animation — snap instantly to the next card's front
     skipFlipAnim.current = true;
     setFlipped(false);
@@ -929,6 +933,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <div style={S.streakSub}>day streak</div>
               </div>
             </div>
+            <div style={S.statsNote}>Stats only count answers typed with "Type answer" mode — flip-mode responses aren't tracked.</div>
 
             {/* Pipeline: New → Learning → Mastered */}
             <div style={S.pipelineCard}>
@@ -1766,6 +1771,7 @@ const S = {
   metricLabel: { fontSize:11, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 },
   metricVal: { fontSize:32, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, lineHeight:1.1 },
   metricSub: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, marginTop:4 },
+  statsNote: { fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, opacity:0.5, marginBottom:16, paddingLeft:2 },
   streakCard: { background:"#1a2b48", borderRadius:T.radius.xl, padding:"22px 24px", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center" },
   streakNum: { fontSize:32, fontFamily:T.font.serif, fontWeight:600, color:"#fdf8f6", lineHeight:1.1, margin:"4px 0 4px" },
   streakSub: { fontSize:10, fontFamily:T.font.sans, fontWeight:600, color:"rgba(253,248,246,0.5)", textTransform:"uppercase", letterSpacing:"0.1em" },
