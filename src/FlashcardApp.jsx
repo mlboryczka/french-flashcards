@@ -869,20 +869,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     const learned = userCards.filter(c => (progress[c.id]?.score??0) >= 3).length;
     const inProg = userCards.filter(c => { const s=progress[c.id]?.score??0; return s>0&&s<3; }).length;
     const newCount = total - learned - inProg;
-    const masteryPct = total > 0 ? Math.round((learned/total)*100) : 0;
 
-    // Per-category totals (two groups: Vocabulary vs Phrases)
-    const byTab = { vocab: {total:0, learned:0}, phrases: {total:0, learned:0} };
-    for (const c of userCards) {
-      const tab = catToTab(c.cat);
-      byTab[tab].total++;
-      if ((progress[c.id]?.score??0) >= 3) byTab[tab].learned++;
-    }
-    const tabOrder = ["vocab", "phrases"].filter(k => byTab[k].total > 0);
-
-    // Streak: walk back from today, count consecutive days where any card was
-    // studied. We allow today itself to be empty (you might not have studied
-    // yet) but not any earlier day. Dates are ISO yyyy-mm-dd strings.
+    // Streak
     const allDates = new Set();
     for (const c of userCards) for (const d of (c.dates || [])) allDates.add(d);
     const todayISO = new Date().toISOString().slice(0,10);
@@ -895,40 +883,24 @@ export default function FlashcardApp({ user, onSignOut }) {
       else if (iso !== todayISO) break;
     }
 
-    // Activity heatmap: 12 columns of 7 rows. dayCounts[iso] = total cards
-    // touched that day across the whole deck. Older weeks on the left.
-    const dayCounts = {};
-    for (const c of userCards) {
-      for (const d of (c.dates || [])) dayCounts[d] = (dayCounts[d] || 0) + 1;
-    }
-    const heatmapWeeks = [];
-    for (let w = 11; w >= 0; w--) {
-      const week = [];
-      for (let day = 0; day < 7; day++) {
-        const d = new Date();
-        d.setDate(d.getDate() - (w*7 + (6-day)));
-        const iso = d.toISOString().slice(0,10);
-        week.push({ iso, count: dayCounts[iso] || 0 });
-      }
-      heatmapWeeks.push(week);
-    }
-    const heatColor = (count) => {
-      if (count === 0) return T.color.surfaceHigh;
-      if (count <= 2) return "rgba(156, 66, 52, 0.3)";
-      if (count <= 5) return "rgba(156, 66, 52, 0.6)";
-      return T.color.secondary;
-    };
+    // Session accuracy
+    const sessionAcc = stats.seen > 0 ? Math.round((stats.got / stats.seen) * 100) : 0;
 
-    // Hardest cards: persistent strugglers (seen ≥ 2, score ≤ 1), ordered by
-    // most-seen first so the UI surfaces the cards you keep flunking.
+    // Due for review: cards you've started (score 1-2) but haven't mastered
+    const dueForReview = userCards.filter(c => {
+      const s = progress[c.id]?.score ?? 0;
+      return s > 0 && s < 3;
+    }).length;
+
+    // Hardest cards
     const hardest = userCards
       .map(c => ({ ...c, _score: progress[c.id]?.score ?? 0, _seen: progress[c.id]?.seen ?? 0 }))
       .filter(c => c._seen >= 2 && c._score <= 1)
       .sort((a, b) => b._seen - a._seen || a._score - b._score)
       .slice(0, 4);
 
-    // Bento grid spans collapse to full width on narrow viewports
-    const span = (n) => ({ gridColumn: isNarrow ? "1 / -1" : `span ${n}` });
+    // Pipeline bar proportions
+    const pipeTotal = Math.max(total, 1);
 
     return (
       <div style={isNarrow ? S.shellNarrow : S.shell}>
@@ -937,76 +909,88 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div style={S.mainInner}>
             <h1 style={S.statsHeading}>Progress</h1>
 
-        <div style={isNarrow ? S.bentoNarrow : S.bento}>
-
-          {/* Mastery gauge — col 8 */}
-          <div style={{...S.bentoCard, ...span(8)}}>
-            <div style={S.masteryRow}>
-              <div style={S.gaugeBox}>
-                <svg width="180" height="180" style={{transform:"rotate(-90deg)"}}>
-                  <circle cx="90" cy="90" r="78" fill="transparent"
-                    stroke={T.color.surfaceHigh} strokeWidth="10" />
-                  <circle cx="90" cy="90" r="78" fill="transparent"
-                    stroke={T.color.secondary} strokeWidth="14"
-                    strokeLinecap="round"
-                    strokeDasharray={`${2*Math.PI*78}`}
-                    strokeDashoffset={`${2*Math.PI*78*(1 - masteryPct/100)}`} />
-                </svg>
-                <div style={S.gaugeLabel}>
-                  <div style={S.gaugePct}>{masteryPct}%</div>
-                  <div style={S.gaugeSub}>Mastered</div>
-                </div>
+            {/* Row 1: Studied today · Accuracy · Streak */}
+            <div style={S.statsRow3}>
+              <div style={S.metricCard}>
+                <div style={S.metricLabel}>Studied today</div>
+                <div style={S.metricVal}>{stats.seen}</div>
+                <div style={S.metricSub}>cards reviewed</div>
               </div>
-              <div style={S.masteryText}>
-                <h3 style={S.bentoTitle}>Mastery</h3>
-                <p style={S.masteryDesc}>
-                  {learned} of {total} cards mastered.
-                  {inProg > 0 && ` ${inProg} in progress.`}
-                  {newCount > 0 && ` ${newCount} new.`}
-                </p>
-                <div style={S.pillRow}>
-                  <span style={S.pillSecondary}>{total} CARDS</span>
-                  {inProg > 0 && <span style={S.pillNeutral}>{inProg} LEARNING</span>}
-                </div>
+              <div style={S.metricCard}>
+                <div style={S.metricLabel}>Accuracy</div>
+                <div style={S.metricVal}>{stats.seen > 0 ? `${sessionAcc}%` : "—"}</div>
+                <div style={S.metricSub}>{stats.seen > 0 ? `${stats.got} of ${stats.seen} correct` : "study some cards first"}</div>
+              </div>
+              <div style={S.streakCard}>
+                <div style={{fontSize:16}}>🔥</div>
+                <div style={S.streakNum}>{streak}</div>
+                <div style={S.streakSub}>day streak</div>
               </div>
             </div>
-          </div>
 
-          {/* Streak — col 4, compact */}
-          <div style={{...S.bentoCard, ...S.bentoStreak, ...span(4)}}>
-            <div style={S.streakIcon}>🔥</div>
-            <div style={S.streakBig}>{streak}</div>
-            <p style={S.streakLabel}>{streak === 1 ? "day streak" : "day streak"}</p>
-          </div>
-
-          {/* Hardest cards — col 12 (only if there are any) */}
-          {hardest.length > 0 && (
-            <div style={{...S.bentoCard, ...span(12)}}>
-              <h3 style={S.bentoTitle}>Hardest Cards</h3>
-              <p style={S.bentoSub}>Cards you've seen multiple times but keep missing.</p>
-              <div style={S.hardGrid}>
-                {hardest.map(c => (
-                  <div key={c.id} style={S.hardCard}>
-                    <div style={S.hardHead}>
-                      <span style={{
-                        ...S.hardTag,
-                        background: TAB_COLORS[catToTab(c.cat)] + "22",
-                        color: TAB_COLORS[catToTab(c.cat)],
-                      }}>
-                        {catToLabel(c.cat)}
-                      </span>
-                    </div>
-                    <h4 style={S.hardWord}>{c.f}</h4>
-                    <p style={S.hardMeta}>Score {c._score}/5 · seen {c._seen}×</p>
+            {/* Pipeline: New → Learning → Mastered */}
+            <div style={S.pipelineCard}>
+              <div style={S.pipeTitle}>Your {total.toLocaleString()} cards</div>
+              <div style={S.pipeBarWrap}>
+                {newCount > 0 && <div style={{...S.pipeSeg, background:T.color.surfaceHigh, flex:newCount}} />}
+                {inProg > 0 && (
+                  <div style={{...S.pipeSeg, background:T.color.secondary, flex:inProg, color:"#fff", fontSize:11, fontWeight:600, minWidth:40}}>
+                    {inProg}
                   </div>
-                ))}
+                )}
+                {learned > 0 && (
+                  <div style={{...S.pipeSeg, background:T.color.primary, flex:learned, color:T.color.onPrimary, fontSize:11, fontWeight:600, minWidth:40}}>
+                    {learned}
+                  </div>
+                )}
+              </div>
+              <div style={S.pipeLegend}>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:"rgba(3,22,50,0.12)"}} />{newCount.toLocaleString()} new</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.secondary}} />{inProg} learning</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />{learned} mastered</div>
               </div>
             </div>
-          )}
 
-        </div>
+            {/* Row 2: Due for review · Total mastered */}
+            <div style={S.statsRow2}>
+              <div style={S.metricCard}>
+                <div style={S.metricLabel}>Due for review</div>
+                <div style={S.metricVal}>{dueForReview}</div>
+                <div style={S.metricSub}>cards you've started but not mastered</div>
+              </div>
+              <div style={S.metricCard}>
+                <div style={S.metricLabel}>Total mastered</div>
+                <div style={S.metricVal}>{learned}</div>
+                <div style={S.metricSub}>of {total.toLocaleString()} (score 3+)</div>
+              </div>
+            </div>
 
-        <button style={S.resetBtn} onClick={resetAll}>Reset all progress</button>
+            {/* Hardest Cards */}
+            {hardest.length > 0 && (
+              <div style={{marginTop:24}}>
+                <h3 style={S.statsSectionTitle}>Hardest cards</h3>
+                <p style={S.statsSectionSub}>Cards you've seen multiple times but keep missing.</p>
+                <div style={S.hardGrid}>
+                  {hardest.map(c => (
+                    <div key={c.id} style={S.hardCard}>
+                      <div style={S.hardHead}>
+                        <span style={{
+                          ...S.hardTag,
+                          background: TAB_COLORS[catToTab(c.cat)] + "22",
+                          color: TAB_COLORS[catToTab(c.cat)],
+                        }}>
+                          {catToLabel(c.cat)}
+                        </span>
+                      </div>
+                      <h4 style={S.hardWord}>{c.f}</h4>
+                      <p style={S.hardMeta}>Score {c._score}/5 · seen {c._seen}×</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button style={S.resetBtn} onClick={resetAll}>Reset all progress</button>
           </div>
         </main>
       </div>
@@ -1770,43 +1754,27 @@ const S = {
   resetSBtn: { padding:"11px 26px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceLowest, color:T.color.primary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, boxShadow:T.shadow.focus },
   // Stats — bento dashboard
   statsHeading: { fontSize:36, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.02em", margin:"8px 0 28px" },
-  bento: { display:"grid", gridTemplateColumns:"repeat(12, minmax(0, 1fr))", gap:24, marginBottom:32 },
-  bentoNarrow: { display:"flex", flexDirection:"column", gap:18, marginBottom:32 },
-  bentoCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"28px 30px", boxShadow:T.shadow.card, border:"none" },
-  bentoTitle: { fontSize:20, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.01em", margin:"0 0 4px" },
-  bentoSub: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:"0 0 18px" },
-  bentoHead: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 },
-  // Mastery card
-  masteryRow: { display:"flex", flexDirection:"row", alignItems:"center", gap:32, flexWrap:"wrap" },
-  gaugeBox: { position:"relative", width:180, height:180, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 },
-  gaugeLabel: { position:"absolute", display:"flex", flexDirection:"column", alignItems:"center" },
-  gaugePct: { fontSize:38, fontFamily:T.font.serif, fontWeight:700, color:T.color.primary, letterSpacing:"-0.02em" },
-  gaugeSub: { fontSize:10, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.12em", marginTop:2 },
-  masteryText: { flex:1, minWidth:200 },
-  masteryDesc: { fontSize:14, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, lineHeight:1.55, margin:"8px 0 16px" },
-  pillRow: { display:"flex", gap:8, flexWrap:"wrap" },
-  pillSecondary: { padding:"6px 14px", background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, fontSize:10, fontWeight:700, fontFamily:T.font.sans, borderRadius:T.radius.full, letterSpacing:"0.08em" },
-  pillNeutral: { padding:"6px 14px", background:T.color.surfaceHigh, color:T.color.primary, fontSize:10, fontWeight:700, fontFamily:T.font.sans, borderRadius:T.radius.full, letterSpacing:"0.08em" },
-  // Streak card — dark navy background (Stitch primary-container #1a2b48)
-  bentoStreak: { background:"#1a2b48", color:T.color.onPrimary, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:200, position:"relative", overflow:"hidden", textAlign:"center" },
-  streakTop: { zIndex:1 },
-  streakIcon: { fontSize:28, marginBottom:4, lineHeight:1 },
-  streakTitle: { fontSize:20, fontWeight:600, fontFamily:T.font.serif, color:T.color.onPrimary, margin:"0 0 4px" },
-  streakLabel: { fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:"rgba(255,255,255,0.5)", textTransform:"uppercase", letterSpacing:"0.12em", margin:0 },
-  streakBig: { fontSize:64, fontFamily:T.font.serif, fontWeight:700, color:T.color.onPrimary, lineHeight:1, margin:"4px 0 6px" },
-  // Category bars
-  catBars: { display:"flex", flexDirection:"column", gap:18, marginTop:14 },
-  catBarHead: { display:"flex", justifyContent:"space-between", fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6 },
-  catBarTrack: { width:"100%", height:6, background:T.color.surfaceHigh, borderRadius:T.radius.full, overflow:"hidden" },
-  catBarFill: { height:"100%", borderRadius:T.radius.full, transition:"width 0.5s" },
-  catBarMeta: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, marginTop:4 },
-  // Heatmap
-  heatLegend: { display:"flex", alignItems:"center", gap:4 },
-  heatLegendLabel: { fontSize:9, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.1em", padding:"0 4px" },
-  heatGrid: { display:"flex", gap:6, marginTop:8 },
-  heatCol: { display:"grid", gridTemplateRows:"repeat(7, 1fr)", gap:6, flex:1 },
-  heatCell: { width:"100%", aspectRatio:"1", borderRadius:3, minWidth:10, minHeight:10 },
-  heatFootnote: { display:"flex", justifyContent:"space-between", marginTop:14, fontSize:9, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.12em" },
+  // ── New stats layout: metric cards + pipeline + hardest ───────────
+  statsRow3: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:12 },
+  statsRow2: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 },
+  metricCard: { background:T.color.surfaceLow, borderRadius:T.radius.xl, padding:"22px 24px" },
+  metricLabel: { fontSize:11, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 },
+  metricVal: { fontSize:32, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, lineHeight:1.1 },
+  metricSub: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, marginTop:4 },
+  streakCard: { background:"#1a2b48", borderRadius:T.radius.xl, padding:"22px 24px", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center" },
+  streakNum: { fontSize:32, fontFamily:T.font.serif, fontWeight:600, color:"#fdf8f6", lineHeight:1.1, margin:"4px 0 4px" },
+  streakSub: { fontSize:10, fontFamily:T.font.sans, fontWeight:600, color:"rgba(253,248,246,0.5)", textTransform:"uppercase", letterSpacing:"0.1em" },
+  // Pipeline
+  pipelineCard: { background:T.color.surfaceLowest, border:`0.5px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}`, borderRadius:T.radius.xl, padding:"22px 24px", marginBottom:12 },
+  pipeTitle: { fontSize:14, fontFamily:T.font.sans, fontWeight:600, color:T.color.primary, marginBottom:14 },
+  pipeBarWrap: { display:"flex", height:28, borderRadius:6, overflow:"hidden", background:T.color.surfaceHigh, marginBottom:10 },
+  pipeSeg: { display:"flex", alignItems:"center", justifyContent:"center", fontFamily:T.font.sans },
+  pipeLegend: { display:"flex", gap:20 },
+  pipeLegItem: { display:"flex", alignItems:"center", gap:6, fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant },
+  pipeDot: { width:8, height:8, borderRadius:"50%", flexShrink:0 },
+  // Section titles
+  statsSectionTitle: { fontSize:18, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, margin:"0 0 4px" },
+  statsSectionSub: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"0 0 14px" },
   // Hardest cards
   hardGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:14 },
   hardCard: { background:T.color.surfaceLow, borderRadius:T.radius.xl, padding:"18px 20px", display:"flex", flexDirection:"column", gap:8, transition:"background 0.15s", cursor:"default" },
@@ -1814,7 +1782,15 @@ const S = {
   hardTag: { fontSize:9, fontFamily:T.font.sans, fontWeight:700, padding:"3px 8px", borderRadius:T.radius.sm, textTransform:"uppercase", letterSpacing:"0.08em" },
   hardWord: { fontSize:18, fontFamily:T.font.serif, fontStyle:"italic", color:T.color.primary, margin:"4px 0 0", letterSpacing:"-0.01em", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   hardMeta: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:0 },
-  resetBtn: { display:"block", width:"100%", padding:"13px", border:"none", borderRadius:T.radius.md, background:"transparent", color:T.color.secondary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600 },
+  resetBtn: { display:"block", width:"100%", padding:"13px", border:"none", borderRadius:T.radius.md, background:"transparent", color:T.color.secondary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, marginTop:24 },
+  // Legacy stats styles (kept to avoid crashes if any references remain)
+  bento: { display:"grid", gridTemplateColumns:"repeat(12, minmax(0, 1fr))", gap:24, marginBottom:32 },
+  bentoNarrow: { display:"flex", flexDirection:"column", gap:18, marginBottom:32 },
+  bentoCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"28px 30px", boxShadow:T.shadow.card, border:"none" },
+  bentoTitle: { fontSize:20, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.01em", margin:"0 0 4px" },
+  bentoSub: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:"0 0 18px" },
+  bentoHead: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 },
+  bentoStreak: { background:"#1a2b48" },
   // ── Onboarding (empty deck state) ─────────────────────────────────
   // Full-bleed page (no sidebar) with hero on top and import method
   // bento below. Sign-out lives in a small top-right cluster.
