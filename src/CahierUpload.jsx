@@ -25,6 +25,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [fileName, setFileName] = useState("");
+  const [extracting, setExtracting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [replace, setReplace] = useState(hasExisting ? false : true);
   const [status, setStatus] = useState("idle"); // idle | uploading | error
@@ -34,18 +35,108 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
 
   if (!open) return null;
 
+  // Detects file type by extension and runs the appropriate extractor.
+  // PDF and DOCX libraries are lazy-loaded the first time they're needed
+  // so the main app bundle stays small. Both extract to plain text on the
+  // client; the server endpoint never sees the original binary.
   async function processFile(file) {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".txt")) {
+    setError("");
+    const name = file.name.toLowerCase();
+    const isTxt = name.endsWith(".txt");
+    const isPdf = name.endsWith(".pdf");
+    const isDocx = name.endsWith(".docx");
+
+    if (!isTxt && !isPdf && !isDocx) {
       setError(
-        "Only .txt files are supported. Copy your Google Doc to plain text and try again, or paste the text directly."
+        "Unsupported file type. Drop a .txt, .pdf, or .docx file."
       );
       return;
     }
-    const content = await file.text();
-    setText(content);
-    setFileName(file.name);
-    setError("");
+
+    // 25MB hard cap before extraction — pdfjs can chew on big PDFs but the
+    // result will eventually exceed our 500K-char server limit anyway.
+    if (file.size > 25 * 1024 * 1024) {
+      setError("File is too large (max 25MB). Try a shorter cahier.");
+      return;
+    }
+
+    setExtracting(true);
+    try {
+      let content;
+      if (isTxt) {
+        content = await file.text();
+      } else if (isPdf) {
+        content = await extractPdfText(file);
+      } else {
+        content = await extractDocxText(file);
+      }
+      content = content.trim();
+      if (!content || content.length < 50) {
+        setError(
+          "Couldn't extract any text from this file. If it's a scanned PDF, you'll need to OCR it first."
+        );
+        setExtracting(false);
+        return;
+      }
+      setText(content);
+      setFileName(file.name);
+    } catch (e) {
+      console.error("File extraction failed:", e);
+      setError(`Couldn't read the file: ${e.message || "unknown error"}`);
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  // ── Lazy extractors ────────────────────────────────────────────────
+  // pdfjs-dist is ~500KB gzipped; mammoth is ~200KB. We dynamic-import
+  // them on first use so they never load on pages that don't need them.
+  async function extractPdfText(file) {
+    const pdfjs = await import("pdfjs-dist/build/pdf");
+    // pdfjs needs a worker; Vite-friendly URL pattern below resolves to
+    // a hashed asset at build time.
+    if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+      const workerUrl = (await import(
+        "pdfjs-dist/build/pdf.worker.min?url"
+      )).default;
+      pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+    }
+    const buffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: buffer }).promise;
+    const pages = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      // Reconstruct lines: pdfjs gives positioned text items. Group by
+      // y-coordinate so we get one logical line per row, then sort rows
+      // top-to-bottom. Without this, "Le 10 avril 2026\nVocabulaire" can
+      // arrive as a single space-collapsed mush.
+      const rows = new Map();
+      for (const item of tc.items) {
+        const y = Math.round(item.transform[5]); // y-coord
+        if (!rows.has(y)) rows.set(y, []);
+        rows.get(y).push({ x: item.transform[4], str: item.str });
+      }
+      const sortedYs = [...rows.keys()].sort((a, b) => b - a); // top-down
+      const lines = sortedYs.map((y) =>
+        rows.get(y)
+          .sort((a, b) => a.x - b.x)
+          .map((it) => it.str)
+          .join("")
+          .replace(/\s+/g, " ")
+          .trim()
+      ).filter(Boolean);
+      pages.push(lines.join("\n"));
+    }
+    return pages.join("\n\n");
+  }
+
+  async function extractDocxText(file) {
+    const mammoth = await import("mammoth/mammoth.browser");
+    const buffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+    return result.value || "";
   }
 
   async function handleFileUpload(e) {
@@ -95,7 +186,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
     }
 
     setStatus("uploading");
-    setProgress("Parsing your cahier… this can take 30–90 seconds for a full year of lessons.");
+    setProgress("Slicing your cahier…");
 
     try {
       const {
@@ -105,26 +196,115 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         throw new Error("Not signed in");
       }
 
-      const res = await fetch("/api/parse-cahier", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ mode, content, replace }),
+      // ── PHASE 1: SLICE ────────────────────────────────────────────────
+      // Server parses the raw text into per-date blocks. Fast (<2s).
+      const sliceData = await callApi(session.access_token, {
+        action: "slice",
+        mode,
+        content,
       });
-
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
+      const blocks = sliceData.blocks || [];
+      if (blocks.length === 0) {
+        throw new Error("No lessons found in the input.");
       }
 
+      // ── PHASE 2: EXTRACT (CHUNKED) ────────────────────────────────────
+      // Slice the blocks into chunks of CHUNK_SIZE and process them one
+      // at a time. Each request runs ~CHUNK_SIZE Claude calls in parallel
+      // server-side and finishes in ~10-15s — well under the Vercel Hobby
+      // 60s function limit.
+      //
+      // Sequential (not parallel) on the client because:
+      //   1. Anthropic per-org rate limits — 60+ Haiku calls in flight all
+      //      at once will start hitting 429s
+      //   2. Serial gives us clean progress updates
+      //   3. If one chunk fails we know exactly which one
+      const CHUNK_SIZE = 15;
+      const allCards = [];
+      const allErrors = [];
+      const totalChunks = Math.ceil(blocks.length / CHUNK_SIZE);
+
+      for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
+        const chunkIndex = Math.floor(i / CHUNK_SIZE) + 1;
+        setProgress(
+          `Extracting cards from your lessons… (chunk ${chunkIndex} of ${totalChunks})`
+        );
+        const chunk = blocks.slice(i, i + CHUNK_SIZE);
+        const extractData = await callApi(session.access_token, {
+          action: "extract",
+          blocks: chunk,
+        });
+        if (Array.isArray(extractData.cards)) {
+          allCards.push(...extractData.cards);
+        }
+        if (Array.isArray(extractData.errors)) {
+          allErrors.push(...extractData.errors);
+        }
+      }
+
+      if (allCards.length === 0) {
+        throw new Error(
+          allErrors.length
+            ? `Extraction failed: ${allErrors[0].error || "unknown"}`
+            : "No cards extracted from any lesson."
+        );
+      }
+
+      // ── PHASE 3: COMMIT ───────────────────────────────────────────────
+      // Send the full set of cards to the server for cross-chunk dedupe,
+      // conjugation expansion, and database insert. Cheap and fast.
+      setProgress(
+        `Saving ${allCards.length.toLocaleString()} cards to your deck…`
+      );
+      const commitData = await callApi(session.access_token, {
+        action: "commit",
+        cards: allCards,
+        replace,
+      });
+
       setStatus("idle");
-      onSuccess(data);
+      onSuccess(commitData);
     } catch (e) {
       setStatus("error");
       setError(e.message || "Upload failed");
     }
+  }
+
+  // Shared API caller — handles auth, JSON parsing, and surfaces real
+  // errors instead of letting JSON.parse crash on HTML error pages.
+  async function callApi(accessToken, body) {
+    const res = await fetch("/api/parse-cahier", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const responseText = await res.text();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      if (res.status === 504 || /timeout|gateway/i.test(responseText)) {
+        throw new Error(
+          "The server timed out on this chunk. Try a shorter cahier, or split it into pieces."
+        );
+      }
+      if (res.status >= 500) {
+        throw new Error(
+          `Server error (HTTP ${res.status}). The function may have crashed — check Vercel logs.`
+        );
+      }
+      throw new Error(
+        `Server returned an unexpected response (HTTP ${res.status}): ${responseText.slice(0, 200)}`
+      );
+    }
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
   }
 
   return (
@@ -191,14 +371,19 @@ fonder / créer une entreprise
               <label style={M.label}>Upload your cahier</label>
               <div
                 style={isDragging ? { ...M.dropZone, ...M.dropZoneActive } : M.dropZone}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => extracting ? null : fileInputRef.current?.click()}
                 onDragOver={handleDragOver}
                 onDragEnter={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
               >
                 <div style={M.dropZoneIcon}>📄</div>
-                {fileName ? (
+                {extracting ? (
+                  <>
+                    <div style={M.dropZoneTextStrong}>Reading file…</div>
+                    <div style={M.dropZoneTextSub}>Extracting text from your document</div>
+                  </>
+                ) : fileName ? (
                   <>
                     <div style={M.dropZoneTextStrong}>{fileName}</div>
                     <div style={M.dropZoneTextSub}>
@@ -208,7 +393,7 @@ fonder / créer une entreprise
                 ) : (
                   <>
                     <div style={M.dropZoneTextStrong}>
-                      {isDragging ? "Drop your file here" : "Drop a .txt file here"}
+                      {isDragging ? "Drop your file here" : "Drop a .txt, .pdf, or .docx file"}
                     </div>
                     <div style={M.dropZoneTextSub}>or click to browse</div>
                   </>
@@ -216,15 +401,14 @@ fonder / créer une entreprise
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".txt,text/plain"
+                  accept=".txt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={handleFileUpload}
-                  disabled={status === "uploading"}
+                  disabled={status === "uploading" || extracting}
                   style={{ display: "none" }}
                 />
               </div>
               <div style={M.hint}>
-                Only .txt files are supported. If your cahier is in Google Docs,
-                use the "Google Doc link" tab or copy-paste the text.
+                Supports .txt, .pdf, and .docx. Scanned PDFs without text won't work — they need to be OCR'd first.
               </div>
             </>
           )}
