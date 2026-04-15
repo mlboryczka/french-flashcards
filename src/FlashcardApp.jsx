@@ -1654,7 +1654,7 @@ const S = {
   // ── Rectangular action buttons: AGAIN / GOT IT ─────────────────────
   actionRow: { display:"flex", gap:16, justifyContent:"center", marginTop:8, marginBottom:24, width:"100%", maxWidth:480, alignSelf:"center" },
   actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceHigh, color:T.color.primary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", transition:"all 0.15s" },
-  actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.color.secondary, color:T.color.onSecondary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", boxShadow:"0 8px 24px rgba(156,66,52,0.2)", transition:"all 0.15s" },
+  actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"16px 28px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"0.02em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },
 
   // ── Info tooltip (ⓘ keyboard shortcuts) ───────────────────────────
   infoWrap: { position:"absolute", bottom:14, right:18, zIndex:5 },
@@ -1860,7 +1860,7 @@ const S = {
   pronRetryBtn: { padding:"9px 20px", background:T.color.surfaceHigh, border:"none", color:T.color.primary, borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontFamily:T.font.sans, fontWeight:600 },
   pronDismissBtn: { padding:"9px 20px", background:"transparent", border:"none", color:T.color.onSurfaceVariant, borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontFamily:T.font.sans, fontWeight:500 },
   // Typing feedback
-  typeFeedback: { marginBottom:12 },
+  typeFeedback: { marginBottom:12, width:"100%", maxWidth:520, alignSelf:"center" },
   typeCorrect: { textAlign:"center", padding:14, background:T.color.tertiaryFixed, color:T.color.onSecondaryContainer, borderRadius:T.radius.lg, fontSize:15, fontWeight:600, marginBottom:12, fontFamily:T.font.sans },
   typeClose: { textAlign:"center", padding:14, background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
   typeWrong: { textAlign:"center", padding:14, background:T.color.errorContainer, color:T.color.onErrorContainer, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
