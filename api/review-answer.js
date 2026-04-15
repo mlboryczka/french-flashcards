@@ -1,14 +1,14 @@
 // Vercel serverless function: POST /api/review-answer
 //
 // Called when a user clicks "My answer should have been accepted".
-// Inserts a feedback_submissions row, asks Claude to review, updates
-// the row with the verdict, and returns the result.
+// Asks Claude Opus to review, and if accepted, auto-inserts the answer
+// as an alternate into card_alternates so the matcher accepts it going forward.
 //
 // Request body:
 //   { card_id, direction, french, english, user_answer, expected_answer }
 //
-// Environment variables:
-//   ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+// Returns:
+//   { ok, verdict: "accept"|"reject"|"uncertain", reasoning: "..." }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -18,64 +18,17 @@ export default async function handler(req, res) {
   const { card_id, direction, french, english, user_answer, expected_answer } =
     req.body || {};
 
-  if (!card_id || !user_answer || !expected_answer) {
+  if (!user_answer || !expected_answer) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
   const { ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } =
     process.env;
-  if (!ANTHROPIC_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return res
-      .status(500)
-      .json({ error: "Server misconfigured — missing env vars" });
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: "Missing ANTHROPIC_API_KEY" });
   }
 
-  const sbHeaders = {
-    apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    "Content-Type": "application/json",
-    Prefer: "return=representation",
-  };
-
-  // Extract user_id from the Authorization bearer token (Supabase JWT)
-  let userId = null;
-  const authHeader = req.headers.authorization || "";
-  if (authHeader.startsWith("Bearer ")) {
-    try {
-      const payload = JSON.parse(
-        Buffer.from(authHeader.split(".")[1], "base64").toString()
-      );
-      userId = payload.sub || null;
-    } catch {}
-  }
-
-  // 1. Insert the submission row
-  const insertRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/feedback_submissions`,
-    {
-      method: "POST",
-      headers: sbHeaders,
-      body: JSON.stringify({
-        user_id: userId,
-        card_id,
-        direction: direction || "fr",
-        card_front: french || "",
-        card_back: english || "",
-        user_answer,
-      }),
-    }
-  );
-
-  if (!insertRes.ok) {
-    const errText = await insertRes.text();
-    console.error("Insert failed:", errText);
-    return res.status(500).json({ error: "Failed to save submission" });
-  }
-
-  const inserted = await insertRes.json();
-  const submissionId = Array.isArray(inserted) ? inserted[0]?.id : inserted?.id;
-
-  // 2. Ask Claude to review
+  // 1. Ask Claude to review
   const shownSide = direction === "fr" ? "French" : "English";
   const expectedSide = direction === "fr" ? "English" : "French";
   const prompt = `You are reviewing a French learner's flashcard answer. Decide whether their answer should be accepted as equivalent to the expected answer.
@@ -100,9 +53,6 @@ Do NOT accept:
 Respond with ONLY a JSON object, no other text:
 {"verdict": "accept" | "reject" | "uncertain", "reasoning": "one sentence explanation"}`;
 
-  let verdict = "uncertain";
-  let reasoning = "LLM review failed";
-
   try {
     const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -112,50 +62,59 @@ Respond with ONLY a JSON object, no other text:
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-opus-4-6",
         max_tokens: 300,
         messages: [{ role: "user", content: prompt }],
       }),
     });
+
     const data = await anthropicRes.json();
+
     if (!anthropicRes.ok) {
-      console.error("Anthropic API error:", data);
-      reasoning = `API error: ${data.error?.message || "unknown"}`;
-    } else {
-      const text = data.content?.[0]?.text || "";
-      const cleaned = text.replace(/```json|```/g, "").trim();
+      return res
+        .status(502)
+        .json({ error: `Anthropic API: ${data.error?.message || "unknown"}` });
+    }
+
+    const text = data.content?.[0]?.text || "";
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    const verdict = parsed.verdict || "uncertain";
+    const reasoning = parsed.reasoning || "";
+
+    // 2. If accepted, auto-insert into card_alternates
+    if (verdict === "accept" && card_id && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
       try {
-        const parsed = JSON.parse(cleaned);
-        if (["accept", "reject", "uncertain"].includes(parsed.verdict)) {
-          verdict = parsed.verdict;
-          reasoning = parsed.reasoning || "";
+        const insertRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/card_alternates`,
+          {
+            method: "POST",
+            headers: {
+              apikey: SUPABASE_SERVICE_ROLE_KEY,
+              Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "Content-Type": "application/json",
+              Prefer: "return=minimal",
+            },
+            body: JSON.stringify({
+              card_id,
+              direction: direction || "fr",
+              alternate_text: user_answer,
+            }),
+          }
+        );
+        if (!insertRes.ok) {
+          const errText = await insertRes.text();
+          console.error("card_alternates insert failed:", errText);
+          // Don't fail the whole request — the verdict is still valid
         }
-      } catch {
-        reasoning = `Parse error: ${text.slice(0, 200)}`;
+      } catch (dbErr) {
+        console.error("card_alternates insert error:", dbErr);
       }
     }
+
+    return res.status(200).json({ ok: true, verdict, reasoning });
   } catch (err) {
-    console.error("LLM call failed:", err);
-    reasoning = err.message;
+    console.error("review-answer failed:", err);
+    return res.status(500).json({ error: err.message });
   }
-
-  // 3. Update the row with the verdict
-  if (submissionId) {
-    const updateRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/feedback_submissions?id=eq.${submissionId}`,
-      {
-        method: "PATCH",
-        headers: {
-          ...sbHeaders,
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify({ llm_verdict: verdict, llm_reasoning: reasoning }),
-      }
-    );
-    if (!updateRes.ok) {
-      console.error("Update failed:", await updateRes.text());
-    }
-  }
-
-  return res.status(200).json({ ok: true, verdict, reasoning });
 }
