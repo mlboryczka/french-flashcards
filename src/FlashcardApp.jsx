@@ -143,14 +143,16 @@ function matchAnswer(typed, correct, extraAlts = []) {
     if (tRest.includes(aRest) && aRest.length >= 4) {
       return { match: true, close: true };
     }
-    // Token-set overlap (for multi-word phrases, ignoring order)
+    // Token-set overlap: only accepts word-order changes, not wrong/missing words.
+    // Previous 0.8 threshold let "betrayal" pass for "trahison" in long phrases.
     const tTokens = new Set(tRest.split(/\s+/).filter(x => x.length >= 2));
     const aTokens = new Set(aRest.split(/\s+/).filter(x => x.length >= 2));
     if (tTokens.size >= 2 && aTokens.size >= 2) {
       let shared = 0;
       for (const tok of tTokens) if (aTokens.has(tok)) shared++;
-      const ratio = shared / Math.max(tTokens.size, aTokens.size);
-      if (ratio >= 0.8) return { match: true, close: true };
+      if (shared === tTokens.size && shared === aTokens.size) {
+        return { match: true, close: true };
+      }
     }
     // Fuzzy: edit distance within threshold
     const dist = editDistance(tRest, aRest);
@@ -820,7 +822,7 @@ export default function FlashcardApp({ user, onSignOut }) {
             <button
               key={m}
               style={mode === m ? {...baseStyle, ...activeStyle} : baseStyle}
-              onClick={() => { setMode(m); resetSession(); }}
+              onClick={() => { setMode(m); }}
             >
               <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
               {label}
@@ -909,10 +911,10 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div style={S.mainInner}>
             <h1 style={S.statsHeading}>Progress</h1>
 
-            {/* Row 1: Studied today · Accuracy · Streak */}
+            {/* Row 1: This session · Accuracy · Streak */}
             <div style={S.statsRow3}>
               <div style={S.metricCard}>
-                <div style={S.metricLabel}>Studied today</div>
+                <div style={S.metricLabel}>This session</div>
                 <div style={S.metricVal}>{stats.seen}</div>
                 <div style={S.metricSub}>cards reviewed</div>
               </div>
@@ -1348,11 +1350,13 @@ const EM = {
 // approve (adds answer as a card alternate) or reject (marks reviewed).
 function FeedbackAdminView({ user, setMode, resetSession }) {
   const [items, setItems] = useState([]);
+  const [betaItems, setBetaItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(null); // id being acted on
 
   const load = async () => {
     setLoading(true);
+    // Load card answer disputes
     const { data, error } = await supabase
       .from("feedback_submissions")
       .select("*")
@@ -1364,6 +1368,18 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
     } else {
       setItems(data || []);
     }
+    // Load general user feedback
+    const { data: betaData, error: betaErr } = await supabase
+      .from("beta_feedback")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (betaErr) {
+      console.error("Failed to load beta feedback:", betaErr);
+      setBetaItems([]);
+    } else {
+      setBetaItems(betaData || []);
+    }
     setLoading(false);
   };
 
@@ -1371,7 +1387,6 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
 
   const approve = async (item) => {
     setActing(item.id);
-    // Add alternate
     const { error: altErr } = await supabase.from("card_alternates").insert({
       card_id: item.card_id,
       direction: item.direction,
@@ -1379,7 +1394,6 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
       source_feedback_id: item.id,
     });
     if (altErr) { console.error("Alt insert failed:", altErr); setActing(null); return; }
-    // Mark reviewed
     const { error: upErr } = await supabase
       .from("feedback_submissions")
       .update({ reviewed: true, reviewed_at: new Date().toISOString(), action: "approved" })
@@ -1400,13 +1414,22 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
     setActing(null);
   };
 
+  const deleteBetaItem = async (id) => {
+    const { error } = await supabase.from("beta_feedback").delete().eq("id", id);
+    if (error) console.error("Delete failed:", error);
+    else setBetaItems(prev => prev.filter(i => i.id !== id));
+  };
+
   return (
     <>
       <h1 style={S.statsHeading}>Feedback Review</h1>
+
+      {/* Card answer disputes */}
+      <h3 style={S.statsSectionTitle}>Answer disputes</h3>
       {loading ? (
         <div style={S.empty}>Loading…</div>
       ) : items.length === 0 ? (
-        <div style={S.empty}><div style={{fontSize:48}}>✨</div><p>No pending feedback.</p></div>
+        <p style={S.statsSectionSub}>No pending answer disputes.</p>
       ) : (
         <div style={S.feedbackList}>
           {items.map(item => (
@@ -1434,7 +1457,6 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
                     <span style={item.llm_verdict === "accept" ? S.llmAccept : item.llm_verdict === "reject" ? S.llmReject : S.llmUnclear}>
                       Claude: {item.llm_verdict}
                     </span>
-                    {item.llm_confidence && <span style={S.llmConf}>confidence: {item.llm_confidence}</span>}
                   </div>
                   {item.llm_reasoning && <div style={S.llmReasoning}>{item.llm_reasoning}</div>}
                 </div>
@@ -1447,6 +1469,28 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
                   {acting === item.id ? "…" : "Reject"}
                 </button>
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* General user feedback from beta_feedback */}
+      <h3 style={{...S.statsSectionTitle, marginTop:32}}>User feedback</h3>
+      {betaItems.length === 0 ? (
+        <p style={S.statsSectionSub}>No user feedback yet.</p>
+      ) : (
+        <div style={S.feedbackList}>
+          {betaItems.map(item => (
+            <div key={item.id} style={S.betaFeedbackItem}>
+              <div style={S.betaFeedbackHeader}>
+                <span style={S.betaFeedbackEmail}>{item.user_email || "anonymous"}</span>
+                <span style={S.feedbackDate}>{new Date(item.created_at).toLocaleDateString()}</span>
+              </div>
+              <div style={S.betaFeedbackMsg}>{item.message}</div>
+              {item.screenshot && (
+                <img src={item.screenshot} alt="Screenshot" style={S.betaFeedbackImg} />
+              )}
+              <button style={S.betaFeedbackDel} onClick={() => deleteBetaItem(item.id)}>Dismiss</button>
             </div>
           ))}
         </div>
@@ -1900,5 +1944,12 @@ const S = {
   feedbackActions: { display:"flex", gap:10 },
   feedbackApprove: { flex:1, padding:12, background:T.gradient.ink, color:T.color.onPrimary, border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:T.font.sans, boxShadow:T.shadow.button },
   feedbackReject: { flex:1, padding:12, background:T.color.surfaceHigh, border:"none", color:T.color.onSurfaceVariant, borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontFamily:T.font.sans, fontWeight:500 },
+  // Beta feedback (general user feedback)
+  betaFeedbackItem: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card },
+  betaFeedbackHeader: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 },
+  betaFeedbackEmail: { fontSize:12, fontFamily:T.font.sans, fontWeight:600, color:T.color.primary },
+  betaFeedbackMsg: { fontSize:14, fontFamily:T.font.sans, color:T.color.onSurface, lineHeight:1.6, marginBottom:12 },
+  betaFeedbackImg: { maxWidth:"100%", maxHeight:300, borderRadius:T.radius.lg, marginBottom:12, objectFit:"contain" },
+  betaFeedbackDel: { padding:"6px 14px", background:"transparent", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurfaceVariant },
 };
 
