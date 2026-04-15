@@ -372,7 +372,10 @@ Rules:
 1. Preserve the EXACT French spelling including accents, apostrophes, and punctuation. Do not "correct" anything.
 2. Keep articles (un, une, le, la, les, des, du) when present — they're semantically meaningful in French.
 3. For gender pairs like "un vendeur / une vendeuse" or "gros, grosse (adj)", keep them as a single card.
-4. For synonyms separated by / like "mémoriser / retenir", keep them as a single card with the / preserved.
+4. When two items are separated by / on the same line:
+   - Gender pairs (un vendeur / une vendeuse) → one card (rule 3)
+   - Single-word verb synonyms of the exact same action (mémoriser / retenir) → one card
+   - Different expressions or phrases (au début / d'abord, faire payer / to charge) → TWO separate cards, each with its own translation. "au début" = "at the beginning" and "d'abord" = "first" are distinct expressions and must be separate cards.
 5. Translate naturally into English. For expressions, give the idiomatic English equivalent, not a literal word-by-word translation.
 6. Skip lines that are clearly not flashcard material: homework assignments, URLs, footer references, teacher's personal notes, section headers themselves ("Vocabulaire Expressions", "Prononciation Grammaire").
 7. For each card, assign a category:
