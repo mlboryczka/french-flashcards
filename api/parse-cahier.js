@@ -382,6 +382,7 @@ Rules:
 8. If an item has an inline English translation already in the source (e.g. "louer - to rent"), use that translation.
 9. Do not invent cards. Only extract what's actually in the text.
 10. If a line pairs two different words with "//" like "léger // lourd (adj)", split them into TWO separate cards: one for "léger (adj)" → "light" and one for "lourd (adj)" → "heavy". Two different French words with different meanings must always be separate cards.
+11. In conversational French, "on" means "we" (not "one"). Translate "on" as "we" unless the context is clearly formal/literary. For example: "on était" = "we were", "on allait" = "we were going", "on s'est dit" = "we said to each other".
 
 SPECIAL CASE — CONJUGATION TABLES:
 If you see a full conjugation listed inline across multiple forms, like:
