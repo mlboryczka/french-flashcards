@@ -19,6 +19,7 @@ export function BetaFeedback({ user, currentPage }) {
   const [error, setError] = useState("");
   const [screenshot, setScreenshot] = useState(null); // base64 data URL or null
   const [screenshotName, setScreenshotName] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
   const fileToBase64 = useCallback((file) => {
@@ -172,13 +173,24 @@ export function BetaFeedback({ user, currentPage }) {
                 </div>
               </div>
             ) : (
-              <button
-                style={BF.attachBtn}
+              <div
+                style={isDragging ? {...BF.dropZone, ...BF.dropZoneActive} : BF.dropZone}
                 onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
+                onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDragging(false);
+                  handleImage(e.dataTransfer?.files?.[0]);
+                }}
               >
-                <span>📎</span>
-                <span>Attach screenshot</span>
-                <span style={BF.attachHint}>(or paste)</span>
+                <div style={BF.dropZoneIcon}>📎</div>
+                <div style={BF.dropZoneText}>
+                  {isDragging ? "Drop your image here" : "Drop a screenshot here"}
+                </div>
+                <div style={BF.dropZoneSub}>or click to browse · paste from clipboard</div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -186,7 +198,7 @@ export function BetaFeedback({ user, currentPage }) {
                   onChange={(e) => handleImage(e.target.files?.[0])}
                   style={{ display: "none" }}
                 />
-              </button>
+              </div>
             )}
 
             {error && <div style={BF.error}>{error}</div>}
@@ -295,27 +307,38 @@ const BF = {
     color: T.color.onSurface,
     lineHeight: 1.5,
   },
-  attachBtn: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    width: "100%",
-    padding: "10px 14px",
-    background: T.color.surfaceLow,
-    border: "none",
+  // Screenshot dropzone
+  dropZone: {
+    border: "2px dashed rgba(3,22,50,0.12)",
     borderRadius: T.radius.lg,
-    marginBottom: 12,
+    background: T.color.surfaceLow,
+    padding: "28px 20px",
+    textAlign: "center",
     cursor: "pointer",
-    fontSize: 12,
+    transition: "all 0.2s ease",
+    marginBottom: 12,
     fontFamily: T.font.sans,
-    fontWeight: 500,
-    color: T.color.onSurfaceVariant,
-    textAlign: "left",
   },
-  attachHint: {
-    fontSize: 11,
+  dropZoneActive: {
+    borderColor: T.color.secondary,
+    background: T.color.tertiaryFixed,
+    transform: "scale(1.01)",
+  },
+  dropZoneIcon: {
+    fontSize: 24,
+    marginBottom: 8,
     opacity: 0.5,
-    marginLeft: 2,
+  },
+  dropZoneText: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: T.color.primary,
+    marginBottom: 4,
+  },
+  dropZoneSub: {
+    fontSize: 11,
+    color: T.color.onSurfaceVariant,
+    opacity: 0.6,
   },
   imgPreview: {
     display: "flex",
