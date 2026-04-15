@@ -226,8 +226,13 @@ async function handleCommit(req, res, adminClient, userId) {
 
   const errors = [];
 
+  // Step 0: split // pairs into separate cards. The extraction prompt
+  // asks Claude to do this, but as a safety net we also catch any that
+  // slipped through. "léger // lourd (adj)" → two cards.
+  const splitCards = splitSlashPairs(rawCards);
+
   // Step 1: expand conjugation tables into drill cards
-  const { expanded, drillsGenerated } = expandConjugations(rawCards);
+  const { expanded, drillsGenerated } = expandConjugations(splitCards);
 
   // Step 2: dedupe with polysemy splitting (cross-chunk: works because
   // we now have the full set of cards in a single function call)
@@ -271,7 +276,7 @@ async function handleCommit(req, res, adminClient, userId) {
   const allDates = [...new Set(deduped.flatMap((c) => c.dates))].sort();
 
   console.log(
-    `[parse-cahier] commit: raw=${rawCards.length} expanded=${expanded.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} errors=${errors.length}`
+    `[parse-cahier] commit: raw=${rawCards.length} slashSplit=${splitCards.length} expanded=${expanded.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} errors=${errors.length}`
   );
 
   return res.status(200).json({
@@ -376,6 +381,7 @@ Rules:
    Use the position in the text to determine this — items before "Prononciation Grammaire" are V, items after are G.
 8. If an item has an inline English translation already in the source (e.g. "louer - to rent"), use that translation.
 9. Do not invent cards. Only extract what's actually in the text.
+10. If a line pairs two different words with "//" like "léger // lourd (adj)", split them into TWO separate cards: one for "léger (adj)" → "light" and one for "lourd (adj)" → "heavy". Two different French words with different meanings must always be separate cards.
 
 SPECIAL CASE — CONJUGATION TABLES:
 If you see a full conjugation listed inline across multiple forms, like:
@@ -460,6 +466,59 @@ async function extractCardsFromBlock(anthropic, block) {
       forms: Array.isArray(c.forms) ? c.forms : null,
     }))
     .filter((c) => c.front.length > 0 && c.back.length > 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Slash-pair splitting: "léger // lourd (adj)" → two separate cards
+// ═══════════════════════════════════════════════════════════════════════════
+
+function splitSlashPairs(cards) {
+  const out = [];
+  for (const c of cards) {
+    // Only split on " // " (double slash with spaces) — single "/" is used
+    // for gender pairs like "vendeur / vendeuse" which should stay together
+    if (!c.front.includes(" // ")) {
+      out.push(c);
+      continue;
+    }
+    const frontParts = c.front.split(" // ").map((s) => s.trim());
+    const backParts = c.back.split(" // ").map((s) => s.trim());
+
+    // Only split if we get a matching number of front/back parts
+    if (frontParts.length !== backParts.length) {
+      // Try splitting back on " / " as fallback
+      const backAlt = c.back.split(" / ").map((s) => s.trim());
+      if (backAlt.length === frontParts.length) {
+        for (let i = 0; i < frontParts.length; i++) {
+          out.push({ ...c, front: distributeQualifier(frontParts, i), back: backAlt[i] });
+        }
+      } else {
+        // Can't match — keep as-is
+        out.push(c);
+      }
+      continue;
+    }
+
+    for (let i = 0; i < frontParts.length; i++) {
+      out.push({ ...c, front: distributeQualifier(frontParts, i), back: backParts[i] });
+    }
+  }
+  return out;
+}
+
+// If only the last part has a qualifier like "(adj)", "(n)", "(adv)",
+// distribute it to all parts. E.g. ["léger", "lourd (adj)"] index 0
+// → "léger (adj)"
+function distributeQualifier(parts, index) {
+  const part = parts[index];
+  // Already has a qualifier? Return as-is.
+  if (/\([^)]+\)\s*$/.test(part)) return part;
+  // Find a qualifier in any other part
+  for (const other of parts) {
+    const m = other.match(/(\([^)]+\))\s*$/);
+    if (m) return `${part} ${m[1]}`;
+  }
+  return part;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
