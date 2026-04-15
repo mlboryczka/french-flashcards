@@ -41,7 +41,8 @@ export function useUserDeck(user) {
       const { data, error } = await supabase
         .from("user_cards")
         .select("id, front, back, category, dates, flagged_for_review")
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .limit(10000);
 
       if (cancelled) return;
       if (error) {
