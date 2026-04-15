@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { useProgress } from "./useProgress";
 import { useUserDeck } from "./useUserDeck";
@@ -185,6 +186,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [showUpload, setShowUpload] = useState(false);
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState("");
 
@@ -855,6 +857,14 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     Upload document
                   </button>
+                  {isAdmin && (
+                    <button
+                      style={S.profileMenuItem}
+                      onClick={() => { setShowFeedbackModal(true); setShowProfileMenu(false); }}
+                    >
+                      View feedback
+                    </button>
+                  )}
                   <button style={S.profileMenuItem} onClick={onSignOut}>
                     Sign out
                   </button>
@@ -1232,6 +1242,9 @@ export default function FlashcardApp({ user, onSignOut }) {
             );
           }}
         />
+        {showFeedbackModal && (
+          <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />
+        )}
         {editingCard && (
           <EditCardModal
             card={editingCard}
@@ -1254,6 +1267,65 @@ export default function FlashcardApp({ user, onSignOut }) {
 }
 
 // ─── EDIT CARD MODAL ─────────────────────────────────────────────────────
+// ─── FEEDBACK REVIEW MODAL (admin only) ───────────────────────────────────
+// Shows all beta_feedback entries in a portal overlay. Triggered from the
+// profile dropdown → "View feedback".
+function FeedbackReviewModal({ onClose }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("beta_feedback")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) console.error("Failed to load feedback:", error);
+      setItems(data || []);
+      setLoading(false);
+    })();
+  }, []);
+
+  const dismiss = async (id) => {
+    await supabase.from("beta_feedback").delete().eq("id", id);
+    setItems(prev => prev.filter(i => i.id !== id));
+  };
+
+  return createPortal(
+    <div style={S.feedbackModalOverlay} onClick={onClose}>
+      <div style={S.feedbackModalBox} onClick={e => e.stopPropagation()}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20}}>
+          <h2 style={{margin:0, fontSize:24, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary}}>User feedback</h2>
+          <button style={{background:"none", border:"none", fontSize:24, cursor:"pointer", color:T.color.onSurfaceVariant, padding:"0 4px"}} onClick={onClose}>×</button>
+        </div>
+        {loading ? (
+          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>Loading…</div>
+        ) : items.length === 0 ? (
+          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>No feedback yet.</div>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column", gap:12, maxHeight:"60vh", overflowY:"auto"}}>
+            {items.map(item => (
+              <div key={item.id} style={S.fbItem}>
+                <div style={S.fbItemHeader}>
+                  <span style={S.fbItemEmail}>{item.user_email || "anonymous"}</span>
+                  <span style={S.fbItemDate}>{new Date(item.created_at).toLocaleDateString()}</span>
+                </div>
+                <div style={S.fbItemMsg}>{item.message}</div>
+                {item.screenshot && (
+                  <img src={item.screenshot} alt="Screenshot" style={S.fbItemImg} />
+                )}
+                <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Dismiss</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function EditCardModal({ card, onClose, onSave, onDelete }) {
   const [front, setFront] = useState(card.f);
   const [back, setBack] = useState(card.b);
@@ -1932,5 +2004,15 @@ const S = {
   betaFeedbackMsg: { fontSize:14, fontFamily:T.font.sans, color:T.color.onSurface, lineHeight:1.6, marginBottom:12 },
   betaFeedbackImg: { maxWidth:"100%", maxHeight:300, borderRadius:T.radius.lg, marginBottom:12, objectFit:"contain" },
   betaFeedbackDel: { padding:"6px 14px", background:"transparent", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurfaceVariant },
+  // Feedback review modal
+  feedbackModalOverlay: { position:"fixed", inset:0, background:"rgba(3,22,50,0.4)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:16 },
+  feedbackModalBox: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, maxWidth:600, width:"100%", padding:"32px 36px", boxShadow:"0 32px 96px rgba(3,22,50,0.18)", fontFamily:T.font.sans, maxHeight:"80vh", overflow:"hidden", display:"flex", flexDirection:"column" },
+  fbItem: { background:T.color.surfaceLow, borderRadius:T.radius.lg, padding:"16px 20px" },
+  fbItemHeader: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 },
+  fbItemEmail: { fontSize:12, fontWeight:600, color:T.color.primary, fontFamily:T.font.sans },
+  fbItemDate: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
+  fbItemMsg: { fontSize:14, fontFamily:T.font.sans, color:T.color.onSurface, lineHeight:1.6, marginBottom:10 },
+  fbItemImg: { maxWidth:"100%", maxHeight:240, borderRadius:T.radius.md, marginBottom:10, objectFit:"contain" },
+  fbItemDismiss: { padding:"5px 12px", background:"transparent", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurfaceVariant },
 };
 
