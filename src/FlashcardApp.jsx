@@ -456,21 +456,32 @@ export default function FlashcardApp({ user, onSignOut }) {
     setFeedbackState(null);
   };
 
-  // Keyboard shortcuts (study mode, non-type mode)
+  // Keyboard shortcuts (study mode). Uses refs so the handler always
+  // calls the latest version of each function without needing them in
+  // the useEffect dependency array. Works in both flip mode and type
+  // mode — in type mode it only fires when the input isn't focused
+  // (e.g. after a result is shown and Again/Got It buttons are visible).
+  const flipRef = useRef(flip);
+  const answerRef = useRef(answer);
+  const goBackRef = useRef(goBack);
+  useEffect(() => { flipRef.current = flip; }, [flip]);
+  useEffect(() => { answerRef.current = answer; });
+  useEffect(() => { goBackRef.current = goBack; });
+
   useEffect(() => {
-    if (mode !== "study" || typeMode) return;
+    if (mode !== "study") return;
     const handler = (e) => {
       if (!card) return;
+      // Don't intercept keys when user is typing in an input/textarea
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === " ") { e.preventDefault(); flip(); }
-      else if (e.key === "ArrowLeft") { e.preventDefault(); answer(false); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); answer(true); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); goBack(); }
+      if (e.key === " ") { e.preventDefault(); flipRef.current(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); answerRef.current(false); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); answerRef.current(true); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); goBackRef.current(); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, mode, typeMode, idx, deck.length]);
+  }, [card, mode]);
 
   // Submit a feedback claim: "my answer should have been accepted"
   const submitFeedback = async () => {
@@ -999,12 +1010,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   // ── STUDY MODE ──────────────────────────────────────────────────────
   const front = card ? (card.shownDir==="fr" ? card.f : card.b) : "";
   const back = card ? (card.shownDir==="fr" ? card.b : card.f) : "";
-  // Typing mode applies when:
-  //  - user enabled it, AND
-  //  - the card is either flippable (vocab/expr) OR has a short back (≤25 chars)
-  //    that's a specific answer rather than a rule explanation
-  const isTypable = card && (card.flippable || (back && back.length <= 25));
-  const effectiveTypeMode = typeMode && isTypable;
+  // Typing mode: user enabled it AND the card exists. All cards are
+  // typable — if the back is a long explanation, the user can hit
+  // "Show answer" to skip. The old isTypable guard (back ≤ 25 chars)
+  // silently disabled type mode on many cards, making the toggle button
+  // appear broken.
+  const effectiveTypeMode = typeMode && !!card;
   return (
     <div style={isNarrow ? S.shellNarrow : S.shell}>
       {sidebar}
