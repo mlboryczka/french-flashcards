@@ -42,6 +42,11 @@ export const config = {
   api: {
     bodyParser: { sizeLimit: "10mb" },
   },
+  // Opt into the longest timeout the plan allows. Hobby caps this at 60s,
+  // Pro at 300s. Without this set, Vercel uses the default (10s on Hobby
+  // for some functions). Also lets us hit the maximum on Pro without
+  // additional config in vercel.json.
+  maxDuration: 300,
 };
 
 const MONTHS_FR = {
@@ -87,7 +92,49 @@ export default async function handler(req, res) {
   }
   const userId = userData.user.id;
 
-  const { mode, content, replace } = req.body || {};
+  // ═════════════════════════════════════════════════════════════════════
+  // ACTION DISPATCH
+  // ─────────────────────────────────────────────────────────────────────
+  // Vercel Hobby caps function execution at 60s. To process a year-long
+  // cahier (~150 lessons × ~5s each via Claude Haiku) we'd blow past that.
+  // Instead, the client drives the work in three phases:
+  //
+  //   1. action="slice"   — POST {mode, content} → returns date-keyed blocks
+  //                         The client now has the full work-list and can
+  //                         track progress ("processing chunk 3 of 8").
+  //
+  //   2. action="extract" — POST {blocks: [...]} → returns extracted cards
+  //                         Called repeatedly with chunks of ~15 blocks.
+  //                         Each call finishes in ~10-15s, well under 60s.
+  //
+  //   3. action="commit"  — POST {cards, replace} → dedupes, expands
+  //                         conjugations, writes to Supabase. Cheap, fast.
+  //
+  // The client accumulates cards across multiple extract calls, then sends
+  // them all in one commit. Dedupe runs across the WHOLE cahier so cross-
+  // chunk duplicates and polysemy clusters are handled correctly.
+  // ═════════════════════════════════════════════════════════════════════
+
+  const action = req.body?.action || "slice";
+
+  if (action === "slice") {
+    return await handleSlice(req, res);
+  }
+  if (action === "extract") {
+    return await handleExtract(req, res);
+  }
+  if (action === "commit") {
+    return await handleCommit(req, res, adminClient, userId);
+  }
+  return res.status(400).json({ error: `Unknown action: ${action}` });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION 1: SLICE — turn raw cahier text into per-date blocks
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleSlice(req, res) {
+  const { mode, content } = req.body || {};
   if (!mode || !content) {
     return res.status(400).json({ error: "Missing mode or content" });
   }
@@ -95,7 +142,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "mode must be 'text' or 'url'" });
   }
 
-  // ── Step 1: get raw text ──────────────────────────────────────────────
   let rawText;
   try {
     rawText = mode === "url" ? await fetchGoogleDoc(content) : content;
@@ -111,7 +157,6 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── Step 2: slice into per-date blocks ────────────────────────────────
   const blocks = sliceIntoBlocks(rawText);
   if (blocks.length === 0) {
     return res.status(400).json({
@@ -121,50 +166,74 @@ export default async function handler(req, res) {
     });
   }
 
-  console.log(`[parse-cahier] start: ${blocks.length} blocks, user=${userId}`);
+  console.log(`[parse-cahier] slice: ${blocks.length} blocks`);
+  return res.status(200).json({ ok: true, blocks });
+}
 
-  // ── Step 3: Claude extraction ─────────────────────────────────────────
-  const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-  const allCards = [];
-  const errors = [];
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION 2: EXTRACT — run Claude on a chunk of blocks, return raw cards
+// ═══════════════════════════════════════════════════════════════════════════
 
-  // Concurrency: 20 in flight is well within Anthropic's per-org rate limits
-  // for Haiku and gets the whole cahier through in ~30-60s instead of ~3min.
-  // If you start hitting 429s, drop this to 10.
-  const BATCH_SIZE = 20;
-  for (let i = 0; i < blocks.length; i += BATCH_SIZE) {
-    const batch = blocks.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map((b) =>
-        extractCardsFromBlock(anthropic, b).catch((e) => ({
-          error: e.message,
-          block: b,
-        }))
-      )
-    );
-    for (const r of results) {
-      if (r.error) {
-        errors.push({ date: r.block?.date, error: r.error });
-      } else {
-        allCards.push(...r);
-      }
-    }
+async function handleExtract(req, res) {
+  const { blocks } = req.body || {};
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    return res.status(400).json({ error: "Missing or empty blocks array" });
   }
-
-  if (allCards.length === 0) {
-    return res.status(500).json({
-      error: "Claude returned no cards from any block",
-      errors: errors.slice(0, 5),
+  if (blocks.length > 30) {
+    return res.status(400).json({
+      error: "Chunk too large (max 30 blocks). Split into smaller chunks.",
     });
   }
 
-  // ── Step 4: expand conjugation tables into drill cards ───────────────
-  const { expanded, drillsGenerated } = expandConjugations(allCards);
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const cards = [];
+  const errors = [];
 
-  // ── Step 5: dedupe with polysemy splitting ───────────────────────────
+  // All blocks in the chunk run in parallel — the chunk is sized so that
+  // 15 parallel Haiku calls comfortably finish in under 60s even with a
+  // few slow outliers.
+  const results = await Promise.all(
+    blocks.map((b) =>
+      extractCardsFromBlock(anthropic, b).catch((e) => ({
+        error: e.message,
+        block: b,
+      }))
+    )
+  );
+  for (const r of results) {
+    if (r.error) {
+      errors.push({ date: r.block?.date, error: r.error });
+    } else {
+      cards.push(...r);
+    }
+  }
+
+  console.log(
+    `[parse-cahier] extract: ${blocks.length} blocks → ${cards.length} cards (${errors.length} errors)`
+  );
+  return res.status(200).json({ ok: true, cards, errors });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION 3: COMMIT — dedupe across all cards, expand conjugations, insert
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleCommit(req, res, adminClient, userId) {
+  const { cards: rawCards, replace } = req.body || {};
+  if (!Array.isArray(rawCards) || rawCards.length === 0) {
+    return res.status(400).json({ error: "Missing or empty cards array" });
+  }
+
+  const errors = [];
+
+  // Step 1: expand conjugation tables into drill cards
+  const { expanded, drillsGenerated } = expandConjugations(rawCards);
+
+  // Step 2: dedupe with polysemy splitting (cross-chunk: works because
+  // we now have the full set of cards in a single function call)
   const { deduped, splits } = dedupeWithPolysemy(expanded);
 
-  // ── Step 6: write to Supabase ────────────────────────────────────────
+  // Step 3: write to Supabase
   if (replace) {
     const { error: delErr } = await adminClient
       .from("user_cards")
@@ -202,7 +271,7 @@ export default async function handler(req, res) {
   const allDates = [...new Set(deduped.flatMap((c) => c.dates))].sort();
 
   console.log(
-    `[parse-cahier] done: blocks=${blocks.length} raw=${allCards.length} expanded=${expanded.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} errors=${errors.length}`
+    `[parse-cahier] commit: raw=${rawCards.length} expanded=${expanded.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} errors=${errors.length}`
   );
 
   return res.status(200).json({
@@ -213,7 +282,6 @@ export default async function handler(req, res) {
     dateRange: allDates.length
       ? [allDates[0], allDates[allDates.length - 1]]
       : null,
-    blocksProcessed: blocks.length,
     conjugationDrillsGenerated: drillsGenerated,
     polysemySplits: splits,
     errors: errors.slice(0, 10),
