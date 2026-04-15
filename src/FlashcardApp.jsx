@@ -1125,7 +1125,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
                   <div style={S.cardBack}>
-                    <div style={S.cardEyebrow}>{card.shownDir==="fr"?"English":"French"}</div>
+                    <div style={S.cardEyebrow}>{catToLabel(card.cat)}</div>
                     <div style={S.cardTextB}>{back}</div>
                     {TTS_AVAILABLE && card.shownDir === "en" && (
                       <div style={S.cardAudio}>
@@ -1145,16 +1145,6 @@ export default function FlashcardApp({ user, onSignOut }) {
                         title="Edit this card"
                       >
                         ✏️
-                      </button>
-                      <button
-                        style={card.flagged ? {...S.cardActionBtn, ...S.cardActionBtnFlagged} : S.cardActionBtn}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!card.flagged) flagCard(card.row_id);
-                        }}
-                        title={card.flagged ? "Already flagged" : "Flag this card's translation for review"}
-                      >
-                        🚩
                       </button>
                     </div>
                   </div>
