@@ -93,12 +93,13 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
   // pdfjs-dist is ~500KB gzipped; mammoth is ~200KB. We dynamic-import
   // them on first use so they never load on pages that don't need them.
   async function extractPdfText(file) {
-    const pdfjs = await import("pdfjs-dist/build/pdf");
-    // pdfjs needs a worker; Vite-friendly URL pattern below resolves to
-    // a hashed asset at build time.
+    // Modern pdfjs-dist (v4+) exports the API from the package root.
+    // The worker is registered via Vite's `?url` import which resolves
+    // to a hashed asset path at build time.
+    const pdfjs = await import("pdfjs-dist");
     if (!pdfjs.GlobalWorkerOptions.workerSrc) {
       const workerUrl = (await import(
-        "pdfjs-dist/build/pdf.worker.min?url"
+        "pdfjs-dist/build/pdf.worker.min.mjs?url"
       )).default;
       pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
     }
@@ -133,7 +134,8 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
   }
 
   async function extractDocxText(file) {
-    const mammoth = await import("mammoth/mammoth.browser");
+    // Mammoth's browser build exports the same extractRawText API.
+    const mammoth = await import("mammoth/mammoth.browser.js");
     const buffer = await file.arrayBuffer();
     const result = await mammoth.extractRawText({ arrayBuffer: buffer });
     return result.value || "";
