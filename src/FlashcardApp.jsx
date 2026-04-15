@@ -412,7 +412,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setFlipped(false);
     setTypeResult(null);
     setTypedAnswer("");
-    setFeedbackState(null);
+    setFeedbackState(null); setFeedbackVerdict(null);
     setIdx(i => Math.min(i+1, deck.length-1));
     // Re-enable the flip animation on the next frame
     requestAnimationFrame(() => { skipFlipAnim.current = false; });
@@ -428,8 +428,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (result.match) {
       setTypeResult(result.close ? "close" : "correct");
       setFlipped(true);
-      // Auto-advance after a moment
-      autoAdvanceTimer.current = setTimeout(() => answer(true), 1200);
     } else if (result.wrongArticle) {
       setTypeResult("wrongArticle");
       setFlipped(true);
@@ -458,7 +456,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setIdx(i => Math.max(0, i-1));
     setTypedAnswer("");
     setTypeResult(null);
-    setFeedbackState(null);
+    setFeedbackState(null); setFeedbackVerdict(null);
     requestAnimationFrame(() => { skipFlipAnim.current = false; });
   };
 
@@ -468,7 +466,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setStats({ seen:0, got:0, missed:0 });
     setTypedAnswer("");
     setTypeResult(null);
-    setFeedbackState(null);
+    setFeedbackState(null); setFeedbackVerdict(null);
   };
 
   // Keyboard shortcuts (study mode). Uses refs so the handler always
@@ -500,11 +498,13 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // Submit a feedback claim: "my answer should have been accepted"
   const [feedbackErrMsg, setFeedbackErrMsg] = useState("");
+  const [feedbackVerdict, setFeedbackVerdict] = useState(null); // {verdict, reasoning}
 
   const submitFeedback = async () => {
     if (!card || !typedAnswer.trim()) return;
     setFeedbackState("submitting");
     setFeedbackErrMsg("");
+    setFeedbackVerdict(null);
     const correctText = card.shownDir === "fr" ? card.b : card.f;
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -527,9 +527,18 @@ export default function FlashcardApp({ user, onSignOut }) {
       let data;
       try { data = JSON.parse(responseText); } catch { data = null; }
       if (!res.ok) {
-        setFeedbackErrMsg(data?.error || `HTTP ${res.status}: ${responseText.slice(0, 200)}`);
+        setFeedbackErrMsg(data?.error || `HTTP ${res.status}`);
         setFeedbackState("error");
         return;
+      }
+      setFeedbackVerdict(data);
+      if (data?.verdict === "accept") {
+        // Update local alternates so the matcher accepts it immediately
+        const key = `${card.id}:${card.shownDir}`;
+        setAlternates(prev => ({
+          ...prev,
+          [key]: [...(prev[key] || []), typedAnswer],
+        }));
       }
       setFeedbackState("submitted");
     } catch (e) {
@@ -1189,8 +1198,16 @@ export default function FlashcardApp({ user, onSignOut }) {
                             My answer should have been accepted
                           </button>
                         )}
-                        {feedbackState === "submitting" && <span style={S.feedbackPending}>Sending…</span>}
-                        {feedbackState === "submitted" && <span style={S.feedbackOk}>Thanks! Your answer is being reviewed.</span>}
+                        {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
+                        {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
+                          <span style={S.feedbackAccept}>✓ Accepted — this answer will be remembered.</span>
+                        )}
+                        {feedbackState === "submitted" && feedbackVerdict?.verdict === "reject" && (
+                          <span style={S.feedbackReject}>✗ Not accepted: {feedbackVerdict.reasoning}</span>
+                        )}
+                        {feedbackState === "submitted" && feedbackVerdict?.verdict === "uncertain" && (
+                          <span style={S.feedbackPending}>Uncertain: {feedbackVerdict.reasoning}</span>
+                        )}
                         {feedbackState === "error" && <span style={S.feedbackErr}>{feedbackErrMsg || "Couldn't send — try again"}</span>}
                       </div>
                     )}
@@ -1893,6 +1910,8 @@ const S = {
   feedbackBtn: { padding:"7px 16px", background:"transparent", border:"none", color:T.color.secondary, borderRadius:T.radius.md, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, textDecoration:"underline" },
   feedbackPending: { color:T.color.onSurfaceVariant },
   feedbackOk: { color:T.color.primary, fontWeight:500 },
+  feedbackAccept: { color:"#1d9e75", fontWeight:600, fontSize:12, fontFamily:T.font.sans },
+  feedbackReject: { color:T.color.secondary, fontWeight:500, fontSize:12, fontFamily:T.font.sans },
   feedbackErr: { color:T.color.secondary, fontWeight:500 },
   // Feedback admin view
   feedbackList: { display:"flex", flexDirection:"column", gap:18 },
