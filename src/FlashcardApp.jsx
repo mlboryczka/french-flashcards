@@ -775,11 +775,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       {/* End Session + Feedback — bottom of sidebar (desktop only) */}
       {!isNarrow && (
         <div style={S.sideFeedback}>
-          {mode === "study" && (
-            <button style={S.endSessionBtn} onClick={resetSession}>
-              End Session
-            </button>
-          )}
           {user && <BetaFeedback user={user} currentPage={mode} />}
         </div>
       )}
