@@ -38,18 +38,33 @@ export function useUserDeck(user) {
     }
     setLoaded(false);
     (async () => {
-      const { data, error } = await supabase
-        .from("user_cards")
-        .select("id, front, back, category, dates, flagged_for_review")
-        .eq("user_id", user.id)
-        .limit(10000);
+      // Supabase caps responses at 1000 rows per request (server-side,
+      // regardless of .limit()). Paginate with .range() to fetch all cards.
+      const PAGE = 1000;
+      let allRows = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from("user_cards")
+          .select("id, front, back, category, dates, flagged_for_review")
+          .eq("user_id", user.id)
+          .range(from, from + PAGE - 1);
+
+        if (cancelled) return;
+        if (error) {
+          console.error("Failed to load user deck:", error);
+          setCards([]);
+          setLoaded(true);
+          return;
+        }
+        allRows = allRows.concat(data || []);
+        // If we got fewer than PAGE rows, we've fetched everything
+        if (!data || data.length < PAGE) break;
+        from += PAGE;
+      }
 
       if (cancelled) return;
-      if (error) {
-        console.error("Failed to load user deck:", error);
-        setCards([]);
-      } else {
-        const shaped = (data || []).map((row) => ({
+      const shaped = allRows.map((row) => ({
           f: row.front,
           b: row.back,
           cat: CAT_MAP[row.category] || "vocab",
@@ -62,7 +77,6 @@ export function useUserDeck(user) {
         // Sort by frequency desc to match legacy buildDeck ordering
         shaped.sort((a, b) => b.freq - a.freq);
         setCards(shaped);
-      }
       setLoaded(true);
     })();
 
