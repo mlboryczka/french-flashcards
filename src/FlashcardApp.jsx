@@ -181,6 +181,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Upload & onboarding state
   const [showUpload, setShowUpload] = useState(false);
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState("");
 
@@ -615,11 +616,11 @@ export default function FlashcardApp({ user, onSignOut }) {
             <div style={S.onbHeroLeft}>
               <h1 style={S.onbHeroTitle}>Welcome.</h1>
               <p style={S.onbHeroText}>
-                Upload your cahier to get started. We'll turn your lesson notes into a personal deck — vocabulary, expressions, grammar, and conjugation drills.
+                Upload your document to get started. We'll turn your lesson notes into a personal deck — vocabulary, expressions, grammar, and conjugation drills.
               </p>
               <button style={S.onbHeroCta} onClick={() => openUpload("paste")}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-                Upload your cahier
+                Upload document
               </button>
             </div>
             <div style={S.onbHeroRight}>
@@ -648,7 +649,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
               </div>
               <h3 style={S.onbCardTitle}>Paste text</h3>
-              <p style={S.onbCardDesc}>Paste your cahier contents directly from your clipboard.</p>
+              <p style={S.onbCardDesc}>Paste your document contents directly from your clipboard.</p>
               <div style={S.onbCardArrow}>→</div>
             </button>
             <button style={{...S.onbCard, ...S.onbCardFeatured}} onClick={() => openUpload("file")}>
@@ -708,6 +709,34 @@ export default function FlashcardApp({ user, onSignOut }) {
   if (isAdmin) navItems.push(["feedback", "Feedback"]);
   const sidebar = (
     <aside style={isNarrow ? S.sideBarBottom : S.sideBar}>
+      {/* Profile section — top of sidebar (desktop only) */}
+      {!isNarrow && user && (
+        <div style={S.sideProfile}>
+          <button
+            style={S.profileBtn}
+            onClick={() => setShowProfileMenu(v => !v)}
+          >
+            <div style={S.profileAvatar}>{user.email[0].toUpperCase()}</div>
+            <span style={S.profileChevron}>{showProfileMenu ? "▴" : "▾"}</span>
+          </button>
+          {showProfileMenu && (
+            <div style={S.profileMenu}>
+              <div style={S.profileMenuEmail}>{user.email}</div>
+              <button
+                style={S.profileMenuItem}
+                onClick={() => { setUploadInitialTab("paste"); setShowUpload(true); setShowProfileMenu(false); }}
+              >
+                Upload document
+              </button>
+              <button style={S.profileMenuItem} onClick={onSignOut}>
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Nav items */}
       <nav style={isNarrow ? S.sideNavBottom : S.sideNav}>
         {navItems.map(([m, label]) => {
           const baseStyle = isNarrow ? S.sideItemBottom : S.sideItem;
@@ -723,14 +752,11 @@ export default function FlashcardApp({ user, onSignOut }) {
           );
         })}
       </nav>
+
+      {/* Feedback — bottom of sidebar (desktop only) */}
       {!isNarrow && user && (
-        <div style={S.sideFoot}>
-          <button style={S.sideUtilBtn} onClick={() => setShowUpload(true)} title="Upload or re-upload your cahier">
-            Upload cahier
-          </button>
+        <div style={S.sideFeedback}>
           <BetaFeedback user={user} currentPage={mode} />
-          <div style={S.sideEmail}>{user.email}</div>
-          <button style={S.sideUtilBtn} onClick={onSignOut}>Sign out</button>
         </div>
       )}
     </aside>
@@ -1577,6 +1603,18 @@ const S = {
   sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderRight:"4px solid transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
   sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
+  // ── Sidebar profile dropdown (top) ─────────────────────────────────
+  sideProfile: { padding:"16px 20px 8px", position:"relative" },
+  profileBtn: { display:"flex", alignItems:"center", gap:10, width:"100%", padding:"8px 12px", background:"transparent", border:"none", borderRadius:T.radius.lg, cursor:"pointer", fontFamily:T.font.sans, transition:"background 0.15s" },
+  profileAvatar: { width:34, height:34, borderRadius:"50%", background:T.color.primary, color:T.color.onPrimary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, fontFamily:T.font.sans, flexShrink:0 },
+  profileChevron: { marginLeft:"auto", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.5 },
+  profileMenu: { position:"absolute", top:"100%", left:16, right:16, background:T.color.surfaceLowest, borderRadius:T.radius.lg, boxShadow:"0 8px 32px rgba(3,22,50,0.12)", padding:"8px 0", zIndex:20, fontFamily:T.font.sans },
+  profileMenuEmail: { padding:"10px 16px 6px", fontSize:11, color:T.color.onSurfaceVariant, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", borderBottom:"1px solid rgba(3,22,50,0.06)", marginBottom:4 },
+  profileMenuItem: { display:"block", width:"100%", padding:"10px 16px", background:"transparent", border:"none", borderRadius:0, cursor:"pointer", fontSize:12, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurface, textAlign:"left", transition:"background 0.1s" },
+  // ── Sidebar feedback (bottom) ─────────────────────────────────────
+  sideFeedback: { padding:"12px 20px 20px", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)" },
+  // Legacy sidebar footer styles — no longer rendered but kept so the
+  // BetaFeedback component (which may reference S.sideFoot) doesn't crash
   sideFoot: { padding:"16px 24px 0", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)", display:"flex", flexDirection:"column", gap:6, alignItems:"flex-start" },
   sideUtilBtn: { padding:"8px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, textAlign:"left", width:"100%", letterSpacing:"0.02em" },
   sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
