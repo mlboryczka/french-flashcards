@@ -368,10 +368,20 @@ export default function FlashcardApp({ user, onSignOut }) {
     setPronError("");
   };
 
-  // Auto-focus study input when entering type mode or advancing cards
+  // Auto-focus study input when entering type mode or advancing cards.
+  // When a type result is shown, blur focus so keyboard shortcuts (Space,
+  // arrows) reach the window handler instead of being captured by buttons.
   useEffect(() => {
-    if (typeMode && mode === "study" && !typeResult) {
-      setTimeout(() => studyInputRef.current?.focus(), 50);
+    if (typeMode && mode === "study") {
+      if (!typeResult) {
+        setTimeout(() => studyInputRef.current?.focus(), 50);
+      } else {
+        // Result is showing — blur any focused button so Space/arrows
+        // go to the window keydown handler, not the button
+        if (document.activeElement && document.activeElement.tagName === "BUTTON") {
+          document.activeElement.blur();
+        }
+      }
     }
   }, [typeMode, idx, typeResult, mode]);
 
@@ -443,12 +453,13 @@ export default function FlashcardApp({ user, onSignOut }) {
       clearTimeout(autoAdvanceTimer.current);
       autoAdvanceTimer.current = null;
     }
+    skipFlipAnim.current = true;
     setFlipped(false);
     setIdx(i => Math.max(0, i-1));
     setTypedAnswer("");
     setTypeResult(null);
     setFeedbackState(null);
-    setTimeout(() => studyInputRef.current?.focus(), 50);
+    requestAnimationFrame(() => { skipFlipAnim.current = false; });
   };
 
   const resetSession = () => {
@@ -468,9 +479,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   const flipRef = useRef(flip);
   const answerRef = useRef(answer);
   const goBackRef = useRef(goBack);
+  const giveUpRef = useRef(giveUpTyped);
   useEffect(() => { flipRef.current = flip; }, [flip]);
   useEffect(() => { answerRef.current = answer; });
   useEffect(() => { goBackRef.current = goBack; });
+  useEffect(() => { giveUpRef.current = giveUpTyped; });
 
   useEffect(() => {
     if (mode !== "study") return;
@@ -480,8 +493,8 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.key === " ") { e.preventDefault(); flipRef.current(); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); answerRef.current(false); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); answerRef.current(true); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); goBackRef.current(); }
+      else if (e.key === "ArrowRight" || e.key === "Enter") { e.preventDefault(); answerRef.current(true); }
+      else if (e.key === "Escape") { e.preventDefault(); giveUpRef.current(); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -1071,12 +1084,6 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
             {card && (
               <div style={S.subToolbarRight}>
-                <button
-                  style={idx === 0 ? S.backBtnDisabled : S.backBtn}
-                  onClick={idx === 0 ? undefined : goBack}
-                  disabled={idx === 0}
-                  title="Previous card"
-                >← Back</button>
                 <span style={S.counter}>Card {idx+1} of {deck.length}</span>
               </div>
             )}
@@ -1205,7 +1212,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         style={S.typeInput}
                         value={typedAnswer}
                         onChange={e => setTypedAnswer(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter") submitTyped(); }}
+                        onKeyDown={e => { if (e.key === "Enter") submitTyped(); else if (e.key === "Escape") { e.target.blur(); giveUpTyped(); } }}
                         placeholder={`Type ${card.shownDir==="fr" ? "English" : "French"}…`}
                         autoFocus
                       />
@@ -1483,8 +1490,8 @@ function ShortcutsTooltip() {
         <div style={S.infoTip}>
           <div><b>Space</b> flip card</div>
           <div><b>←</b> again</div>
-          <div><b>→</b> got it</div>
-          <div><b>↑</b> previous card</div>
+          <div><b>→</b> or <b>Enter</b> got it</div>
+          <div><b>Esc</b> show answer</div>
         </div>
       )}
     </div>
