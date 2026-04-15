@@ -695,7 +695,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   if (!loaded) return <div style={S.loading}>Loading…</div>;
 
   // ── ONBOARDING (empty deck) ─────────────────────────────────────────
-  if (userCards.length === 0 && mode !== "feedback") {
+  if (userCards.length === 0) {
     const openUpload = (tab) => { setUploadInitialTab(tab); setShowUpload(true); };
     return (
       <div style={S.onbPage}>
@@ -810,7 +810,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   };
 
   const navItems = [["study", "Cards"], ["stats", "Stats"]];
-  if (isAdmin) navItems.push(["feedback", "Feedback"]);
+  
   const sidebar = (
     <aside style={isNarrow ? S.sideBarBottom : S.sideBar}>
       {/* Nav items with icons */}
@@ -986,31 +986,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   }
 
   // ── FEEDBACK VIEW (admin only) ──────────────────────────────────────
-  if (mode === "feedback") {
-    if (!isAdmin) {
-      return (
-        <div style={isNarrow ? S.shellNarrow : S.shell}>
-          {sidebar}
-          <main style={S.main}>
-            <div style={S.mainInner}>
-              <div style={S.empty}><p>Admins only.</p></div>
-            </div>
-          </main>
-        </div>
-      );
-    }
-    return (
-      <div style={isNarrow ? S.shellNarrow : S.shell}>
-        {sidebar}
-        <main style={S.main}>
-          <div style={S.mainInner}>
-            <FeedbackAdminView user={user} setMode={setMode} resetSession={resetSession} />
-          </div>
-        </main>
-      </div>
-    );
-  }
-
   // ── STUDY MODE ──────────────────────────────────────────────────────
   const front = card ? (card.shownDir==="fr" ? card.f : card.b) : "";
   const back = card ? (card.shownDir==="fr" ? card.b : card.f) : "";
