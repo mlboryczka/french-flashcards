@@ -379,7 +379,8 @@ Rules:
    - "V" if it came from the Vocabulaire Expressions section
    - "G" if it came from the Prononciation Grammaire section
    Use the position in the text to determine this — items before "Prononciation Grammaire" are V, items after are G.
-8. If an item has an inline English translation already in the source (e.g. "louer - to rent"), use that translation.
+8. If an item has a SHORT inline English translation (e.g. "louer - to rent", "She had to / she was supposed to = elle devait"), use that translation.
+   BUT: if the parenthetical is a LONG contextual explanation of when/why the phrase is used (e.g. "S'il partait à l'heure (he never leaves on time but I imagine a world where he does)"), that is NOT a translation — it's a usage note. Translate the French phrase directly and APPEND the context note in parentheses on the English side. Example: front = "S'il partait à l'heure", back = "If he left on time (he never leaves on time but I imagine a world where he does)". The test: if the parenthetical describes a scenario or situation rather than giving a direct equivalent, translate the French yourself and keep the parenthetical as context.
 9. Do not invent cards. Only extract what's actually in the text.
 10. If a line pairs two different words with "//" like "léger // lourd (adj)", split them into TWO separate cards: one for "léger (adj)" → "light" and one for "lourd (adj)" → "heavy". Two different French words with different meanings must always be separate cards.
 11. In conversational French, "on" means "we" (not "one"). Translate "on" as "we" unless the context is clearly formal/literary. For example: "on était" = "we were", "on allait" = "we were going", "on s'est dit" = "we said to each other".
