@@ -926,6 +926,54 @@ export default function FlashcardApp({ user, onSignOut }) {
     </aside>
   );
 
+  // ── SHARED MODALS ───────────────────────────────────────────────────
+  // These need to render regardless of which view (stats, cards, etc.) is
+  // active, because they're triggered from the profile menu in the sidebar
+  // which is visible from every view. Previously they were only mounted
+  // inside the Cards view's return, so clicking "View users" from Stats
+  // would set the flag but render nothing until you tabbed back to Cards.
+  const modals = (
+    <>
+      <CahierUpload
+        open={showUpload}
+        onClose={() => setShowUpload(false)}
+        hasExisting={userCards.length > 0}
+        initialTab={uploadInitialTab}
+        onSuccess={(result) => {
+          setShowUpload(false);
+          reloadDeck();
+          alert(
+            `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
+            (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
+            (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
+          );
+        }}
+      />
+      {showFeedbackModal && (
+        <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />
+      )}
+      {showUsersModal && (
+        <UsersModal onClose={() => setShowUsersModal(false)} />
+      )}
+      {editingCard && (
+        <EditCardModal
+          card={editingCard}
+          onClose={() => setEditingCard(null)}
+          onSave={async (newFront, newBack) => {
+            const ok = await saveCardEdit(editingCard.row_id, newFront, newBack);
+            if (ok) setEditingCard(null);
+            return ok;
+          }}
+          onDelete={async () => {
+            if (!confirm("Delete this card? This cannot be undone.")) return;
+            const ok = await deleteCard(editingCard.row_id);
+            if (ok) setEditingCard(null);
+          }}
+        />
+      )}
+    </>
+  );
+
   // ── STATS VIEW ──────────────────────────────────────────────────────
   if (mode === "stats") {
     const total = userCards.length;
@@ -1042,6 +1090,7 @@ export default function FlashcardApp({ user, onSignOut }) {
             <button style={S.resetBtn} onClick={resetAll}>Reset all progress</button>
           </div>
         </main>
+        {modals}
       </div>
     );
   }
@@ -1273,44 +1322,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           )}
         </div>
 
-        <CahierUpload
-          open={showUpload}
-          onClose={() => setShowUpload(false)}
-          hasExisting={userCards.length > 0}
-          initialTab={uploadInitialTab}
-          onSuccess={(result) => {
-            setShowUpload(false);
-            reloadDeck();
-            alert(
-              `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
-              (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
-              (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
-            );
-          }}
-        />
-        {showFeedbackModal && (
-          <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />
-        )}
-        {showUsersModal && (
-          <UsersModal onClose={() => setShowUsersModal(false)} />
-        )}
-        {editingCard && (
-          <EditCardModal
-            card={editingCard}
-            onClose={() => setEditingCard(null)}
-            onSave={async (newFront, newBack) => {
-              const ok = await saveCardEdit(editingCard.row_id, newFront, newBack);
-              if (ok) setEditingCard(null);
-              return ok;
-            }}
-            onDelete={async () => {
-              if (!confirm("Delete this card? This cannot be undone.")) return;
-              const ok = await deleteCard(editingCard.row_id);
-              if (ok) setEditingCard(null);
-            }}
-          />
-        )}
       </main>
+      {modals}
     </div>
   );
 }
@@ -1441,7 +1454,7 @@ function UsersModal({ onClose }) {
                     <td style={S.usersTdNum}>{u.deck_size}</td>
                     <td style={S.usersTdNum}>{u.studied}</td>
                     <td style={S.usersTdNum}>{u.mastered}</td>
-                    <td style={S.usersTd}>{timeAgo(u.last_sign_in)}</td>
+                    <td style={S.usersTd}>{timeAgo(u.last_active || u.last_sign_in)}</td>
                   </tr>
                 ))}
               </tbody>
