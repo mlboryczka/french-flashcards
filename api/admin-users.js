@@ -49,26 +49,40 @@ export default async function handler(req, res) {
     const usersData = await usersRes.json();
     const authUsers = usersData.users || usersData || [];
 
-    // Deck size per user
+    // Deck size per user, plus build a per-user set of valid card IDs so we
+    // can filter out orphaned card_progress rows (left behind when a card's
+    // front text was edited — the new progress row has a new id, but the old
+    // one still exists and would otherwise inflate the "studied"/"mastered"
+    // counts beyond what the user actually sees on their stats page).
     const cardStats = {};
+    const validCardIdsByUser = {};
     const deckRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_cards?select=user_id&order=user_id`,
+      `${SUPABASE_URL}/rest/v1/user_cards?select=user_id,front&order=user_id`,
       { headers: sbHeaders }
     );
     const deckRows = deckRes.ok ? await deckRes.json() : [];
     for (const row of deckRows) {
       if (!cardStats[row.user_id]) cardStats[row.user_id] = { deck_size: 0 };
       cardStats[row.user_id].deck_size++;
+      if (!validCardIdsByUser[row.user_id]) validCardIdsByUser[row.user_id] = new Set();
+      // card_progress.card_id is the lowercased, trimmed front text
+      // (see FlashcardApp.jsx: "card_progress rows continue to match via
+      // the lowercased-front id").
+      validCardIdsByUser[row.user_id].add(String(row.front || "").toLowerCase().trim());
     }
 
-    // Progress stats per user
+    // Progress stats per user, filtered to cards still in the user's deck
     const progressStats = {};
     const progRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/card_progress?select=user_id,score&order=user_id`,
+      `${SUPABASE_URL}/rest/v1/card_progress?select=user_id,card_id,score&order=user_id`,
       { headers: sbHeaders }
     );
     const progRows = progRes.ok ? await progRes.json() : [];
     for (const row of progRows) {
+      const validIds = validCardIdsByUser[row.user_id];
+      if (!validIds) continue; // user has no deck — skip
+      const cid = String(row.card_id || "").toLowerCase().trim();
+      if (!validIds.has(cid)) continue; // orphaned progress row, don't count
       if (!progressStats[row.user_id]) {
         progressStats[row.user_id] = { studied: 0, mastered: 0 };
       }
