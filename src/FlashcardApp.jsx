@@ -206,6 +206,25 @@ export default function FlashcardApp({ user, onSignOut }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // Review dates for streak tracking, loaded from Supabase.
+  // Set of ISO date strings (e.g. "2026-04-16") on which the user reviewed
+  // at least one card. Populated on mount and appended to in answer().
+  const [reviewDates, setReviewDates] = useState(() => new Set());
+
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      const { data, error } = await supabase
+        .from("user_review_dates")
+        .select("review_date")
+        .eq("user_id", user.id)
+        .order("review_date", { ascending: false })
+        .limit(400);
+      if (error) { console.error("Load review dates failed:", error); return; }
+      setReviewDates(new Set((data || []).map(r => r.review_date)));
+    })();
+  }, [user?.id]);
+
   // Feedback & alternates state
   const [alternates, setAlternates] = useState({}); // { "cardId:direction": ["alt1", "alt2"] }
   const [feedbackState, setFeedbackState] = useState(null); // null | 'submitting' | 'submitted' | 'error'
@@ -402,7 +421,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
 
   // Answer handling: update progress
-  const answer = async (got) => {
+  const answer = async (got, source = "flip") => {
     if (!card) return;
     const prev = progress[card.id] || { score:0, seen:0, got:0 };
     const newProg = {
@@ -411,9 +430,30 @@ export default function FlashcardApp({ user, onSignOut }) {
       got: prev.got + (got?1:0),
     };
     await updateCard(card.id, newProg);
+    // Record today's review date for streak tracking.
+    // Write to Supabase (persists across devices) and update local state so
+    // the streak UI reflects it immediately without a refetch.
+    const todayISO = new Date().toISOString().slice(0,10);
+    if (!reviewDates.has(todayISO)) {
+      setReviewDates(prev => {
+        const next = new Set(prev);
+        next.add(todayISO);
+        return next;
+      });
+      // Fire-and-forget. upsert with ignoreDuplicates is idempotent against
+      // the (user_id, review_date) primary key, so repeated reviews on the
+      // same day are no-ops server-side.
+      supabase
+        .from("user_review_dates")
+        .upsert(
+          { user_id: user.id, review_date: todayISO },
+          { onConflict: "user_id,review_date", ignoreDuplicates: true }
+        )
+        .then(({ error }) => { if (error) console.error("Record review date failed:", error); });
+    }
     // Session stats only count typed answers (verifiable). Flip-mode
     // "got it" is self-reported and doesn't count toward accuracy.
-    if (typeMode) {
+    if (source === "typed") {
       setStats(s => ({ seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }));
     }
     // Skip the un-flip animation — snap instantly to the next card's front
@@ -893,16 +933,15 @@ export default function FlashcardApp({ user, onSignOut }) {
     const inProg = userCards.filter(c => { const s=progress[c.id]?.score??0; return s>0&&s<3; }).length;
     const newCount = total - learned - inProg;
 
-    // Streak
-    const allDates = new Set();
-    for (const c of userCards) for (const d of (c.dates || [])) allDates.add(d);
+    // Streak: based on actual review days stored in Supabase
+    // (loaded into reviewDates state on mount, appended to by answer()).
     const todayISO = new Date().toISOString().slice(0,10);
     let streak = 0;
     for (let i = 0; i < 365; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const iso = d.toISOString().slice(0,10);
-      if (allDates.has(iso)) streak++;
+      if (reviewDates.has(iso)) streak++;
       else if (iso !== todayISO) break;
     }
 
@@ -1180,10 +1219,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </div>
                     )}
                     <div style={S.actionRow}>
-                      <button style={S.actionAgainRect} onClick={() => answer(false)}>
+                      <button style={S.actionAgainRect} onClick={() => answer(false, "typed")}>
                         Again
                       </button>
-                      <button style={S.actionGotRect} onClick={() => answer(true)}>
+                      <button style={S.actionGotRect} onClick={() => answer(typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle", "typed")}>
                         Got It
                       </button>
                     </div>
