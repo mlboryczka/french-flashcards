@@ -1,26 +1,50 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 
-// "Send feedback" trigger + modal. Posts to beta_feedback table.
-// Supports optional screenshot attachment (file picker, drag-drop, or
-// paste from clipboard). The screenshot is stored as a base64 data URL
-// in the `screenshot` column — add it to the beta_feedback table:
-//   ALTER TABLE beta_feedback ADD COLUMN screenshot text;
+// "Send feedback" trigger + bottom sheet. Posts to beta_feedback table.
+//
+// Design notes:
+//   • Renders as a bottom sheet (not a centered modal) so the card
+//     behind stays visible. No backdrop — clicks pass through to the
+//     app so you can flip, navigate, or screenshot while composing.
+//   • Minimize button collapses the sheet to a thin bar at the bottom
+//     while preserving all form state (message, screenshot, toggles).
+//   • "Attach current card" toggle captures a structured snapshot of
+//     the card into beta_feedback.card_context (jsonb). Admin view
+//     renders this as a card preview — no screenshots needed for
+//     card-specific feedback.
+//
+// Requires migration_003_feedback_card_context.sql to add the
+// card_context column. Screenshot upload still works as before
+// (requires the `screenshot` column from the earlier migration).
 //
 // Usage:
-//   <BetaFeedback user={user} currentPage={mode} />
+//   <BetaFeedback user={user} currentPage={mode} currentCard={card} />
 
-export function BetaFeedback({ user, currentPage }) {
+export function BetaFeedback({ user, currentPage, currentCard }) {
   const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState("idle"); // idle | submitting | sent | error
   const [error, setError] = useState("");
-  const [screenshot, setScreenshot] = useState(null); // base64 data URL or null
+  const [screenshot, setScreenshot] = useState(null);
   const [screenshotName, setScreenshotName] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  // Attach-card toggle: default ON when a card is provided, OFF otherwise.
+  // We reconcile whenever a card appears/disappears so navigating during
+  // composition doesn't silently flip your choice.
+  const [attachCard, setAttachCard] = useState(!!currentCard);
   const fileInputRef = useRef(null);
+
+  // If the user navigates to a page with no card (stats, etc.) while the
+  // sheet is open, turn attachment off. When a card reappears, default
+  // back to on — but only if the user hasn't explicitly unchecked it.
+  const userTouchedAttach = useRef(false);
+  useEffect(() => {
+    if (!userTouchedAttach.current) setAttachCard(!!currentCard);
+  }, [currentCard]);
 
   const fileToBase64 = useCallback((file) => {
     return new Promise((resolve, reject) => {
@@ -51,7 +75,6 @@ export function BetaFeedback({ user, currentPage }) {
     }
   }, [fileToBase64]);
 
-  // Paste from clipboard — works when textarea is focused
   const handlePaste = useCallback((e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -64,6 +87,26 @@ export function BetaFeedback({ user, currentPage }) {
     }
   }, [handleImage]);
 
+  const resetAndClose = useCallback(() => {
+    setOpen(false);
+    setMinimized(false);
+    setMessage("");
+    setScreenshot(null);
+    setScreenshotName("");
+    setStatus("idle");
+    setError("");
+    userTouchedAttach.current = false;
+  }, []);
+
+  const handleCloseClick = () => {
+    if (status === "submitting") return;
+    const hasDraft = message.trim().length > 0 || screenshot;
+    if (hasDraft) {
+      if (!window.confirm("Discard your feedback?")) return;
+    }
+    resetAndClose();
+  };
+
   async function handleSubmit() {
     if (!message.trim() || message.trim().length < 5) {
       setError("Please write a few words about what you want us to know.");
@@ -72,7 +115,7 @@ export function BetaFeedback({ user, currentPage }) {
     setStatus("submitting");
     setError("");
 
-    const row = {
+    const base = {
       user_id: user?.id || null,
       user_email: user?.email || null,
       message: message.trim(),
@@ -80,136 +123,190 @@ export function BetaFeedback({ user, currentPage }) {
       user_agent: typeof navigator !== "undefined" ? navigator.userAgent : null,
     };
 
-    // Try with screenshot; fall back without if column doesn't exist yet
-    if (screenshot) {
-      const { error: err1 } = await supabase
-        .from("beta_feedback")
-        .insert({ ...row, screenshot });
-      if (err1) {
-        if (/screenshot|column/i.test(err1.message)) {
-          const { error: err2 } = await supabase
-            .from("beta_feedback")
-            .insert(row);
-          if (err2) {
-            setError(err2.message || "Failed to submit");
-            setStatus("error");
-            return;
-          }
-        } else {
-          setError(err1.message || "Failed to submit");
-          setStatus("error");
-          return;
-        }
+    // Build card_context snapshot if toggle is on and card is available
+    const cardContext = (attachCard && currentCard) ? {
+      card_id: currentCard.id || null,
+      front: currentCard.f,
+      back: currentCard.b,
+      category: currentCard.cat,
+      shown_dir: currentCard.shownDir,
+    } : null;
+
+    const full = { ...base };
+    if (screenshot) full.screenshot = screenshot;
+    if (cardContext) full.card_context = cardContext;
+
+    // Try full row; if schema is missing the optional columns, drop them
+    // and retry. This matches the original resilience pattern.
+    let { error: err } = await supabase.from("beta_feedback").insert(full);
+
+    if (err && /card_context|screenshot|column/i.test(err.message)) {
+      // Retry without optional columns
+      const fallback = { ...base };
+      if (screenshot && !/card_context/i.test(err.message)) {
+        fallback.screenshot = screenshot;
       }
-    } else {
-      const { error: err } = await supabase.from("beta_feedback").insert(row);
-      if (err) {
-        setError(err.message || "Failed to submit");
-        setStatus("error");
-        return;
-      }
+      const retry = await supabase.from("beta_feedback").insert(fallback);
+      err = retry.error;
+    }
+
+    if (err) {
+      setError(err.message || "Failed to submit");
+      setStatus("error");
+      return;
     }
 
     setStatus("sent");
-    setMessage("");
-    setScreenshot(null);
-    setScreenshotName("");
-    setTimeout(() => {
-      setOpen(false);
-      setStatus("idle");
-    }, 1500);
+    setTimeout(() => { resetAndClose(); }, 1500);
   }
+
+  const draftSummary = message.trim()
+    ? (message.trim().length > 40 ? message.trim().slice(0, 40) + "…" : message.trim())
+    : "Feedback draft";
 
   return (
     <>
-      <button style={BF.trigger} onClick={() => setOpen(true)}>
+      <button style={BF.trigger} onClick={() => { setOpen(true); setMinimized(false); }}>
         Send feedback
       </button>
 
       {open && createPortal(
-        <div
-          style={BF.overlay}
-          onClick={status === "submitting" ? null : () => setOpen(false)}
-        >
-          <div style={BF.modal} onClick={(e) => e.stopPropagation()}>
+        minimized ? (
+          // ── Minimized bar ─────────────────────────────────────────
+          <div style={BF.minimizedBar}>
+            <button
+              style={BF.minBarMain}
+              onClick={() => setMinimized(false)}
+              aria-label="Expand feedback"
+            >
+              <span style={BF.minBarIcon}>▲</span>
+              <span style={BF.minBarLabel}>{draftSummary}</span>
+            </button>
+            <button
+              style={BF.minBarClose}
+              onClick={handleCloseClick}
+              aria-label="Close feedback"
+            >
+              ×
+            </button>
+          </div>
+        ) : (
+          // ── Expanded bottom sheet ─────────────────────────────────
+          <div style={BF.sheet}>
             <div style={BF.header}>
               <h2 style={BF.title}>Send feedback</h2>
-              {status !== "submitting" && (
-                <button
-                  style={BF.closeBtn}
-                  onClick={() => setOpen(false)}
-                  aria-label="Close"
-                >
-                  ×
-                </button>
-              )}
+              <div style={BF.headerBtns}>
+                {status !== "submitting" && (
+                  <>
+                    <button
+                      style={BF.iconBtn}
+                      onClick={() => setMinimized(true)}
+                      aria-label="Minimize"
+                      title="Minimize"
+                    >
+                      <span style={{ fontSize: 18, lineHeight: 1 }}>▼</span>
+                    </button>
+                    <button
+                      style={BF.iconBtn}
+                      onClick={handleCloseClick}
+                      aria-label="Close"
+                      title="Close"
+                    >
+                      <span style={{ fontSize: 22, lineHeight: 1 }}>×</span>
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             <p style={BF.desc}>
               Bug, idea, or wrong translation — we want to hear it.
             </p>
 
-            <textarea
-              style={BF.textarea}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onPaste={handlePaste}
-              placeholder="What's on your mind?"
-              disabled={status === "submitting" || status === "sent"}
-              autoFocus
-            />
+            <div style={BF.body}>
+              <textarea
+                style={BF.textarea}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onPaste={handlePaste}
+                placeholder="What's on your mind?"
+                disabled={status === "submitting" || status === "sent"}
+                autoFocus
+              />
 
-            {screenshot ? (
-              <div style={BF.imgPreview}>
-                <img src={screenshot} alt="Attached" style={BF.imgThumb} />
-                <div style={BF.imgInfo}>
-                  <span style={BF.imgName}>{screenshotName}</span>
-                  <button
-                    style={BF.imgRemove}
-                    onClick={() => { setScreenshot(null); setScreenshotName(""); }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div
-                style={isDragging ? {...BF.dropZone, ...BF.dropZoneActive} : BF.dropZone}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
-                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
-                onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setIsDragging(false);
-                  handleImage(e.dataTransfer?.files?.[0]);
-                }}
-              >
-                <div style={BF.dropZoneIcon}>📎</div>
-                <div style={BF.dropZoneText}>
-                  {isDragging ? "Drop your image here" : "Drop a screenshot here"}
-                </div>
-                <div style={BF.dropZoneSub}>or click to browse · paste from clipboard</div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleImage(e.target.files?.[0])}
-                  style={{ display: "none" }}
-                />
-              </div>
-            )}
+              {currentCard && (
+                <label style={BF.attachRow}>
+                  <input
+                    type="checkbox"
+                    checked={attachCard}
+                    onChange={(e) => {
+                      userTouchedAttach.current = true;
+                      setAttachCard(e.target.checked);
+                    }}
+                    style={BF.attachCheckbox}
+                  />
+                  <div style={BF.attachText}>
+                    <div style={BF.attachLabel}>Attach current card</div>
+                    <div style={BF.attachPreview}>
+                      <span style={BF.attachPreviewFront}>{currentCard.f}</span>
+                      <span style={BF.attachPreviewSep}>·</span>
+                      <span style={BF.attachPreviewBack}>{currentCard.b}</span>
+                    </div>
+                  </div>
+                </label>
+              )}
 
-            {error && <div style={BF.error}>{error}</div>}
-            {status === "sent" && (
-              <div style={BF.success}>Thanks! Feedback received.</div>
-            )}
+              {screenshot ? (
+                <div style={BF.imgPreview}>
+                  <img src={screenshot} alt="Attached" style={BF.imgThumb} />
+                  <div style={BF.imgInfo}>
+                    <span style={BF.imgName}>{screenshotName}</span>
+                    <button
+                      style={BF.imgRemove}
+                      onClick={() => { setScreenshot(null); setScreenshotName(""); }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  style={isDragging ? { ...BF.dropZone, ...BF.dropZoneActive } : BF.dropZone}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
+                  onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
+                  onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragging(false);
+                    handleImage(e.dataTransfer?.files?.[0]);
+                  }}
+                >
+                  <div style={BF.dropZoneText}>
+                    {isDragging ? "Drop your image here" : "📎 Drop a screenshot or click to browse"}
+                  </div>
+                  <div style={BF.dropZoneSub}>or paste from clipboard</div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleImage(e.target.files?.[0])}
+                    style={{ display: "none" }}
+                  />
+                </div>
+              )}
+
+              {error && <div style={BF.error}>{error}</div>}
+              {status === "sent" && (
+                <div style={BF.success}>Thanks! Feedback received.</div>
+              )}
+            </div>
 
             <div style={BF.footer}>
               <button
                 style={BF.cancelBtn}
-                onClick={() => setOpen(false)}
+                onClick={handleCloseClick}
                 disabled={status === "submitting"}
               >
                 Cancel
@@ -223,12 +320,15 @@ export function BetaFeedback({ user, currentPage }) {
               </button>
             </div>
           </div>
-        </div>,
+        ),
         document.body
       )}
     </>
   );
 }
+
+// Breakpoint for narrow screens (matches sidebar-bottom behavior in app)
+const NARROW = "@media (max-width: 720px)";
 
 const BF = {
   trigger: {
@@ -243,97 +343,159 @@ const BF = {
     textAlign: "left",
     opacity: 0.6,
   },
-  overlay: {
+
+  // ── Expanded bottom sheet ────────────────────────────────────────
+  sheet: {
     position: "fixed",
-    inset: 0,
-    background: "rgba(3, 22, 50, 0.4)",
-    backdropFilter: "blur(4px)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1000,
-    padding: 16,
-  },
-  modal: {
-    background: T.color.surfaceLowest,
-    borderRadius: T.radius.xl,
-    maxWidth: 520,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    margin: "0 auto",
+    maxWidth: 600,
     width: "100%",
-    padding: "36px 40px",
-    boxShadow: "0 32px 96px rgba(3,22,50,0.18)",
+    maxHeight: "60vh",
+    background: T.color.surfaceLowest,
+    borderRadius: `${T.radius.xl}px ${T.radius.xl}px 0 0`,
+    boxShadow: "0 -12px 48px rgba(3,22,50,0.18), 0 -1px 0 rgba(3,22,50,0.06)",
+    padding: "20px 28px 16px",
     fontFamily: T.font.sans,
+    zIndex: 1000,
+    display: "flex",
+    flexDirection: "column",
+    boxSizing: "border-box",
+    // subtle slide-up animation
+    animation: "bf-slideup 180ms ease-out",
   },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 4,
+    flexShrink: 0,
   },
   title: {
     margin: 0,
-    fontSize: 28,
+    fontSize: 22,
     color: T.color.primary,
     fontFamily: T.font.serif,
     fontWeight: 700,
     letterSpacing: "-0.02em",
   },
-  closeBtn: {
+  headerBtns: {
+    display: "flex",
+    gap: 4,
+  },
+  iconBtn: {
     background: "none",
     border: "none",
-    fontSize: 28,
     cursor: "pointer",
     color: T.color.onSurfaceVariant,
-    padding: "0 8px",
-    lineHeight: 1,
+    padding: "4px 10px",
+    borderRadius: T.radius.md,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   desc: {
-    fontSize: 14,
+    fontSize: 13,
     color: T.color.onSurfaceVariant,
-    margin: "0 0 18px",
-    lineHeight: 1.5,
+    margin: "0 0 12px",
+    lineHeight: 1.4,
+    flexShrink: 0,
+  },
+  body: {
+    overflowY: "auto",
+    flex: 1,
+    minHeight: 0,
+    paddingRight: 4,
   },
   textarea: {
     width: "100%",
-    minHeight: 120,
-    padding: 14,
+    minHeight: 90,
+    padding: 12,
     fontSize: 14,
     border: "none",
     background: T.color.surfaceLow,
     borderRadius: T.radius.lg,
     resize: "vertical",
     boxSizing: "border-box",
-    marginBottom: 12,
+    marginBottom: 10,
     fontFamily: T.font.sans,
     color: T.color.onSurface,
     lineHeight: 1.5,
+    outline: "none",
   },
-  // Screenshot dropzone
+
+  // ── Attach card toggle ───────────────────────────────────────────
+  attachRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: "10px 12px",
+    background: T.color.surfaceLow,
+    borderRadius: T.radius.lg,
+    marginBottom: 10,
+    cursor: "pointer",
+  },
+  attachCheckbox: {
+    marginTop: 3,
+    accentColor: T.color.primary,
+    cursor: "pointer",
+  },
+  attachText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  attachLabel: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: T.color.primary,
+    marginBottom: 2,
+    fontFamily: T.font.sans,
+  },
+  attachPreview: {
+    fontSize: 12,
+    color: T.color.onSurfaceVariant,
+    fontFamily: T.font.sans,
+    display: "flex",
+    gap: 6,
+    alignItems: "center",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  attachPreviewFront: {
+    fontWeight: 500,
+    color: T.color.onSurface,
+  },
+  attachPreviewSep: {
+    opacity: 0.4,
+  },
+  attachPreviewBack: {
+    opacity: 0.8,
+  },
+
+  // ── Screenshot dropzone ──────────────────────────────────────────
   dropZone: {
     border: "2px dashed rgba(3,22,50,0.12)",
     borderRadius: T.radius.lg,
     background: T.color.surfaceLow,
-    padding: "28px 20px",
+    padding: "14px 12px",
     textAlign: "center",
     cursor: "pointer",
     transition: "all 0.2s ease",
-    marginBottom: 12,
+    marginBottom: 10,
     fontFamily: T.font.sans,
   },
   dropZoneActive: {
     borderColor: T.color.secondary,
     background: T.color.tertiaryFixed,
-    transform: "scale(1.01)",
-  },
-  dropZoneIcon: {
-    fontSize: 24,
-    marginBottom: 8,
-    opacity: 0.5,
   },
   dropZoneText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 600,
     color: T.color.primary,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   dropZoneSub: {
     fontSize: 11,
@@ -347,11 +509,11 @@ const BF = {
     padding: 10,
     background: T.color.surfaceLow,
     borderRadius: T.radius.lg,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   imgThumb: {
-    width: 64,
-    height: 48,
+    width: 56,
+    height: 42,
     objectFit: "cover",
     borderRadius: T.radius.md,
   },
@@ -379,30 +541,38 @@ const BF = {
     padding: "4px 8px",
     fontWeight: 600,
   },
+
+  // ── Messages ─────────────────────────────────────────────────────
   error: {
-    padding: 12,
+    padding: 10,
     background: T.color.errorContainer,
     color: T.color.onErrorContainer,
     borderRadius: T.radius.lg,
     fontSize: 13,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   success: {
-    padding: 12,
+    padding: 10,
     background: T.color.tertiaryFixed,
     color: T.color.onSecondaryContainer,
     borderRadius: T.radius.lg,
     fontSize: 13,
-    marginBottom: 12,
+    marginBottom: 10,
     fontWeight: 500,
   },
+
+  // ── Footer ───────────────────────────────────────────────────────
   footer: {
     display: "flex",
     gap: 10,
     justifyContent: "flex-end",
+    paddingTop: 10,
+    flexShrink: 0,
+    borderTop: `1px solid rgba(3,22,50,0.06)`,
+    marginTop: 4,
   },
   cancelBtn: {
-    padding: "10px 20px",
+    padding: "9px 18px",
     background: "transparent",
     border: "none",
     borderRadius: T.radius.md,
@@ -413,7 +583,7 @@ const BF = {
     fontWeight: 500,
   },
   submitBtn: {
-    padding: "11px 24px",
+    padding: "10px 22px",
     background: T.gradient.ink,
     color: T.color.onPrimary,
     border: "none",
@@ -425,4 +595,68 @@ const BF = {
     boxShadow: T.shadow.button,
     letterSpacing: "0.01em",
   },
+
+  // ── Minimized bar ───────────────────────────────────────────────
+  minimizedBar: {
+    position: "fixed",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    margin: "0 auto",
+    maxWidth: 600,
+    width: "100%",
+    background: T.color.surfaceLowest,
+    borderRadius: `${T.radius.lg}px ${T.radius.lg}px 0 0`,
+    boxShadow: "0 -6px 24px rgba(3,22,50,0.12), 0 -1px 0 rgba(3,22,50,0.06)",
+    display: "flex",
+    alignItems: "center",
+    fontFamily: T.font.sans,
+    zIndex: 1000,
+    height: 44,
+    boxSizing: "border-box",
+  },
+  minBarMain: {
+    flex: 1,
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "0 16px",
+    height: "100%",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    textAlign: "left",
+    overflow: "hidden",
+  },
+  minBarIcon: {
+    fontSize: 10,
+    color: T.color.onSurfaceVariant,
+    flexShrink: 0,
+  },
+  minBarLabel: {
+    fontSize: 13,
+    color: T.color.primary,
+    fontWeight: 500,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  minBarClose: {
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    color: T.color.onSurfaceVariant,
+    padding: "0 16px",
+    height: "100%",
+    fontSize: 20,
+    lineHeight: 1,
+  },
 };
+
+// Inject slide-up keyframes once (idempotent)
+if (typeof document !== "undefined" && !document.getElementById("bf-keyframes")) {
+  const style = document.createElement("style");
+  style.id = "bf-keyframes";
+  style.textContent = `@keyframes bf-slideup { from { transform: translateY(100%); } to { transform: translateY(0); } }`;
+  document.head.appendChild(style);
+}
