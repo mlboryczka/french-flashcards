@@ -545,12 +545,18 @@ export default function FlashcardApp({ user, onSignOut }) {
     return () => window.removeEventListener("keydown", handler);
   }, [card, mode, typeMode]);
 
-  // In type mode, after a result is showing (input gone), Enter = Got It
+  // In type mode, after a result is showing (input gone), Enter/Space/→
+  // auto-commits the matcher's verdict and advances to the next card.
+  // The matcher's verdict is the progress update — no self-report needed.
   useEffect(() => {
     if (mode !== "study" || !typeMode || !typeResult) return;
+    const gotIt = typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle";
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "Enter") { e.preventDefault(); answerRef.current(true); }
+      if (e.key === "Enter" || e.key === " " || e.key === "ArrowRight") {
+        e.preventDefault();
+        answerRef.current(gotIt, "typed");
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -1267,14 +1273,25 @@ export default function FlashcardApp({ user, onSignOut }) {
                         {feedbackState === "error" && <span style={S.feedbackErr}>{feedbackErrMsg || "Couldn't send — try again"}</span>}
                       </div>
                     )}
-                    <div style={S.actionRow}>
-                      <button style={S.actionAgainRect} onClick={() => answer(false, "typed")}>
-                        Again
-                      </button>
-                      <button style={S.actionGotRect} onClick={() => answer(typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle", "typed")}>
-                        Got It
-                      </button>
-                    </div>
+                    {(() => {
+                      const gotIt = typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle";
+                      return (
+                        <div style={S.typeAdvanceRow}>
+                          {gotIt && (
+                            <button
+                              style={S.markReviewLink}
+                              onClick={() => answer(false, "typed")}
+                              title="Record as incorrect and keep this card near the top of the queue"
+                            >
+                              Actually, mark for review
+                            </button>
+                          )}
+                          <button style={S.continueBtn} onClick={() => answer(gotIt, "typed")}>
+                            Continue →
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <>
@@ -2161,6 +2178,12 @@ const S = {
   feedbackReasoning: { padding:"10px 16px", background:T.color.surfaceLow, borderRadius:T.radius.lg, marginBottom:8, fontSize:12, lineHeight:1.5 },
   feedbackOverrideBtn: { padding:"6px 14px", background:"transparent", border:"1px solid rgba(3,22,50,0.15)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontWeight:600, fontFamily:T.font.sans, color:T.color.primary, letterSpacing:"0.02em" },
   feedbackErr: { color:T.color.secondary, fontWeight:500 },
+  // Type-mode advance row (replaces Again/Got It). The matcher's verdict
+  // auto-commits; this row just holds the Continue button plus an optional
+  // "mark for review" override link when the matcher accepted the answer.
+  typeAdvanceRow: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, marginTop:8, marginBottom:24, width:"100%", maxWidth:480, alignSelf:"center" },
+  markReviewLink: { padding:"6px 2px", background:"transparent", border:"none", color:T.color.onSurfaceVariant, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:500, textDecoration:"underline", textUnderlineOffset:3, opacity:0.75, letterSpacing:"0.01em" },
+  continueBtn: { marginLeft:"auto", display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"14px 32px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 6px 20px rgba(3,22,50,0.14)", transition:"all 0.15s" },
   // Feedback admin view
   feedbackList: { display:"flex", flexDirection:"column", gap:18 },
   feedbackItem: { padding:22, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, fontFamily:T.font.sans, boxShadow:T.shadow.card },
