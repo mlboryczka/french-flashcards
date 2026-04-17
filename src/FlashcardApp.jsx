@@ -919,7 +919,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               )}
             </div>
             <span style={S.sideBottomEmail}>{user.email}</span>
-            <BetaFeedback user={user} currentPage={mode} />
+            <BetaFeedback user={user} currentPage={mode} currentCard={mode === "study" ? card : null} />
           </div>
         </div>
       )}
@@ -1329,6 +1329,50 @@ export default function FlashcardApp({ user, onSignOut }) {
 }
 
 // ─── EDIT CARD MODAL ─────────────────────────────────────────────────────
+// ─── CARD CONTEXT PREVIEW ─────────────────────────────────────────────────
+// Renders the card snapshot captured with a beta_feedback entry via the
+// "Attach current card" toggle. Used in both FeedbackReviewModal and
+// FeedbackAdminView so admin review shows which card was on screen
+// without needing an actual screenshot.
+function CardContextPreview({ ctx }) {
+  if (!ctx) return null;
+  const label = ctx.category === "vocab" ? "Vocabulary" : "Phrase";
+  const color = ctx.category === "vocab" ? "#9c4234" : "#1a2b48";
+  return (
+    <div style={{
+      border: "1px solid rgba(3,22,50,0.08)",
+      background: T.color.surfaceLow,
+      borderRadius: T.radius.lg,
+      padding: "10px 12px",
+      marginTop: 8,
+      fontFamily: T.font.sans,
+    }}>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        marginBottom: 6,
+        fontSize: 10,
+        textTransform: "uppercase",
+        letterSpacing: "0.08em",
+        fontWeight: 600,
+      }}>
+        <span style={{ color }}>{label}</span>
+        <span style={{ opacity: 0.4, color: T.color.onSurfaceVariant }}>·</span>
+        <span style={{ color: T.color.onSurfaceVariant, opacity: 0.7 }}>
+          shown: {ctx.shown_dir === "fr" ? "FR → EN" : "EN → FR"}
+        </span>
+      </div>
+      <div style={{ fontSize: 15, color: T.color.onSurface, marginBottom: 2, fontWeight: 500 }}>
+        {ctx.front}
+      </div>
+      <div style={{ fontSize: 13, color: T.color.onSurfaceVariant }}>
+        {ctx.back}
+      </div>
+    </div>
+  );
+}
+
 // ─── FEEDBACK REVIEW MODAL (admin only) ───────────────────────────────────
 // Shows all beta_feedback entries in a portal overlay. Triggered from the
 // profile dropdown → "View feedback".
@@ -1374,6 +1418,7 @@ function FeedbackReviewModal({ onClose }) {
                   <span style={S.fbItemDate}>{new Date(item.created_at).toLocaleDateString()}</span>
                 </div>
                 <div style={S.fbItemMsg}>{item.message}</div>
+                {item.card_context && <CardContextPreview ctx={item.card_context} />}
                 {item.screenshot && (
                   <img src={item.screenshot} alt="Screenshot" style={S.fbItemImg} />
                 )}
@@ -1680,6 +1725,7 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
                 <span style={S.feedbackDate}>{new Date(item.created_at).toLocaleDateString()}</span>
               </div>
               <div style={S.betaFeedbackMsg}>{item.message}</div>
+              {item.card_context && <CardContextPreview ctx={item.card_context} />}
               {item.screenshot && (
                 <img src={item.screenshot} alt="Screenshot" style={S.betaFeedbackImg} />
               )}
