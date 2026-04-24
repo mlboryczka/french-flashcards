@@ -1329,7 +1329,7 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
             {card && (
               <div style={S.subToolbarRight}>
-                {effectiveTypeMode && idx > 0 && (
+                {idx > 0 && (
                   <button style={S.backBtn} onClick={goBack}>← Back</button>
                 )}
                 <span style={S.counter}>Card {idx+1} of {deck.length}</span>
