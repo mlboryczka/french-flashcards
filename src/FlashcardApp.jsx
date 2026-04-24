@@ -747,14 +747,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   };
 
   // ── INLINE CARD EDIT ────────────────────────────────────────────────
-  const saveCardEdit = async (rowId, newFront, newBack) => {
-    // Capture the pre-edit values before the update so we can diff and log
-    // a parse correction. Missing `existing` (stale React state, etc.) just
-    // means we'll skip the log — the update still runs.
-    const existing = userCards.find((c) => c.row_id === rowId);
-    const originalFront = existing?.f ?? null;
-    const originalBack = existing?.b ?? null;
-
+  // saveCardEdit receives the originals via `ctx` straight from the
+  // EditCardModal — never re-looks them up in React state. The previous
+  // implementation did `userCards.find(c => c.row_id === rowId)` and then
+  // silently skipped logging when the lookup missed (stale state, etc.),
+  // which is why /api/parse-corrections was never being hit.
+  const saveCardEdit = async (rowId, newFront, newBack, ctx = {}) => {
     const trimmedFront = newFront.trim();
     const trimmedBack = newBack.trim();
 
@@ -767,27 +765,25 @@ export default function FlashcardApp({ user, onSignOut }) {
       return false;
     }
 
-    // Fire-and-forget: log to the parse-corrections ledger so we can learn
-    // from this edit on future uploads. If nothing actually changed, skip.
-    console.log("[saveCardEdit] existing?", !!existing, "rowId", rowId, "userCards.length", userCards.length);
-    if (existing) {
-      const frontChanged = originalFront !== trimmedFront;
-      const backChanged = originalBack !== trimmedBack;
-      console.log("[saveCardEdit] frontChanged", frontChanged, "backChanged", backChanged);
-      if (frontChanged || backChanged) {
-        logCorrection({
-          category: frontChanged
-            ? CORRECTION_CATEGORIES.FRONT_TEXT_EDIT
-            : CORRECTION_CATEGORIES.BACK_TEXT_EDIT,
-          action: CORRECTION_ACTIONS.EDIT,
-          card_id: rowId,
-          batch_id: existing.batch_id || null, // null for legacy cards
-          original_front: originalFront,
-          original_back: originalBack,
-          corrected_front: trimmedFront,
-          corrected_back: trimmedBack,
-        });
-      }
+    // Fire-and-forget: log to the parse-corrections ledger so future
+    // cahier parses learn from this edit. Skip only when nothing changed.
+    const frontChanged =
+      ctx.originalFront != null && ctx.originalFront !== trimmedFront;
+    const backChanged =
+      ctx.originalBack != null && ctx.originalBack !== trimmedBack;
+    if (frontChanged || backChanged) {
+      logCorrection({
+        category: frontChanged
+          ? CORRECTION_CATEGORIES.FRONT_TEXT_EDIT
+          : CORRECTION_CATEGORIES.BACK_TEXT_EDIT,
+        action: CORRECTION_ACTIONS.EDIT,
+        card_id: rowId,
+        batch_id: ctx.batchId || null, // null for legacy cards
+        original_front: ctx.originalFront ?? null,
+        original_back: ctx.originalBack ?? null,
+        corrected_front: trimmedFront,
+        corrected_back: trimmedBack,
+      });
     }
 
     reloadDeck();
@@ -1058,7 +1054,19 @@ export default function FlashcardApp({ user, onSignOut }) {
           card={editingCard}
           onClose={() => setEditingCard(null)}
           onSave={async (newFront, newBack) => {
-            const ok = await saveCardEdit(editingCard.row_id, newFront, newBack);
+            // Pass originals + batch_id through from the modal itself, so
+            // saveCardEdit doesn't depend on a React-state lookup that
+            // might miss.
+            const ok = await saveCardEdit(
+              editingCard.row_id,
+              newFront,
+              newBack,
+              {
+                originalFront: editingCard.f,
+                originalBack: editingCard.b,
+                batchId: editingCard.batch_id,
+              }
+            );
             if (ok) setEditingCard(null);
             return ok;
           }}
