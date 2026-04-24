@@ -424,14 +424,16 @@ export default function FlashcardApp({ user, onSignOut }) {
     setPronError("");
   };
 
-  // Auto-focus study input when entering type mode or advancing cards.
-  // When a type result is shown, blur focus so keyboard shortcuts (Space,
-  // arrows) reach the window handler instead of being captured by buttons.
+  // Auto-focus study input when entering type mode, advancing cards, or
+  // flipping back to the front. When a type result is shown, blur focus so
+  // keyboard shortcuts (Space, arrows) reach the window handler instead of
+  // being captured by buttons. When peeking at the back of the card mid-type,
+  // leave focus alone so the back is actually readable.
   useEffect(() => {
     if (typeMode && mode === "study") {
-      if (!typeResult) {
+      if (!typeResult && !flipped) {
         setTimeout(() => studyInputRef.current?.focus(), 50);
-      } else {
+      } else if (typeResult) {
         // Result is showing — blur any focused button so Space/arrows
         // go to the window keydown handler, not the button
         if (document.activeElement && document.activeElement.tagName === "BUTTON") {
@@ -439,7 +441,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         }
       }
     }
-  }, [typeMode, idx, typeResult, mode]);
+  }, [typeMode, idx, typeResult, mode, flipped]);
 
   // Clear any pending auto-advance timer on unmount or card change
   useEffect(() => {
@@ -1202,8 +1204,8 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.blurTL} />
               <div style={S.blurBR} />
 
-              <div style={S.cardWrap} onClick={effectiveTypeMode ? undefined : flip}>
-                <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: effectiveTypeMode ? "default" : "pointer"}}>
+              <div style={S.cardWrap} onClick={flip}>
+                <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={S.cardFront}>
                     <div style={S.cardEyebrow}>{catToLabel(card.cat)}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
                     <div style={S.cardText}>{front}</div>
@@ -1443,7 +1445,12 @@ function FeedbackReviewModal({ onClose }) {
   }, []);
 
   const dismiss = async (id) => {
-    await supabase.from("beta_feedback").delete().eq("id", id);
+    if (!confirm("Delete this feedback? This can't be undone.")) return;
+    const { error } = await supabase.from("beta_feedback").delete().eq("id", id);
+    if (error) {
+      alert(`Couldn't delete: ${error.message}\n\n(If this keeps happening, the beta_feedback table likely needs an admin DELETE RLS policy.)`);
+      return;
+    }
     setItems(prev => prev.filter(i => i.id !== id));
   };
 
@@ -1471,7 +1478,7 @@ function FeedbackReviewModal({ onClose }) {
                 {item.screenshot && (
                   <img src={item.screenshot} alt="Screenshot" style={S.fbItemImg} />
                 )}
-                <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Dismiss</button>
+                <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Delete</button>
               </div>
             ))}
           </div>
