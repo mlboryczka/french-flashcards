@@ -765,26 +765,23 @@ export default function FlashcardApp({ user, onSignOut }) {
       return false;
     }
 
-    // Fire-and-forget: log to the parse-corrections ledger so future
-    // cahier parses learn from this edit. Skip only when nothing changed.
-    const frontChanged =
-      ctx.originalFront != null && ctx.originalFront !== trimmedFront;
-    const backChanged =
-      ctx.originalBack != null && ctx.originalBack !== trimmedBack;
-    if (frontChanged || backChanged) {
-      logCorrection({
-        category: frontChanged
-          ? CORRECTION_CATEGORIES.FRONT_TEXT_EDIT
-          : CORRECTION_CATEGORIES.BACK_TEXT_EDIT,
-        action: CORRECTION_ACTIONS.EDIT,
-        card_id: rowId,
-        batch_id: ctx.batchId || null, // null for legacy cards
-        original_front: ctx.originalFront ?? null,
-        original_back: ctx.originalBack ?? null,
-        corrected_front: trimmedFront,
-        corrected_back: trimmedBack,
-      });
-    }
+    // Fire-and-forget: log to the parse-corrections ledger every time a
+    // save succeeds. No diff guard — the small cost of logging a no-op
+    // save is nothing compared to the cost of silently swallowing logs
+    // because the guard mis-fires.
+    const frontChanged = ctx.originalFront !== trimmedFront;
+    logCorrection({
+      category: frontChanged
+        ? CORRECTION_CATEGORIES.FRONT_TEXT_EDIT
+        : CORRECTION_CATEGORIES.BACK_TEXT_EDIT,
+      action: CORRECTION_ACTIONS.EDIT,
+      card_id: rowId,
+      batch_id: ctx.batchId || null,
+      original_front: ctx.originalFront ?? null,
+      original_back: ctx.originalBack ?? null,
+      corrected_front: trimmedFront,
+      corrected_back: trimmedBack,
+    });
 
     reloadDeck();
     return true;

@@ -34,45 +34,30 @@ export const CORRECTION_ACTIONS = Object.freeze({
   OTHER: "other",
 });
 
-// Endpoint returned 404 or 503 "migration not run" at least once — skip
-// further calls in this session. Avoids spamming the console with errors
-// while the migration hasn't been applied yet.
-let endpointDisabled = false;
-
 async function postCorrection(body) {
-  console.log("[parseCorrections] postCorrection entered, endpointDisabled =", endpointDisabled);
-  if (endpointDisabled) return null;
-  let session;
+  // Grab the session token if there is one, but never block the fetch on
+  // it — we'd rather see a 401 in the Network tab than silently swallow
+  // the call. The previous "disable for session" cache has been removed
+  // for the same reason.
+  let accessToken = "";
   try {
     const s = await supabase.auth.getSession();
-    session = s?.data?.session;
+    accessToken = s?.data?.session?.access_token || "";
   } catch (e) {
-    console.warn("[parseCorrections] could not read session:", e?.message || e);
-    return null;
-  }
-  if (!session?.access_token) {
-    console.warn("[parseCorrections] no session/access_token — skipping");
-    return null;
+    console.warn("[parseCorrections] session read failed:", e?.message || e);
   }
 
+  const url = "/api/parse-corrections";
+  console.log("[parseCorrections] about to fetch", url, "hasToken?", !!accessToken);
   try {
-    const url = "/api/parse-corrections";
-    console.log("[parseCorrections] about to fetch", url);
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify(body),
     });
-    if (res.status === 404 || res.status === 503) {
-      endpointDisabled = true;
-      console.warn(
-        "[parseCorrections] endpoint not available (migration_002 likely not run) — disabling for session"
-      );
-      return null;
-    }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       console.warn(
