@@ -46,7 +46,7 @@ export function useUserDeck(user) {
       while (true) {
         const { data, error } = await supabase
           .from("user_cards")
-          .select("id, front, back, category, dates, flagged_for_review")
+          .select("id, front, back, category, dates, flagged_for_review, batch_id")
           .eq("user_id", user.id)
           .range(from, from + PAGE - 1);
 
@@ -73,6 +73,8 @@ export function useUserDeck(user) {
           id: row.front.toLowerCase().trim(),
           row_id: row.id,
           flagged: row.flagged_for_review === true,
+          // Null for legacy cards that predate the upload-batches migration.
+          batch_id: row.batch_id || null,
         }));
         // Sort by frequency desc to match legacy buildDeck ordering
         shaped.sort((a, b) => b.freq - a.freq);

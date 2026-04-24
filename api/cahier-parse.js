@@ -83,16 +83,51 @@ export default async function handler(req, res) {
   const userId = userData.user.id;
 
   const body = req.body || {};
-  const text = (body.text || "").toString();
-  if (!text || text.trim().length < 20) {
-    return res.status(400).json({ error: "text is required (min 20 chars)" });
-  }
   const source = body.source || "cahier-parse";
   const model = body.model || DEFAULT_MODEL;
+
+  // Two accepted input shapes, so a long cahier can be chunked by the
+  // client while still producing a single upload_batches row:
+  //
+  //   1. { text: "<lesson text>" }
+  //        Single Claude call over the whole text. For short inputs.
+  //
+  //   2. { blocks: [{ date, text }, ...] }
+  //        One Claude call per block, fanned out in parallel. The client
+  //        sends small chunks (~15 blocks) to stay under Vercel Hobby's
+  //        60s function timeout.
+  //
+  // Chunked flow also accepts { batch_id: <uuid> } to reuse an existing
+  // batch across chunk calls instead of spawning a new row per chunk.
+  const blocks = Array.isArray(body.blocks) ? body.blocks : null;
+  const rawText = (body.text || "").toString();
+  const reuseBatchId = body.batch_id || null;
+
+  if (!blocks && (!rawText || rawText.trim().length < 20)) {
+    return res.status(400).json({
+      error: "Provide either `text` (min 20 chars) or `blocks` (non-empty array)",
+    });
+  }
+  if (blocks && blocks.length === 0) {
+    return res.status(400).json({ error: "blocks array is empty" });
+  }
+  if (blocks && blocks.length > 30) {
+    return res.status(400).json({
+      error: "Chunk too large (max 30 blocks). Split into smaller chunks.",
+    });
+  }
+
+  const totalInputChars = blocks
+    ? blocks.reduce((n, b) => n + (b?.text?.length || 0), 0)
+    : rawText.length;
 
   // ── STEP (a) + (b): build few-shot block from recent corrections ───────
   // Best-effort: if any of this fails, we proceed with an empty few-shot
   // block. Never block the user's upload on the ledger.
+  //
+  // When reusing a batch, we still fetch fresh corrections — but only to
+  // enrich this chunk's prompt. The canonical few_shot_correction_ids on
+  // the batch row were set when the batch was first created.
   let injectedIds = [];
   let fewShotBlock = "";
   try {
@@ -122,35 +157,38 @@ export default async function handler(req, res) {
     );
   }
 
-  // ── STEP (c): create the upload_batches row ────────────────────────────
-  // Best-effort again — if this fails we still want to run the parse so
-  // the user gets their cards. batch_id will be null in that case.
-  let batchId = null;
-  try {
-    const { data: batchRow, error: batchErr } = await admin
-      .from("upload_batches")
-      .insert({
-        user_id: userId,
-        source,
-        input_chars: text.length,
-        few_shot_correction_ids: injectedIds,
-        model,
-      })
-      .select("id")
-      .single();
-    if (batchErr) {
+  // ── STEP (c): get or create the upload_batches row ─────────────────────
+  // If the client passed batch_id we reuse it; otherwise we create a new
+  // row. Best-effort — if this fails we still run the parse so the user
+  // gets their cards. batch_id will be null in that case.
+  let batchId = reuseBatchId;
+  if (!batchId) {
+    try {
+      const { data: batchRow, error: batchErr } = await admin
+        .from("upload_batches")
+        .insert({
+          user_id: userId,
+          source,
+          input_chars: totalInputChars,
+          few_shot_correction_ids: injectedIds,
+          model,
+        })
+        .select("id")
+        .single();
+      if (batchErr) {
+        console.warn(
+          "[cahier-parse] upload_batches insert failed — continuing without batch_id:",
+          batchErr.message || batchErr
+        );
+      } else {
+        batchId = batchRow?.id || null;
+      }
+    } catch (e) {
       console.warn(
-        "[cahier-parse] upload_batches insert failed — continuing without batch_id:",
-        batchErr.message || batchErr
+        "[cahier-parse] upload_batches insert threw:",
+        e?.message || e
       );
-    } else {
-      batchId = batchRow?.id || null;
     }
-  } catch (e) {
-    console.warn(
-      "[cahier-parse] upload_batches insert threw:",
-      e?.message || e
-    );
   }
 
   // ── STEP (d): call Claude with the enriched prompt ─────────────────────
@@ -161,55 +199,46 @@ export default async function handler(req, res) {
   const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   let cards = [];
   let claudeError = null;
-  try {
-    const response = await anthropic.messages.create({
-      model,
-      max_tokens: 4000,
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: `Here is the lesson text:\n\n---\n${text}\n---`,
-        },
-      ],
-    });
+  const blockErrors = [];
 
-    const textBlock = response.content.find((c) => c.type === "text");
-    if (!textBlock) {
-      throw new Error("Claude returned no text block");
-    }
-    let jsonText = textBlock.text.trim();
-    jsonText = jsonText
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "");
-    const parsed = JSON.parse(jsonText);
-    if (!Array.isArray(parsed)) {
-      throw new Error("Claude did not return a JSON array");
-    }
-    cards = parsed
-      .filter(
-        (c) =>
-          c &&
-          typeof c.front === "string" &&
-          typeof c.back === "string" &&
-          (c.category === "V" || c.category === "G")
+  if (blocks) {
+    // Parallel fan-out per block, mirroring api/parse-cahier.js extract.
+    const results = await Promise.all(
+      blocks.map((b) =>
+        callClaudeOnce(anthropic, model, systemPrompt, b?.text || "").then(
+          (cs) =>
+            cs.map((c) => ({
+              ...c,
+              dates: b?.date ? [b.date] : [],
+            })),
+          (e) => ({ __error: e?.message || String(e), date: b?.date })
+        )
       )
-      .map((c) => ({
-        front: c.front.trim(),
-        back: c.back.trim(),
-        category: c.category,
-      }))
-      .filter((c) => c.front.length > 0 && c.back.length > 0);
-  } catch (e) {
-    claudeError = e?.message || String(e);
-    console.error("[cahier-parse] Claude call failed:", claudeError);
+    );
+    for (const r of results) {
+      if (r && r.__error) {
+        blockErrors.push({ date: r.date, error: r.__error });
+      } else if (Array.isArray(r)) {
+        cards.push(...r);
+      }
+    }
+    if (cards.length === 0 && blockErrors.length > 0) {
+      claudeError = blockErrors[0].error;
+    }
+  } else {
+    try {
+      cards = await callClaudeOnce(anthropic, model, systemPrompt, rawText);
+    } catch (e) {
+      claudeError = e?.message || String(e);
+      console.error("[cahier-parse] Claude call failed:", claudeError);
+    }
   }
 
   // ── STEP (e): mark corrections as used_in_few_shot = true ──────────────
   // Only if we actually got cards back AND we injected something. If the
   // parse errored, the corrections weren't really "used" — leave them for
   // next time.
-  if (injectedIds.length > 0 && cards.length > 0 && !claudeError) {
+  if (injectedIds.length > 0 && cards.length > 0) {
     try {
       const { error: updErr } = await admin
         .from("parse_corrections")
@@ -229,13 +258,21 @@ export default async function handler(req, res) {
     }
   }
 
-  // Also update cards_parsed on the batch row so the admin dashboard can
-  // compute "cards edited as a fraction of cards parsed" later.
+  // Also increment cards_parsed on the batch row so the admin dashboard
+  // can compute "cards edited as a fraction of cards parsed" later. We
+  // RPC-style add instead of overwrite to handle multi-chunk uploads
+  // correctly — without this, the last chunk would clobber earlier counts.
   if (batchId && cards.length > 0) {
     try {
+      const { data: cur } = await admin
+        .from("upload_batches")
+        .select("cards_parsed")
+        .eq("id", batchId)
+        .single();
+      const prev = cur?.cards_parsed || 0;
       await admin
         .from("upload_batches")
-        .update({ cards_parsed: cards.length })
+        .update({ cards_parsed: prev + cards.length })
         .eq("id", batchId);
     } catch (e) {
       console.warn(
@@ -245,10 +282,11 @@ export default async function handler(req, res) {
     }
   }
 
-  if (claudeError) {
+  if (claudeError && cards.length === 0) {
     return res.status(500).json({
       error: `Claude extraction failed: ${claudeError}`,
       batch_id: batchId,
+      errors: blockErrors,
     });
   }
 
@@ -259,7 +297,49 @@ export default async function handler(req, res) {
     batch_id: batchId,
     few_shot_used: injectedIds.length,
     model,
+    errors: blockErrors,
   });
+}
+
+// Shared per-block Claude call. Returns an array of {front, back, category}.
+// Throws on bad response so the caller can aggregate errors across blocks.
+async function callClaudeOnce(anthropic, model, systemPrompt, text) {
+  if (!text || text.trim().length < 20) return [];
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 4000,
+    system: systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: `Here is the lesson text:\n\n---\n${text}\n---`,
+      },
+    ],
+  });
+  const textBlock = response.content.find((c) => c.type === "text");
+  if (!textBlock) throw new Error("Claude returned no text block");
+  let jsonText = textBlock.text.trim();
+  jsonText = jsonText
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "");
+  const parsed = JSON.parse(jsonText);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Claude did not return a JSON array");
+  }
+  return parsed
+    .filter(
+      (c) =>
+        c &&
+        typeof c.front === "string" &&
+        typeof c.back === "string" &&
+        (c.category === "V" || c.category === "G")
+    )
+    .map((c) => ({
+      front: c.front.trim(),
+      back: c.back.trim(),
+      category: c.category,
+    }))
+    .filter((c) => c.front.length > 0 && c.back.length > 0);
 }
 
 // ─── Few-shot assembly ────────────────────────────────────────────────────
