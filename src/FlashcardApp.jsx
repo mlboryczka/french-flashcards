@@ -1516,7 +1516,13 @@ function UsersModal({ onClose }) {
                     <td style={S.usersTdNum}>{u.deck_size}</td>
                     <td style={S.usersTdNum}>{u.studied}</td>
                     <td style={S.usersTdNum}>{u.mastered}</td>
-                    <td style={S.usersTd}>{timeAgo(u.last_active || u.last_sign_in)}</td>
+                    <td style={S.usersTd}>
+                      {u.last_review
+                        ? timeAgo(u.last_review)
+                        : u.last_sign_in
+                          ? <>{timeAgo(u.last_sign_in)} <span style={{color:T.color.onSurfaceVariant, fontSize:12}}>· login only</span></>
+                          : "never"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
