@@ -520,11 +520,12 @@ export default function FlashcardApp({ user, onSignOut }) {
     }
   };
 
-  // Give up: reveal the answer without typing, count as wrong. Used when
-  // the user can't recall the word and wants to see it instead of guessing.
+  // Give up: reveal the answer without typing. Still counts as wrong for
+  // scoring (user couldn't recall it), but displayed neutrally — not framed
+  // as "you typed the wrong answer", since no answer was typed.
   const giveUpTyped = () => {
     if (!card) return;
-    setTypeResult("wrong");
+    setTypeResult("revealed");
     setFlipped(true);
   };
 
@@ -990,7 +991,25 @@ export default function FlashcardApp({ user, onSignOut }) {
         }}
       />
       {showFeedbackModal && (
-        <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />
+        <FeedbackReviewModal
+          onClose={() => setShowFeedbackModal(false)}
+          onEditCard={(item) => {
+            const frontText = item.card_context?.front;
+            if (!frontText) {
+              alert("This feedback has no attached card — nothing to edit.");
+              return;
+            }
+            // Match by lowercased trim (same convention as card_progress joins).
+            const key = String(frontText).toLowerCase().trim();
+            const found = userCards.find(c => String(c.f || "").toLowerCase().trim() === key);
+            if (!found) {
+              alert(`Couldn't find the card "${frontText}" in your deck. It may have been edited or deleted since this feedback was submitted.`);
+              return;
+            }
+            setShowFeedbackModal(false);
+            setEditingCard(found);
+          }}
+        />
       )}
       {showUsersModal && (
         <UsersModal onClose={() => setShowUsersModal(false)} />
@@ -1276,11 +1295,12 @@ export default function FlashcardApp({ user, onSignOut }) {
               {effectiveTypeMode ? (
                 typeResult ? (
                   <div style={S.typeFeedback}>
-                    <div style={typeResult==="correct" ? S.typeCorrect : typeResult==="close" ? S.typeClose : S.typeWrong}>
+                    <div style={typeResult==="correct" ? S.typeCorrect : typeResult==="close" ? S.typeClose : typeResult==="revealed" ? S.typeRevealed : S.typeWrong}>
                       {typeResult==="correct" && "✓ Correct!"}
                       {typeResult==="close" && `✓ Close enough — answer: ${back}`}
                       {typeResult==="wrongArticle" && `✗ Wrong article — answer: ${back}`}
                       {typeResult==="wrong" && `✗ Answer: ${back}`}
+                      {typeResult==="revealed" && `Answer: ${back}`}
                     </div>
                     {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
                       <div style={S.feedbackRow}>
@@ -1427,7 +1447,7 @@ function CardContextPreview({ ctx }) {
 // ─── FEEDBACK REVIEW MODAL (admin only) ───────────────────────────────────
 // Shows all beta_feedback entries in a portal overlay. Triggered from the
 // profile dropdown → "View feedback".
-function FeedbackReviewModal({ onClose }) {
+function FeedbackReviewModal({ onClose, onEditCard }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -1490,7 +1510,12 @@ function FeedbackReviewModal({ onClose }) {
                 {item.screenshot && (
                   <img src={item.screenshot} alt="Screenshot" style={S.fbItemImg} />
                 )}
-                <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Delete</button>
+                <div style={{display:"flex", gap:8}}>
+                  {item.card_context && onEditCard && (
+                    <button style={S.fbItemDismiss} onClick={() => onEditCard(item)}>Edit card</button>
+                  )}
+                  <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Delete</button>
+                </div>
               </div>
             ))}
           </div>
@@ -2228,6 +2253,7 @@ const S = {
   typeFeedback: { marginBottom:12, width:"100%", maxWidth:520, alignSelf:"center" },
   typeCorrect: { textAlign:"center", padding:14, background:T.color.tertiaryFixed, color:T.color.onSecondaryContainer, borderRadius:T.radius.lg, fontSize:15, fontWeight:600, marginBottom:12, fontFamily:T.font.sans },
   typeClose: { textAlign:"center", padding:14, background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
+  typeRevealed: { textAlign:"center", padding:14, background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
   typeWrong: { textAlign:"center", padding:14, background:T.color.errorContainer, color:T.color.onErrorContainer, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
   typeBtnRow: { display:"flex", gap:12, marginTop:8 },
   feedbackRow: { textAlign:"center", marginBottom:10, fontFamily:T.font.sans, fontSize:12 },
