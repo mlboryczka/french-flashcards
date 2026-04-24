@@ -111,10 +111,24 @@ function matchAnswer(typed, correct, extraAlts = []) {
   const sources = [correct, ...extraAlts];
   const alternatives = [];
   for (const src of sources) {
-    // Split on / , ; | to get individual acceptable answers
-    for (const alt of src.split(/[\/,;|]/)) {
-      const trimmed = alt.trim();
-      if (trimmed) alternatives.push(trimmed);
+    // Split on / , ; | to get individual acceptable answers — BUT only if
+    // every resulting piece is short enough to be a word-level alternative
+    // (gendered forms, short synonyms, glosses). Long phrases with commas
+    // like "i wrote correctly except for trahison, which should be betrayal"
+    // must not decompose into standalone clauses, or a user typing the rest
+    // of the sentence right with one wrong word still matches a clause as a
+    // substring. Slashes are always split (they're always synonym markers).
+    const slashParts = src.split(/\//).map(s => s.trim()).filter(Boolean);
+    for (const sp of slashParts) {
+      const subParts = sp.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
+      const tooLong = subParts.some(
+        p => p.split(/\s+/).filter(Boolean).length >= 4 || p.length >= 20
+      );
+      if (tooLong) {
+        alternatives.push(sp);
+      } else {
+        for (const ap of subParts) alternatives.push(ap);
+      }
     }
   }
 
@@ -172,6 +186,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const skipFlipAnim = useRef(false); // temporarily disables the card flip transition
+  // Tracks the currently-displayed card id so the deck-build effect can
+  // preserve the user's position when userCards re-references on a
+  // background refetch (e.g. when the browser tab regains focus). Without
+  // this, every refetch reshuffles and snaps the user back to card 0.
+  const currentCardIdRef = useRef(null);
   const [cat, setCat] = useState("all");
   const [mode, setMode] = useState("study"); // study | stats | feedback
   const [stats, setStats] = useState({ seen:0, got:0, missed:0 });
@@ -269,7 +288,9 @@ export default function FlashcardApp({ user, onSignOut }) {
     };
   }, []);
 
-  // Build flashcard deck - only rebuilds when filters/mode change, NOT on every answer
+  // Build flashcard deck — rebuilds when filters or user's card list changes,
+  // NOT on every answer and NOT when switching between study/stats/feedback
+  // views (that used to reshuffle and snap back to card 0 mid-session).
   useEffect(() => {
     if (!loaded) return;
     let cards = cat === "all"
@@ -289,12 +310,23 @@ export default function FlashcardApp({ user, onSignOut }) {
       return { ...c, shownDir, flippable };
     });
     setDeck(cards);
-    setIdx(0);
-    setFlipped(false);
+    // Preserve the user's position if the current card still exists in the
+    // rebuilt deck — otherwise reset to the top. This stops background
+    // userCards refetches from snapping the user back to card 0.
+    const preservedId = currentCardIdRef.current;
+    const preservedIdx = preservedId ? cards.findIndex(c => c.id === preservedId) : -1;
+    if (preservedIdx >= 0) {
+      setIdx(preservedIdx);
+    } else {
+      setIdx(0);
+      setFlipped(false);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cat, freqOnly, mode, loaded, dir, userCards]);
+  }, [cat, freqOnly, loaded, dir, userCards]);
 
   const card = deck[idx];
+  // Keep the ref in sync so deck rebuilds can find the current card.
+  useEffect(() => { currentCardIdRef.current = card?.id || null; }, [card]);
   const flip = useCallback(() => setFlipped(f => !f), []);
 
   // Auto-speak French when a French side becomes visible
@@ -1463,9 +1495,14 @@ function UsersModal({ onClose }) {
         const res = await fetch("/api/admin-users", {
           headers: { Authorization: `Bearer ${session?.access_token}` },
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        setUsers(data.users || []);
+        // Parse defensively: a truncated or non-JSON response (e.g. a Vercel
+        // error page) would otherwise surface the raw V8 parse error string
+        // to the user.
+        const responseText = await res.text();
+        let data = null;
+        try { data = JSON.parse(responseText); } catch { /* non-JSON response */ }
+        if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+        setUsers(data?.users || []);
       } catch (e) {
         setError(e.message);
       }
