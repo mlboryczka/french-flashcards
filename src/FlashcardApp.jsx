@@ -756,24 +756,16 @@ export default function FlashcardApp({ user, onSignOut }) {
     const trimmedFront = newFront.trim();
     const trimmedBack = newBack.trim();
 
-    console.log("[saveCardEdit] called with rowId:", rowId, "typeof:", typeof rowId);
-
-    // Guard at the client boundary — surface a clear error instead of
-    // letting it round-trip to the server as "row_id is required".
-    if (!rowId || typeof rowId !== "string") {
-      console.error("[saveCardEdit] rowId missing on editingCard — card shape:", ctx);
-      alert(
-        `Internal error: card has no row_id. The edit modal was opened with ` +
-        `a card object missing its database id. Refresh the page and try again. ` +
-        `If it keeps happening, your deck may need to be reloaded.`
-      );
-      return false;
-    }
+    console.log("[saveCardEdit] rowId:", rowId, "originalFront:", ctx.originalFront);
 
     // Go through the server endpoint so the service role key can bypass
     // any RLS policies on user_cards. Direct-from-client updates were
     // silently blocked by RLS (returning success with 0 rows affected),
     // making edits appear to save but not persist.
+    //
+    // We send both row_id and original_front — the server prefers row_id
+    // if present, else falls back to a per-user front-text match. This
+    // makes the edit resilient to missing-row_id cases in React state.
     let updatedRow = null;
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -784,7 +776,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           Authorization: `Bearer ${session?.access_token || ""}`,
         },
         body: JSON.stringify({
-          row_id: rowId,
+          row_id: rowId || null,
+          original_front: ctx.originalFront || null,
           front: trimmedFront,
           back: trimmedBack,
         }),

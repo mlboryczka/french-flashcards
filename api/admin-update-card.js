@@ -60,30 +60,50 @@ export default async function handler(req, res) {
   }
   console.log("[admin-update-card] body keys:", Object.keys(body));
 
-  const { row_id, front, back } = body;
-  if (!row_id || typeof row_id !== "string") {
-    return res.status(400).json({
-      error: `row_id is required (received: row_id=${JSON.stringify(row_id)}, bodyKeys=${JSON.stringify(Object.keys(body))})`,
-    });
-  }
+  const { row_id, front, back, original_front } = body;
   if (typeof front !== "string" || typeof back !== "string") {
     return res.status(400).json({ error: "front and back are required strings" });
   }
 
-  // Ownership check: look up the row and confirm user_id matches. Admin
-  // email gating could also be added here; for now the scope is "each
-  // user can update their own cards via this endpoint".
-  const { data: existing, error: fetchErr } = await admin
-    .from("user_cards")
-    .select("id, user_id")
-    .eq("id", row_id)
-    .single();
-  if (fetchErr) {
-    console.error("[admin-update-card] fetch failed:", fetchErr);
-    return res.status(500).json({ error: fetchErr.message });
+  // Dual-lookup strategy. The client sometimes hits this endpoint with
+  // row_id undefined (we've seen it in prod — the React state carrying
+  // the edit card loses its row_id somehow). As a fallback we can match
+  // by the user's lowercased-trimmed French front text, which is unique
+  // per user by construction. At least one of row_id or original_front
+  // must be present.
+  let existing = null;
+  if (row_id && typeof row_id === "string") {
+    const { data, error } = await admin
+      .from("user_cards")
+      .select("id, user_id, front")
+      .eq("id", row_id)
+      .maybeSingle();
+    if (error) {
+      console.error("[admin-update-card] fetch by id failed:", error);
+      return res.status(500).json({ error: error.message });
+    }
+    existing = data;
+  }
+  if (!existing && typeof original_front === "string" && original_front.trim()) {
+    const key = original_front.trim().toLowerCase();
+    const { data, error } = await admin
+      .from("user_cards")
+      .select("id, user_id, front")
+      .eq("user_id", userId)
+      .ilike("front", original_front.trim())
+      .limit(10);
+    if (error) {
+      console.error("[admin-update-card] fetch by front failed:", error);
+      return res.status(500).json({ error: error.message });
+    }
+    existing = (data || []).find(
+      (r) => String(r.front || "").toLowerCase().trim() === key
+    );
   }
   if (!existing) {
-    return res.status(404).json({ error: "Card not found" });
+    return res.status(404).json({
+      error: `Card not found. (row_id=${JSON.stringify(row_id)}, original_front=${JSON.stringify(original_front)})`,
+    });
   }
   if (existing.user_id !== userId) {
     return res.status(403).json({ error: "Not your card" });
@@ -96,7 +116,7 @@ export default async function handler(req, res) {
       back: back.trim(),
       flagged_for_review: false,
     })
-    .eq("id", row_id)
+    .eq("id", existing.id)
     .select()
     .single();
   if (updErr) {
