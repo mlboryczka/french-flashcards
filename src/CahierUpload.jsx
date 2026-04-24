@@ -212,9 +212,11 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
 
       // ── PHASE 2: EXTRACT (CHUNKED) ────────────────────────────────────
       // Slice the blocks into chunks of CHUNK_SIZE and process them one
-      // at a time. Each request runs ~CHUNK_SIZE Claude calls in parallel
-      // server-side and finishes in ~10-15s — well under the Vercel Hobby
-      // 60s function limit.
+      // at a time via /api/cahier-parse. That endpoint injects recent
+      // admin corrections into the Claude prompt as few-shot examples, so
+      // mistakes from previous uploads don't repeat. It creates one
+      // upload_batches row on the first call and reuses it on subsequent
+      // chunks — this way the whole upload ends up under a single batch.
       //
       // Sequential (not parallel) on the client because:
       //   1. Anthropic per-org rate limits — 60+ Haiku calls in flight all
@@ -224,6 +226,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
       const CHUNK_SIZE = 15;
       const allCards = [];
       const allErrors = [];
+      let batchId = null;
       const totalChunks = Math.ceil(blocks.length / CHUNK_SIZE);
 
       for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
@@ -232,15 +235,19 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
           `Extracting cards from your lessons… (chunk ${chunkIndex} of ${totalChunks})`
         );
         const chunk = blocks.slice(i, i + CHUNK_SIZE);
-        const extractData = await callApi(session.access_token, {
-          action: "extract",
+        const parseData = await callCahierParse(session.access_token, {
           blocks: chunk,
+          batch_id: batchId, // null on first call → server creates the batch
+          source: tab,
         });
-        if (Array.isArray(extractData.cards)) {
-          allCards.push(...extractData.cards);
+        if (!batchId && parseData.batch_id) {
+          batchId = parseData.batch_id;
         }
-        if (Array.isArray(extractData.errors)) {
-          allErrors.push(...extractData.errors);
+        if (Array.isArray(parseData.cards)) {
+          allCards.push(...parseData.cards);
+        }
+        if (Array.isArray(parseData.errors)) {
+          allErrors.push(...parseData.errors);
         }
       }
 
@@ -254,7 +261,9 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
 
       // ── PHASE 3: COMMIT ───────────────────────────────────────────────
       // Send the full set of cards to the server for cross-chunk dedupe,
-      // conjugation expansion, and database insert. Cheap and fast.
+      // conjugation expansion, and database insert. batch_id is forwarded
+      // so each inserted user_cards row gets tagged with the upload it
+      // came from.
       setProgress(
         `Saving ${allCards.length.toLocaleString()} cards to your deck…`
       );
@@ -262,20 +271,58 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         action: "commit",
         cards: allCards,
         replace,
+        batch_id: batchId, // may be null if the parse endpoint couldn't create one
       });
 
+      // ── PHASE 4: BACKFILL BATCH STATS ─────────────────────────────────
+      // Tell upload_batches how many cards actually landed. Best-effort —
+      // a failure here just means the batch row stays with accepted = null.
+      if (batchId && commitData?.cardsInserted != null) {
+        try {
+          await fetch(
+            `/api/upload-batches?id=${encodeURIComponent(batchId)}`,
+            {
+              method: "PATCH",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({
+                cards_accepted: commitData.cardsInserted,
+                cards_edited_post_parse: 0,
+              }),
+            }
+          );
+        } catch (e) {
+          console.warn(
+            "[CahierUpload] upload_batches PATCH failed:",
+            e?.message || e
+          );
+        }
+      }
+
       setStatus("idle");
-      onSuccess(commitData);
+      onSuccess({ ...commitData, batch_id: batchId });
     } catch (e) {
       setStatus("error");
       setError(e.message || "Upload failed");
     }
   }
 
+  // Parse-step caller — posts to /api/cahier-parse (the few-shot-enriched
+  // endpoint). Same error handling contract as callApi.
+  async function callCahierParse(accessToken, body) {
+    return await postJson("/api/cahier-parse", accessToken, body);
+  }
+
   // Shared API caller — handles auth, JSON parsing, and surfaces real
   // errors instead of letting JSON.parse crash on HTML error pages.
   async function callApi(accessToken, body) {
-    const res = await fetch("/api/parse-cahier", {
+    return await postJson("/api/parse-cahier", accessToken, body);
+  }
+
+  async function postJson(url, accessToken, body) {
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

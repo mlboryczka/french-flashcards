@@ -16,6 +16,11 @@ import {
   STT_AVAILABLE,
   scoreColor,
 } from "./audio";
+import {
+  logCorrection,
+  CORRECTION_CATEGORIES,
+  CORRECTION_ACTIONS,
+} from "./lib/parseCorrections";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -743,14 +748,46 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // ── INLINE CARD EDIT ────────────────────────────────────────────────
   const saveCardEdit = async (rowId, newFront, newBack) => {
+    // Capture the pre-edit values before the update so we can diff and log
+    // a parse correction. Missing `existing` (stale React state, etc.) just
+    // means we'll skip the log — the update still runs.
+    const existing = userCards.find((c) => c.row_id === rowId);
+    const originalFront = existing?.f ?? null;
+    const originalBack = existing?.b ?? null;
+
+    const trimmedFront = newFront.trim();
+    const trimmedBack = newBack.trim();
+
     const { error } = await supabase
       .from("user_cards")
-      .update({ front: newFront.trim(), back: newBack.trim(), flagged_for_review: false })
+      .update({ front: trimmedFront, back: trimmedBack, flagged_for_review: false })
       .eq("id", rowId);
     if (error) {
       console.error("Card update failed:", error);
       return false;
     }
+
+    // Fire-and-forget: log to the parse-corrections ledger so we can learn
+    // from this edit on future uploads. If nothing actually changed, skip.
+    if (existing) {
+      const frontChanged = originalFront !== trimmedFront;
+      const backChanged = originalBack !== trimmedBack;
+      if (frontChanged || backChanged) {
+        logCorrection({
+          category: frontChanged
+            ? CORRECTION_CATEGORIES.FRONT_TEXT_EDIT
+            : CORRECTION_CATEGORIES.BACK_TEXT_EDIT,
+          action: CORRECTION_ACTIONS.EDIT,
+          card_id: rowId,
+          batch_id: existing.batch_id || null, // null for legacy cards
+          original_front: originalFront,
+          original_back: originalBack,
+          corrected_front: trimmedFront,
+          corrected_back: trimmedBack,
+        });
+      }
+    }
+
     reloadDeck();
     return true;
   };
@@ -1025,6 +1062,44 @@ export default function FlashcardApp({ user, onSignOut }) {
           }}
           onDelete={async () => {
             if (!confirm("Delete this card? This cannot be undone.")) return;
+
+            // Prompt admin for a correction category. Default to
+            // duplicate_detected since that's by far the most common
+            // deletion reason. Admin can override with any other code from
+            // the menu; anything unrecognized falls back to the default.
+            const CATEGORY_MENU = [
+              "duplicate_detected",
+              "should_split_polysemy",
+              "should_merge_gendered",
+              "wrong_disambiguator",
+              "wrong_card_type",
+              "reversed_front_back",
+              "spelling_correction",
+              "other",
+            ];
+            const categoryInput = window.prompt(
+              `Why are you deleting this card?\n\nPick one:\n  ${CATEGORY_MENU.join(
+                "\n  "
+              )}\n\n(press Enter to accept the default)`,
+              "duplicate_detected"
+            );
+            // Pressing Cancel returns null — treat as abort.
+            if (categoryInput === null) return;
+            const category = CATEGORY_MENU.includes(categoryInput.trim())
+              ? categoryInput.trim()
+              : "duplicate_detected";
+
+            // Log BEFORE deleting — the original front/back are lost once
+            // the row is gone.
+            logCorrection({
+              category,
+              action: CORRECTION_ACTIONS.DELETE,
+              card_id: editingCard.row_id,
+              batch_id: editingCard.batch_id || null,
+              original_front: editingCard.f,
+              original_back: editingCard.b,
+            });
+
             const ok = await deleteCard(editingCard.row_id);
             if (ok) setEditingCard(null);
           }}
@@ -1736,6 +1811,20 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
       source_feedback_id: item.id,
     });
     if (altErr) { console.error("Alt insert failed:", altErr); setActing(null); return; }
+
+    // Log the alternate approval so future cahier parses know this answer
+    // is acceptable. card_id on feedback_submissions is the lowercased
+    // French front (not a uuid), so we leave the ledger's card_id null and
+    // stash the context in the front/back fields.
+    logCorrection({
+      category: CORRECTION_CATEGORIES.ALTERNATE_ANSWER,
+      action: CORRECTION_ACTIONS.APPROVE_ALTERNATE,
+      original_front: item.french || null,
+      original_back: item.english || item.expected_answer || null,
+      corrected_back: item.user_answer,
+      notes: `direction=${item.direction}`,
+    });
+
     const { error: upErr } = await supabase
       .from("feedback_submissions")
       .update({ reviewed: true, reviewed_at: new Date().toISOString(), action: "approved" })

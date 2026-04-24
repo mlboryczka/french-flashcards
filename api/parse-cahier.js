@@ -219,7 +219,7 @@ async function handleExtract(req, res) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleCommit(req, res, adminClient, userId) {
-  const { cards: rawCards, replace } = req.body || {};
+  const { cards: rawCards, replace, batch_id: batchId = null } = req.body || {};
   if (!Array.isArray(rawCards) || rawCards.length === 0) {
     return res.status(400).json({ error: "Missing or empty cards array" });
   }
@@ -250,6 +250,9 @@ async function handleCommit(req, res, adminClient, userId) {
     }
   }
 
+  // batch_id is null for legacy clients that don't pass it. Postgres accepts
+  // the nullable column, and `user_cards` left-joins against `upload_batches`
+  // for any admin-side reporting.
   const rows = deduped.map((c) => ({
     user_id: userId,
     front: c.front,
@@ -257,6 +260,7 @@ async function handleCommit(req, res, adminClient, userId) {
     category: c.category,
     dates: c.dates,
     source: c.source || "cahier-upload",
+    batch_id: batchId,
   }));
 
   let inserted = 0;
