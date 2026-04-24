@@ -769,9 +769,11 @@ export default function FlashcardApp({ user, onSignOut }) {
 
     // Fire-and-forget: log to the parse-corrections ledger so we can learn
     // from this edit on future uploads. If nothing actually changed, skip.
+    console.log("[saveCardEdit] existing?", !!existing, "rowId", rowId, "userCards.length", userCards.length);
     if (existing) {
       const frontChanged = originalFront !== trimmedFront;
       const backChanged = originalBack !== trimmedBack;
+      console.log("[saveCardEdit] frontChanged", frontChanged, "backChanged", backChanged);
       if (frontChanged || backChanged) {
         logCorrection({
           category: frontChanged

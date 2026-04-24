@@ -40,6 +40,7 @@ export const CORRECTION_ACTIONS = Object.freeze({
 let endpointDisabled = false;
 
 async function postCorrection(body) {
+  console.log("[parseCorrections] postCorrection entered, endpointDisabled =", endpointDisabled);
   if (endpointDisabled) return null;
   let session;
   try {
@@ -49,10 +50,15 @@ async function postCorrection(body) {
     console.warn("[parseCorrections] could not read session:", e?.message || e);
     return null;
   }
-  if (!session?.access_token) return null;
+  if (!session?.access_token) {
+    console.warn("[parseCorrections] no session/access_token — skipping");
+    return null;
+  }
 
   try {
-    const res = await fetch("/api/parse-corrections", {
+    const url = "/api/parse-corrections";
+    console.log("[parseCorrections] about to fetch", url);
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -95,6 +101,7 @@ async function postCorrection(body) {
 //   corrected_back    — text after the correction
 //   notes             — free-form string
 export async function logCorrection(payload) {
+  console.log("[parseCorrections] logCorrection called with", payload);
   if (!payload || !payload.category) {
     console.warn("[parseCorrections] logCorrection called without category");
     return null;
