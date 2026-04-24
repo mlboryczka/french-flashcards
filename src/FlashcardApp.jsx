@@ -747,46 +747,56 @@ export default function FlashcardApp({ user, onSignOut }) {
   };
 
   // ── INLINE CARD EDIT ────────────────────────────────────────────────
-  const saveCardEdit = async (rowId, newFront, newBack) => {
-    // Capture the pre-edit values before the update so we can diff and log
-    // a parse correction. Missing `existing` (stale React state, etc.) just
-    // means we'll skip the log — the update still runs.
-    const existing = userCards.find((c) => c.row_id === rowId);
-    const originalFront = existing?.f ?? null;
-    const originalBack = existing?.b ?? null;
-
+  // saveCardEdit receives the originals via `ctx` straight from the
+  // EditCardModal — never re-looks them up in React state. The previous
+  // implementation did `userCards.find(c => c.row_id === rowId)` and then
+  // silently skipped logging when the lookup missed (stale state, etc.),
+  // which is why /api/parse-corrections was never being hit.
+  const saveCardEdit = async (rowId, newFront, newBack, ctx = {}) => {
     const trimmedFront = newFront.trim();
     const trimmedBack = newBack.trim();
 
-    const { error } = await supabase
+    // Chain .select() so PostgREST returns the actually-updated rows.
+    // Without this, RLS-blocked updates look identical to successful
+    // ones (both have error=null, data=null) — the modal would close
+    // and the user would think the edit saved when nothing changed.
+    const { data, error } = await supabase
       .from("user_cards")
       .update({ front: trimmedFront, back: trimmedBack, flagged_for_review: false })
-      .eq("id", rowId);
+      .eq("id", rowId)
+      .select();
     if (error) {
       console.error("Card update failed:", error);
+      alert(`Card update failed: ${error.message}`);
+      return false;
+    }
+    if (!data || data.length === 0) {
+      console.error("Card update affected 0 rows — RLS blocked it?", rowId);
+      alert(
+        "Card update was blocked by the database (0 rows affected). " +
+        "The user_cards table is likely missing an UPDATE policy. " +
+        "Run migrations/migration_003_user_cards_rls.sql in Supabase SQL editor to fix it."
+      );
       return false;
     }
 
-    // Fire-and-forget: log to the parse-corrections ledger so we can learn
-    // from this edit on future uploads. If nothing actually changed, skip.
-    if (existing) {
-      const frontChanged = originalFront !== trimmedFront;
-      const backChanged = originalBack !== trimmedBack;
-      if (frontChanged || backChanged) {
-        logCorrection({
-          category: frontChanged
-            ? CORRECTION_CATEGORIES.FRONT_TEXT_EDIT
-            : CORRECTION_CATEGORIES.BACK_TEXT_EDIT,
-          action: CORRECTION_ACTIONS.EDIT,
-          card_id: rowId,
-          batch_id: existing.batch_id || null, // null for legacy cards
-          original_front: originalFront,
-          original_back: originalBack,
-          corrected_front: trimmedFront,
-          corrected_back: trimmedBack,
-        });
-      }
-    }
+    // Fire-and-forget: log to the parse-corrections ledger every time a
+    // save succeeds. No diff guard — the small cost of logging a no-op
+    // save is nothing compared to the cost of silently swallowing logs
+    // because the guard mis-fires.
+    const frontChanged = ctx.originalFront !== trimmedFront;
+    logCorrection({
+      category: frontChanged
+        ? CORRECTION_CATEGORIES.FRONT_TEXT_EDIT
+        : CORRECTION_CATEGORIES.BACK_TEXT_EDIT,
+      action: CORRECTION_ACTIONS.EDIT,
+      card_id: rowId,
+      batch_id: ctx.batchId || null,
+      original_front: ctx.originalFront ?? null,
+      original_back: ctx.originalBack ?? null,
+      corrected_front: trimmedFront,
+      corrected_back: trimmedBack,
+    });
 
     reloadDeck();
     return true;
@@ -1056,7 +1066,19 @@ export default function FlashcardApp({ user, onSignOut }) {
           card={editingCard}
           onClose={() => setEditingCard(null)}
           onSave={async (newFront, newBack) => {
-            const ok = await saveCardEdit(editingCard.row_id, newFront, newBack);
+            // Pass originals + batch_id through from the modal itself, so
+            // saveCardEdit doesn't depend on a React-state lookup that
+            // might miss.
+            const ok = await saveCardEdit(
+              editingCard.row_id,
+              newFront,
+              newBack,
+              {
+                originalFront: editingCard.f,
+                originalBack: editingCard.b,
+                batchId: editingCard.batch_id,
+              }
+            );
             if (ok) setEditingCard(null);
             return ok;
           }}
