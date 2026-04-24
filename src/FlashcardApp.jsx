@@ -756,27 +756,38 @@ export default function FlashcardApp({ user, onSignOut }) {
     const trimmedFront = newFront.trim();
     const trimmedBack = newBack.trim();
 
-    // Chain .select() so PostgREST returns the actually-updated rows.
-    // Without this, RLS-blocked updates look identical to successful
-    // ones (both have error=null, data=null) — the modal would close
-    // and the user would think the edit saved when nothing changed.
-    const { data, error } = await supabase
-      .from("user_cards")
-      .update({ front: trimmedFront, back: trimmedBack, flagged_for_review: false })
-      .eq("id", rowId)
-      .select();
-    if (error) {
-      console.error("Card update failed:", error);
-      alert(`Card update failed: ${error.message}`);
-      return false;
-    }
-    if (!data || data.length === 0) {
-      console.error("Card update affected 0 rows — RLS blocked it?", rowId);
-      alert(
-        "Card update was blocked by the database (0 rows affected). " +
-        "The user_cards table is likely missing an UPDATE policy. " +
-        "Run migrations/migration_003_user_cards_rls.sql in Supabase SQL editor to fix it."
-      );
+    // Go through the server endpoint so the service role key can bypass
+    // any RLS policies on user_cards. Direct-from-client updates were
+    // silently blocked by RLS (returning success with 0 rows affected),
+    // making edits appear to save but not persist.
+    let updatedRow = null;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin-update-card", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token || ""}`,
+        },
+        body: JSON.stringify({
+          row_id: rowId,
+          front: trimmedFront,
+          back: trimmedBack,
+        }),
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = JSON.parse(text); } catch {}
+      if (!res.ok) {
+        const msg = data?.error || `HTTP ${res.status}: ${text.slice(0, 200)}`;
+        console.error("Card update failed:", msg);
+        alert(`Card update failed: ${msg}`);
+        return false;
+      }
+      updatedRow = data?.row || null;
+    } catch (e) {
+      console.error("Card update network error:", e);
+      alert(`Card update network error: ${e.message || e}`);
       return false;
     }
 

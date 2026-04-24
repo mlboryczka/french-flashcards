@@ -9,7 +9,7 @@
 -- Safe to run multiple times: each policy is dropped first if it exists.
 --
 -- ╔══════════════════════════════════════════════════════════════════╗
--- ║ BEFORE RUNNING: search-and-replace YOUR_EMAIL_HERE@example.com   ║
+-- ║ BEFORE RUNNING: search-and-replace mlboryczka@gmail.com   ║
 -- ║ with the admin email used to log in.                             ║
 -- ╚══════════════════════════════════════════════════════════════════╝
 
@@ -47,15 +47,15 @@ create policy "Users can delete own cards"
 drop policy if exists "Admin can read all cards" on public.user_cards;
 create policy "Admin can read all cards"
   on public.user_cards for select
-  using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
+  using (auth.jwt() ->> 'email' = 'mlboryczka@gmail.com');
 
 drop policy if exists "Admin can update all cards" on public.user_cards;
 create policy "Admin can update all cards"
   on public.user_cards for update
-  using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com')
-  with check (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
+  using (auth.jwt() ->> 'email' = 'mlboryczka@gmail.com')
+  with check (auth.jwt() ->> 'email' = 'mlboryczka@gmail.com');
 
 drop policy if exists "Admin can delete all cards" on public.user_cards;
 create policy "Admin can delete all cards"
   on public.user_cards for delete
-  using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
+  using (auth.jwt() ->> 'email' = 'mlboryczka@gmail.com');
