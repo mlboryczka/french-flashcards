@@ -1446,9 +1446,21 @@ function FeedbackReviewModal({ onClose }) {
 
   const dismiss = async (id) => {
     if (!confirm("Delete this feedback? This can't be undone.")) return;
-    const { error } = await supabase.from("beta_feedback").delete().eq("id", id);
+    // Chain .select() so PostgREST returns the deleted rows — this lets us
+    // detect RLS silent failures (delete blocked by policy returns success
+    // with zero rows affected, no error) that would otherwise make the row
+    // disappear from the UI but stay in the DB, reappearing on refresh.
+    const { data, error } = await supabase
+      .from("beta_feedback")
+      .delete()
+      .eq("id", id)
+      .select();
     if (error) {
-      alert(`Couldn't delete: ${error.message}\n\n(If this keeps happening, the beta_feedback table likely needs an admin DELETE RLS policy.)`);
+      alert(`Couldn't delete: ${error.message}`);
+      return;
+    }
+    if (!data || data.length === 0) {
+      alert("Delete was blocked by the database (0 rows affected). The beta_feedback table is missing an admin DELETE RLS policy — run the migration in Supabase SQL editor to fix it.");
       return;
     }
     setItems(prev => prev.filter(i => i.id !== id));
