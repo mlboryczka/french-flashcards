@@ -766,7 +766,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     // We send both row_id and original_front — the server prefers row_id
     // if present, else falls back to a per-user front-text match. This
     // makes the edit resilient to missing-row_id cases in React state.
-    let updatedRow = null;
+    let serverResponseStatus = null;
+    let serverResponseBody = null;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/admin-update-card", {
@@ -782,21 +783,35 @@ export default function FlashcardApp({ user, onSignOut }) {
           back: trimmedBack,
         }),
       });
+      serverResponseStatus = res.status;
       const text = await res.text();
-      let data = null;
-      try { data = JSON.parse(text); } catch {}
+      try { serverResponseBody = JSON.parse(text); } catch { serverResponseBody = text; }
       if (!res.ok) {
-        const msg = data?.error || `HTTP ${res.status}: ${text.slice(0, 200)}`;
-        console.error("Card update failed:", msg);
-        alert(`Card update failed: ${msg}`);
+        console.error("Card update failed:", serverResponseBody);
+        alert(
+          `Card update failed.\n` +
+          `HTTP ${res.status}\n` +
+          `Response: ${typeof serverResponseBody === "string" ? serverResponseBody.slice(0, 400) : JSON.stringify(serverResponseBody).slice(0, 400)}`
+        );
         return false;
       }
-      updatedRow = data?.row || null;
     } catch (e) {
       console.error("Card update network error:", e);
       alert(`Card update network error: ${e.message || e}`);
       return false;
     }
+
+    // VERBOSE diagnostic: show what the server claims it saved. If this
+    // alert fires but the DB row doesn't actually change, the server
+    // endpoint is lying and we have a server-side bug. If this alert
+    // doesn't fire at all, the old JS bundle is cached in the browser.
+    const updated = serverResponseBody?.row;
+    alert(
+      `Server responded ${serverResponseStatus}.\n` +
+      `Saved row id: ${updated?.id || "none"}\n` +
+      `Saved front:  ${updated?.front || "n/a"}\n` +
+      `Saved back:   ${updated?.back || "n/a"}`
+    );
 
     // Fire-and-forget: log to the parse-corrections ledger every time a
     // save succeeds. No diff guard — the small cost of logging a no-op
