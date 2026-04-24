@@ -316,10 +316,14 @@ export default function FlashcardApp({ user, onSignOut }) {
     });
     setDeck(cards);
     // Preserve the user's position if the current card still exists in the
-    // rebuilt deck — otherwise reset to the top. This stops background
-    // userCards refetches from snapping the user back to card 0.
-    const preservedId = currentCardIdRef.current;
-    const preservedIdx = preservedId ? cards.findIndex(c => c.id === preservedId) : -1;
+    // rebuilt deck — otherwise reset to the top. Tracked by row_id (DB pk)
+    // because card.id is derived from front text and changes whenever the
+    // admin edits the French side — which caused a post-save reload to
+    // snap to card 0 and look like the edit hadn't persisted.
+    const preservedRowId = currentCardIdRef.current;
+    const preservedIdx = preservedRowId != null
+      ? cards.findIndex(c => c.row_id === preservedRowId)
+      : -1;
     if (preservedIdx >= 0) {
       setIdx(preservedIdx);
     } else {
@@ -331,7 +335,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const card = deck[idx];
   // Keep the ref in sync so deck rebuilds can find the current card.
-  useEffect(() => { currentCardIdRef.current = card?.id || null; }, [card]);
+  useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
   const flip = useCallback(() => setFlipped(f => !f), []);
 
   // Auto-speak French when a French side becomes visible
@@ -766,8 +770,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     // We send both row_id and original_front — the server prefers row_id
     // if present, else falls back to a per-user front-text match. This
     // makes the edit resilient to missing-row_id cases in React state.
-    let serverResponseStatus = null;
-    let serverResponseBody = null;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/admin-update-card", {
@@ -783,15 +785,15 @@ export default function FlashcardApp({ user, onSignOut }) {
           back: trimmedBack,
         }),
       });
-      serverResponseStatus = res.status;
-      const text = await res.text();
-      try { serverResponseBody = JSON.parse(text); } catch { serverResponseBody = text; }
       if (!res.ok) {
-        console.error("Card update failed:", serverResponseBody);
+        const text = await res.text();
+        let body;
+        try { body = JSON.parse(text); } catch { body = text; }
+        console.error("Card update failed:", body);
         alert(
           `Card update failed.\n` +
           `HTTP ${res.status}\n` +
-          `Response: ${typeof serverResponseBody === "string" ? serverResponseBody.slice(0, 400) : JSON.stringify(serverResponseBody).slice(0, 400)}`
+          `Response: ${typeof body === "string" ? body.slice(0, 400) : JSON.stringify(body).slice(0, 400)}`
         );
         return false;
       }
@@ -800,18 +802,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       alert(`Card update network error: ${e.message || e}`);
       return false;
     }
-
-    // VERBOSE diagnostic: show what the server claims it saved. If this
-    // alert fires but the DB row doesn't actually change, the server
-    // endpoint is lying and we have a server-side bug. If this alert
-    // doesn't fire at all, the old JS bundle is cached in the browser.
-    const updated = serverResponseBody?.row;
-    alert(
-      `Server responded ${serverResponseStatus}.\n` +
-      `Saved row id: ${updated?.id || "none"}\n` +
-      `Saved front:  ${updated?.front || "n/a"}\n` +
-      `Saved back:   ${updated?.back || "n/a"}`
-    );
 
     // Fire-and-forget: log to the parse-corrections ledger every time a
     // save succeeds. No diff guard — the small cost of logging a no-op
