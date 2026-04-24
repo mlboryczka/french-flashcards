@@ -7,6 +7,30 @@
 // which timestamps every review. Falls back to last_sign_in_at for users
 // who have never reviewed a card.
 
+// PostgREST caps unbounded queries at 1000 rows by default. For an app
+// with multiple active users, user_cards / card_progress / user_review_dates
+// all exceed that, causing stats to silently truncate to whichever user_id
+// sorts first in the result set. This helper paginates via offset/limit so
+// we actually get everything.
+async function fetchAllRows(baseUrl, headers, pageSize = 1000) {
+  const out = [];
+  let offset = 0;
+  // Safety cap: 200 pages = 200k rows. If we ever hit this, the underlying
+  // query needs to be narrowed — but it avoids a runaway loop on a bug.
+  for (let i = 0; i < 200; i++) {
+    const sep = baseUrl.includes("?") ? "&" : "?";
+    const url = `${baseUrl}${sep}offset=${offset}&limit=${pageSize}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) break;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+  return out;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -43,24 +67,22 @@ export default async function handler(req, res) {
   try {
     // Get all users from auth.users via admin API
     const usersRes = await fetch(
-      `${SUPABASE_URL}/auth/v1/admin/users?per_page=500`,
+      `${SUPABASE_URL}/auth/v1/admin/users?per_page=1000`,
       { headers: sbHeaders }
     );
     const usersData = await usersRes.json();
     const authUsers = usersData.users || usersData || [];
 
-    // Deck size per user, plus build a per-user set of valid card IDs so we
-    // can filter out orphaned card_progress rows (left behind when a card's
-    // front text was edited — the new progress row has a new id, but the old
-    // one still exists and would otherwise inflate the "studied"/"mastered"
-    // counts beyond what the user actually sees on their stats page).
+    // Deck size per user + per-user set of valid card IDs. Filters orphaned
+    // card_progress rows left behind when a card's front text was edited.
+    // Must paginate — without offset/limit, PostgREST caps at 1000 rows and
+    // any user whose cards fall past that cutoff silently shows deck=0.
     const cardStats = {};
     const validCardIdsByUser = {};
-    const deckRes = await fetch(
+    const deckRows = await fetchAllRows(
       `${SUPABASE_URL}/rest/v1/user_cards?select=user_id,front&order=user_id`,
-      { headers: sbHeaders }
+      sbHeaders
     );
-    const deckRows = deckRes.ok ? await deckRes.json() : [];
     for (const row of deckRows) {
       if (!cardStats[row.user_id]) cardStats[row.user_id] = { deck_size: 0 };
       cardStats[row.user_id].deck_size++;
@@ -68,16 +90,17 @@ export default async function handler(req, res) {
       // card_progress.card_id is the lowercased, trimmed front text
       // (see FlashcardApp.jsx: "card_progress rows continue to match via
       // the lowercased-front id").
-      validCardIdsByUser[row.user_id].add(String(row.front || "").toLowerCase().trim());
+      validCardIdsByUser[row.user_id].add(
+        String(row.front || "").toLowerCase().trim()
+      );
     }
 
     // Progress stats per user, filtered to cards still in the user's deck
     const progressStats = {};
-    const progRes = await fetch(
+    const progRows = await fetchAllRows(
       `${SUPABASE_URL}/rest/v1/card_progress?select=user_id,card_id,score&order=user_id`,
-      { headers: sbHeaders }
+      sbHeaders
     );
-    const progRows = progRes.ok ? await progRes.json() : [];
     for (const row of progRows) {
       const validIds = validCardIdsByUser[row.user_id];
       if (!validIds) continue; // user has no deck — skip
@@ -93,11 +116,10 @@ export default async function handler(req, res) {
     // Last activity per user — max(created_at) from user_review_dates.
     // This reflects actual app usage (card reviews), not just login.
     const lastActiveByUser = {};
-    const reviewRes = await fetch(
+    const reviewRows = await fetchAllRows(
       `${SUPABASE_URL}/rest/v1/user_review_dates?select=user_id,created_at&order=created_at.desc`,
-      { headers: sbHeaders }
+      sbHeaders
     );
-    const reviewRows = reviewRes.ok ? await reviewRes.json() : [];
     for (const row of reviewRows) {
       // Rows come back sorted desc by created_at, so the first one we see
       // per user is the most recent.
