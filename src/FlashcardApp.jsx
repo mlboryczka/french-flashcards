@@ -1812,13 +1812,41 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
     });
     if (altErr) { console.error("Alt insert failed:", altErr); setActing(null); return; }
 
+    // Resolve item.card_id (the lowercased-trimmed French front, per the
+    // card_progress join convention used in the admin stats page) back to
+    // the submitting user's user_cards row so the correction ledger can
+    // reference a real uuid + batch_id. Falls back to nulls on no match —
+    // never blocks the approval.
+    let resolvedCardId = null;
+    let resolvedBatchId = null;
+    try {
+      const key = String(item.card_id || "").toLowerCase().trim();
+      if (key && item.user_id) {
+        const { data: matches } = await supabase
+          .from("user_cards")
+          .select("id, front, batch_id")
+          .eq("user_id", item.user_id)
+          .ilike("front", key);
+        const hit = (matches || []).find(
+          (r) => String(r.front || "").toLowerCase().trim() === key
+        );
+        if (hit) {
+          resolvedCardId = hit.id;
+          resolvedBatchId = hit.batch_id || null;
+        }
+      }
+    } catch (e) {
+      console.warn("[approve] card_id resolve failed:", e?.message || e);
+    }
+
     // Log the alternate approval so future cahier parses know this answer
-    // is acceptable. card_id on feedback_submissions is the lowercased
-    // French front (not a uuid), so we leave the ledger's card_id null and
-    // stash the context in the front/back fields.
+    // is acceptable. card_id / batch_id point at the originating card when
+    // we found it; otherwise null.
     logCorrection({
       category: CORRECTION_CATEGORIES.ALTERNATE_ANSWER,
       action: CORRECTION_ACTIONS.APPROVE_ALTERNATE,
+      card_id: resolvedCardId,
+      batch_id: resolvedBatchId,
       original_front: item.french || null,
       original_back: item.english || item.expected_answer || null,
       corrected_back: item.user_answer,
