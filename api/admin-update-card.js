@@ -12,6 +12,14 @@
 
 import { createClient } from "@supabase/supabase-js";
 
+// Force Vercel to parse JSON bodies for us. Without this, some runtime
+// combinations deliver req.body as undefined or a raw stream.
+export const config = {
+  api: {
+    bodyParser: { sizeLimit: "1mb" },
+  },
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -41,9 +49,22 @@ export default async function handler(req, res) {
   }
   const userId = userData.user.id;
 
-  const { row_id, front, back } = req.body || {};
+  // Defensive: support req.body arriving as a JSON string (some Vercel
+  // runtime combos pass the raw body through instead of parsing).
+  let body = req.body;
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); } catch {}
+  }
+  if (!body || typeof body !== "object") {
+    body = {};
+  }
+  console.log("[admin-update-card] body keys:", Object.keys(body));
+
+  const { row_id, front, back } = body;
   if (!row_id || typeof row_id !== "string") {
-    return res.status(400).json({ error: "row_id is required" });
+    return res.status(400).json({
+      error: `row_id is required (received: row_id=${JSON.stringify(row_id)}, bodyKeys=${JSON.stringify(Object.keys(body))})`,
+    });
   }
   if (typeof front !== "string" || typeof back !== "string") {
     return res.status(400).json({ error: "front and back are required strings" });
