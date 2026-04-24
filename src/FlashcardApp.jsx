@@ -756,12 +756,27 @@ export default function FlashcardApp({ user, onSignOut }) {
     const trimmedFront = newFront.trim();
     const trimmedBack = newBack.trim();
 
-    const { error } = await supabase
+    // Chain .select() so PostgREST returns the actually-updated rows.
+    // Without this, RLS-blocked updates look identical to successful
+    // ones (both have error=null, data=null) — the modal would close
+    // and the user would think the edit saved when nothing changed.
+    const { data, error } = await supabase
       .from("user_cards")
       .update({ front: trimmedFront, back: trimmedBack, flagged_for_review: false })
-      .eq("id", rowId);
+      .eq("id", rowId)
+      .select();
     if (error) {
       console.error("Card update failed:", error);
+      alert(`Card update failed: ${error.message}`);
+      return false;
+    }
+    if (!data || data.length === 0) {
+      console.error("Card update affected 0 rows — RLS blocked it?", rowId);
+      alert(
+        "Card update was blocked by the database (0 rows affected). " +
+        "The user_cards table is likely missing an UPDATE policy. " +
+        "Run migrations/migration_003_user_cards_rls.sql in Supabase SQL editor to fix it."
+      );
       return false;
     }
 
