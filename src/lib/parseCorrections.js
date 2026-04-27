@@ -1,15 +1,13 @@
-// Client helper for the parse-corrections ledger.
-//
-// Everything here is fire-and-forget: callers (card editor, admin delete,
-// feedback approval, cahier upload) should not block the UI on these
-// calls, and none of them throw. If the server endpoint returns 404/500
-// (typically "migration not run yet"), we swallow silently and log to the
-// console — the feature is designed to be safe to deploy before the
-// migration is applied.
+// Client helper for the parse-corrections ledger. All writes are
+// fire-and-forget: a network failure must not block the user's edit /
+// delete / upload flow. postCorrection swallows every failure mode (auth
+// missing, non-2xx, network error, malformed JSON) and returns null, so
+// callers don't need their own try/catch.
 
 import { supabase } from "../supabase";
 
-// Keep in sync with the CHECK constraint in migration_002_parse_corrections.sql.
+// Mirror of the category CHECK constraint in
+// migrations/migration_002_parse_corrections.sql. Update both together.
 export const CORRECTION_CATEGORIES = Object.freeze({
   SHOULD_SPLIT_POLYSEMY: "should_split_polysemy",
   SHOULD_MERGE_GENDERED: "should_merge_gendered",
@@ -35,22 +33,10 @@ export const CORRECTION_ACTIONS = Object.freeze({
 });
 
 async function postCorrection(body) {
-  // Grab the session token if there is one, but never block the fetch on
-  // it — we'd rather see a 401 in the Network tab than silently swallow
-  // the call. The previous "disable for session" cache has been removed
-  // for the same reason.
-  let accessToken = "";
+  const { data: { session } } = await supabase.auth.getSession();
+  const accessToken = session?.access_token || "";
   try {
-    const s = await supabase.auth.getSession();
-    accessToken = s?.data?.session?.access_token || "";
-  } catch (e) {
-    console.warn("[parseCorrections] session read failed:", e?.message || e);
-  }
-
-  const url = "/api/parse-corrections";
-  console.log("[parseCorrections] about to fetch", url, "hasToken?", !!accessToken);
-  try {
-    const res = await fetch(url, {
+    const res = await fetch("/api/parse-corrections", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -60,9 +46,7 @@ async function postCorrection(body) {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.warn(
-        `[parseCorrections] log failed: HTTP ${res.status} ${text.slice(0, 200)}`
-      );
+      console.warn(`[parseCorrections] log failed: HTTP ${res.status} ${text.slice(0, 200)}`);
       return null;
     }
     return await res.json().catch(() => null);
@@ -72,31 +56,24 @@ async function postCorrection(body) {
   }
 }
 
-// Fire-and-forget. Callers should NOT await the result when they care about
-// UI responsiveness; await only if you want the returned id for chaining.
-//
-// payload fields (all optional except category):
-//   category          — one of CORRECTION_CATEGORIES values (required)
-//   action            — one of CORRECTION_ACTIONS values
-//   card_id           — user_cards.id (uuid) if applicable
-//   batch_id          — upload_batches.id (uuid); may be null for legacy cards
-//   original_front    — text before the correction
-//   original_back     — text before the correction
-//   corrected_front   — text after the correction
-//   corrected_back    — text after the correction
-//   notes             — free-form string
+/**
+ * Fire-and-forget log to the parse_corrections ledger.
+ *
+ * @param {Object} payload
+ * @param {string} payload.category        — one of CORRECTION_CATEGORIES
+ * @param {string} [payload.action]        — one of CORRECTION_ACTIONS
+ * @param {number} [payload.card_id]       — user_cards.id (bigint)
+ * @param {string} [payload.batch_id]      — upload_batches.id (uuid)
+ * @param {string} [payload.original_front]
+ * @param {string} [payload.original_back]
+ * @param {string} [payload.corrected_front]
+ * @param {string} [payload.corrected_back]
+ * @param {string} [payload.notes]
+ */
 export async function logCorrection(payload) {
-  console.log("[parseCorrections] logCorrection called with", payload);
   if (!payload || !payload.category) {
     console.warn("[parseCorrections] logCorrection called without category");
     return null;
   }
-  // Never throw out to the caller — swallow and log.
-  try {
-    return await postCorrection(payload);
-  } catch (e) {
-    console.warn("[parseCorrections] logCorrection caught:", e?.message || e);
-    return null;
-  }
+  return postCorrection(payload);
 }
-

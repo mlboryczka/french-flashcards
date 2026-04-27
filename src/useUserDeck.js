@@ -1,28 +1,13 @@
-// === src/useUserDeck.js START ===
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase";
+import { CAT_DB_TO_UI } from "./lib/cardCategories";
 
-// Loads the user's flashcard deck from the user_cards table.
+// Loads the user's flashcard deck from user_cards.
 //
-// Shape it returns matches what the rest of FlashcardApp.jsx already expects:
-//   [{ f, b, cat, dates, freq, id, row_id, flagged }]
-//
-// Where:
-//   f         — French front (string)
-//   b         — English back (string)
-//   cat       — one of "vocab" | "expr" | "gram" | "pron" (mapped from V/E/G/P)
-//   dates     — array of ISO date strings
-//   freq      — dates.length (for the "Repeated 2×+" filter)
-//   id        — lowercase trimmed French front (stable across seeds, preserves progress)
-//   row_id    — Supabase row id (used for inline edits + flagging)
-//   flagged   — flagged_for_review boolean
-//
-// Why id is NOT row_id: the card_progress table is keyed by card_id = lowercased
-// French front. Keeping that convention means progress survives across reseeds
-// and deck rebuilds, as long as the French text itself doesn't change.
-
-// DB code → UI code
-const CAT_MAP = { V: "vocab", E: "expr", G: "gram", P: "pron" };
+// Returned card shape: { f, b, cat, dates, freq, id, row_id, flagged, batch_id }
+//   id        — lowercase trimmed front. card_progress is keyed by this so
+//               progress survives reseeds as long as the front text is stable.
+//   row_id    — user_cards.id (bigint), used for edits / flagging / deletes.
 
 export function useUserDeck(user) {
   const [cards, setCards] = useState([]);
@@ -67,7 +52,7 @@ export function useUserDeck(user) {
       const shaped = allRows.map((row) => ({
           f: row.front,
           b: row.back,
-          cat: CAT_MAP[row.category] || "vocab",
+          cat: CAT_DB_TO_UI[row.category] || "vocab",
           dates: Array.isArray(row.dates) ? row.dates : [],
           freq: Array.isArray(row.dates) ? row.dates.length : 0,
           id: row.front.toLowerCase().trim(),
@@ -91,4 +76,3 @@ export function useUserDeck(user) {
 
   return { cards, loaded, reload };
 }
-// === src/useUserDeck.js END ===
