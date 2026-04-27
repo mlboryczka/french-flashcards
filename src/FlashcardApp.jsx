@@ -39,13 +39,8 @@ const CAT_TO_DB = { vocab: "V", expr: "E", gram: "G", pron: "P" };
 // and display labels only.
 const TAB_LABELS = { all: "All", vocab: "Vocabulary", phrases: "Phrases" };
 const TAB_COLORS = { vocab: "#9c4234", phrases: "#1a2b48" };
-// Map underlying card.cat → display tab key
 const catToTab = (cat) => cat === "vocab" ? "vocab" : "phrases";
-// Map underlying card.cat → eyebrow display label
 const catToLabel = (cat) => cat === "vocab" ? "Vocabulary" : "Phrase";
-// Legacy — kept for stats bar colors and any remaining references
-const CAT_LABELS = { all:"All", vocab:"Vocabulary", expr:"Phrases", gram:"Phrases", pron:"Phrases" };
-const CAT_COLORS = { vocab:"#9c4234", expr:"#76261b", gram:"#1a2b48", pron:"#031632" };
 
 // ─── STORAGE ─────────────────────────────────────────────────────────────
 // (progress is now handled by the useProgress hook via Supabase)
