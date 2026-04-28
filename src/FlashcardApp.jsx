@@ -318,7 +318,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (preservedIdx >= 0) {
       setIdx(preservedIdx);
     } else {
-      setIdx(0);
+      // Current card vanished from the rebuilt deck (delete, filter change,
+      // etc). Stay at the same numerical position so the next card slides
+      // up to fill the slot, rather than snapping back to card 0.
+      setIdx(prev => Math.min(prev, Math.max(0, cards.length - 1)));
       setFlipped(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -821,6 +824,14 @@ export default function FlashcardApp({ user, onSignOut }) {
       console.error("Card delete failed:", error);
       return false;
     }
+    // Reset answer state so the card that slides into this idx position on
+    // the deck rebuild starts with a fresh prompt, not a stale verdict from
+    // the card we just removed.
+    setTypedAnswer("");
+    setTypeResult(null);
+    setFlipped(false);
+    setFeedbackState(null);
+    setFeedbackVerdict(null);
     reloadDeck();
     return true;
   };
