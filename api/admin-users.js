@@ -7,11 +7,11 @@
 // which timestamps every review. Falls back to last_sign_in_at for users
 // who have never reviewed a card.
 
-// PostgREST caps unbounded queries at 1000 rows by default. For an app
-// with multiple active users, user_cards / card_progress / user_review_dates
-// all exceed that, causing stats to silently truncate to whichever user_id
-// sorts first in the result set. This helper paginates via offset/limit so
-// we actually get everything.
+import { requireAdmin } from "./_lib/auth.js";
+
+// PostgREST caps unbounded queries at 1000 rows by default. With multiple
+// active users, user_cards / card_progress / user_review_dates all exceed
+// that. Paginate via offset/limit instead of truncating silently.
 async function fetchAllRows(baseUrl, headers, pageSize = 1000) {
   const out = [];
   let offset = 0;
@@ -36,27 +36,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VITE_ADMIN_EMAIL } = process.env;
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return res.status(500).json({ error: "Missing env vars" });
   }
 
-  // Verify caller is admin via their JWT
-  const authHeader = req.headers.authorization || "";
-  let userEmail = null;
-  if (authHeader.startsWith("Bearer ")) {
-    try {
-      const payload = JSON.parse(
-        Buffer.from(authHeader.split(".")[1], "base64").toString()
-      );
-      userEmail = payload.email || null;
-    } catch {}
-  }
-
-  const adminEmail = (VITE_ADMIN_EMAIL || "").toLowerCase();
-  if (!userEmail || userEmail.toLowerCase() !== adminEmail) {
-    return res.status(403).json({ error: "Admin only" });
-  }
+  if (!requireAdmin(req, res)) return;
 
   const sbHeaders = {
     apikey: SUPABASE_SERVICE_ROLE_KEY,

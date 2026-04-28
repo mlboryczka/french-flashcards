@@ -1,24 +1,7 @@
-// Vercel serverless function: POST /api/cahier-parse
-//
-// A thin wrapper around the existing Claude cahier extraction that layers
-// in a "learn from my edits" feedback loop:
-//
-//   (a) Fetch the last 50 parse_corrections rows (promoted_to_rule = false).
-//   (b) Group them by category, take the top 5 categories by volume, and
-//       format up to 3 examples per category into a short block of
-//       system-prompt guidance ("things you've gotten wrong recently —
-//       don't repeat these").
-//   (c) Create an upload_batches row and stash the correction IDs on it
-//       via few_shot_correction_ids (so we can audit what the prompt saw).
-//   (d) Call Claude with the enriched prompt.
-//   (e) Mark the consumed rows used_in_few_shot = true.
-//   (f) Return the parsed cards + batch_id. The client does the actual
-//       user_cards insert (and passes batch_id through) in its accept step.
-//
-// Graceful degradation: if the parse_corrections fetch fails for any
-// reason (migration not run, table missing, DB error), we log and fall
-// through to an unenriched parse. The user's upload is never blocked by
-// the ledger being unavailable.
+// POST /api/cahier-parse — Claude extraction enriched with a few-shot
+// block built from recent parse_corrections. The few-shot fetch and the
+// upload_batches bookkeeping are best-effort: any failure logs and falls
+// through to an unenriched parse so the upload never blocks on the ledger.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
@@ -32,8 +15,6 @@ export const config = {
 
 const DEFAULT_MODEL = "claude-haiku-4-5";
 
-// Reuse the extraction prompt shape from api/parse-cahier.js. Kept here as
-// a template so the few-shot block can slot in cleanly above the rules.
 const BASE_SYSTEM = `You are extracting flashcards from a French student's daily lesson notes.
 
 The text below is one lesson day from a cahier (notebook) kept by a French teacher. It contains French vocabulary, expressions, pronunciation notes, and grammar rules.
@@ -342,13 +323,9 @@ async function callClaudeOnce(anthropic, model, systemPrompt, text) {
     .filter((c) => c.front.length > 0 && c.back.length > 0);
 }
 
-// ─── Few-shot assembly ────────────────────────────────────────────────────
-//
-// Group by category, rank categories by frequency, keep top 5 and up to 3
-// examples per category. Returns the formatted block string plus the list
-// of row ids that ended up referenced (so we can stash them on the batch
-// and mark them used).
-
+// Build the few-shot block: group by category, take top 5 categories by
+// volume, up to 3 examples each. Returns { block, ids } so the caller
+// can stash ids on the batch row + mark them used afterward.
 function buildFewShotBlock(rows) {
   const byCat = new Map();
   for (const r of rows) {

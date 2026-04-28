@@ -21,6 +21,7 @@ import {
   CORRECTION_CATEGORIES,
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
+import { CAT_UI_TO_DB } from "./lib/cardCategories";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -30,22 +31,12 @@ const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 // Flip to `true` to bring it back.
 const PRONUNCIATION_ENABLED = false;
 
-// UI code → DB code, used by the admin seed-deck action
-const CAT_TO_DB = { vocab: "V", expr: "E", gram: "G", pron: "P" };
-
-// Simplified two-category system: Vocabulary (single words) vs Phrases
-// (expressions, grammar, pronunciation). The underlying card data still
-// carries the original 4-way category; these constants control the tabs
-// and display labels only.
+// UI tabs collapse the 4 storage categories (vocab/expr/gram/pron) into
+// two: Vocabulary vs everything-else (Phrases). Storage stays 4-way.
 const TAB_LABELS = { all: "All", vocab: "Vocabulary", phrases: "Phrases" };
 const TAB_COLORS = { vocab: "#9c4234", phrases: "#1a2b48" };
-// Map underlying card.cat → display tab key
 const catToTab = (cat) => cat === "vocab" ? "vocab" : "phrases";
-// Map underlying card.cat → eyebrow display label
 const catToLabel = (cat) => cat === "vocab" ? "Vocabulary" : "Phrase";
-// Legacy — kept for stats bar colors and any remaining references
-const CAT_LABELS = { all:"All", vocab:"Vocabulary", expr:"Phrases", gram:"Phrases", pron:"Phrases" };
-const CAT_COLORS = { vocab:"#9c4234", expr:"#76261b", gram:"#1a2b48", pron:"#031632" };
 
 // ─── STORAGE ─────────────────────────────────────────────────────────────
 // (progress is now handled by the useProgress hook via Supabase)
@@ -327,7 +318,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (preservedIdx >= 0) {
       setIdx(preservedIdx);
     } else {
-      setIdx(0);
+      // Current card vanished from the rebuilt deck (delete, filter change,
+      // etc). Stay at the same numerical position so the next card slides
+      // up to fill the slot, rather than snapping back to card 0.
+      setIdx(prev => Math.min(prev, Math.max(0, cards.length - 1)));
       setFlipped(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -722,7 +716,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           const ex = seen.get(key);
           ex.dates = [...new Set([...ex.dates, ...dates])];
         } else {
-          seen.set(key, { front: f, back: b, category: CAT_TO_DB[cat] || "V", dates: [...dates] });
+          seen.set(key, { front: f, back: b, category: CAT_UI_TO_DB[cat] || "V", dates: [...dates] });
         }
       }
       const rows = [...seen.values()].map(r => ({
@@ -751,25 +745,24 @@ export default function FlashcardApp({ user, onSignOut }) {
   };
 
   // ── INLINE CARD EDIT ────────────────────────────────────────────────
-  // saveCardEdit receives the originals via `ctx` straight from the
-  // EditCardModal — never re-looks them up in React state. The previous
-  // implementation did `userCards.find(c => c.row_id === rowId)` and then
-  // silently skipped logging when the lookup missed (stale state, etc.),
-  // which is why /api/parse-corrections was never being hit.
+  /**
+   * Update a card via the admin endpoint and log the diff to the
+   * corrections ledger.
+   *
+   * @param {number} rowId — user_cards.id (bigint)
+   * @param {string} newFront
+   * @param {string} newBack
+   * @param {{originalFront?: string, originalBack?: string, batchId?: string}} ctx
+   *   Pre-edit values + batch_id passed straight from EditCardModal so we
+   *   never re-look them up in React state (stale state was silently
+   *   dropping the ledger log).
+   */
   const saveCardEdit = async (rowId, newFront, newBack, ctx = {}) => {
     const trimmedFront = newFront.trim();
     const trimmedBack = newBack.trim();
 
-    console.log("[saveCardEdit] rowId:", rowId, "originalFront:", ctx.originalFront);
-
-    // Go through the server endpoint so the service role key can bypass
-    // any RLS policies on user_cards. Direct-from-client updates were
-    // silently blocked by RLS (returning success with 0 rows affected),
-    // making edits appear to save but not persist.
-    //
-    // We send both row_id and original_front — the server prefers row_id
-    // if present, else falls back to a per-user front-text match. This
-    // makes the edit resilient to missing-row_id cases in React state.
+    // Service-role endpoint bypasses RLS. row_id is the primary lookup;
+    // original_front is a fallback when React state has lost row_id.
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/admin-update-card", {
@@ -831,6 +824,14 @@ export default function FlashcardApp({ user, onSignOut }) {
       console.error("Card delete failed:", error);
       return false;
     }
+    // Reset answer state so the card that slides into this idx position on
+    // the deck rebuild starts with a fresh prompt, not a stale verdict from
+    // the card we just removed.
+    setTypedAnswer("");
+    setTypeResult(null);
+    setFlipped(false);
+    setFeedbackState(null);
+    setFeedbackVerdict(null);
     reloadDeck();
     return true;
   };
@@ -1038,11 +1039,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   );
 
   // ── SHARED MODALS ───────────────────────────────────────────────────
-  // These need to render regardless of which view (stats, cards, etc.) is
-  // active, because they're triggered from the profile menu in the sidebar
-  // which is visible from every view. Previously they were only mounted
-  // inside the Cards view's return, so clicking "View users" from Stats
-  // would set the flag but render nothing until you tabbed back to Cards.
+  // Mounted at the top level so they render regardless of active view —
+  // they're triggered from the sidebar profile menu, which is global.
   const modals = (
     <>
       <CahierUpload

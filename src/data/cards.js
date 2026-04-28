@@ -1,6 +1,5 @@
 // Card data extracted from daily French lesson logs.
 // Each RAW entry: [front, back, category, [dates]]
-// Each BLANKS entry: [sentence with ___, answer, hint, category, english translation]
 
 const V = "vocab", E = "expr", G = "gram", P = "pron";
 
@@ -1049,63 +1048,3 @@ export const RAW = [
 ["il est surpris / elle est surprise","masc: silent S / fem: Z pronounced",P,["2026-01-09"]],
 ];
 
-export const BLANKS = [
-["J'ai ___ un bon moment","passé","verb: to spend (time)",E,"I had a good time"],
-["Ça ___ le coup","vaut","verb: to be worth",E,"It's worth it"],
-["Il en a ___","marre","expression: fed up",E,"He's fed up"],
-["C'est pour ___ que je l'ai fait","ça","pronoun: this/that",E,"That's why I did it"],
-["La balle est dans ton ___","camp","noun: court/side",E,"The ball is in your court"],
-["Il y a des hauts et des ___","bas","noun: lows",E,"There are ups and downs"],
-["J'ai jeté un coup d'___","œil","noun: eye (quick look)",E,"I took a quick look"],
-["Ça ___ en boucle","tourne","verb: to turn/spin",E,"It goes round and round (in my head)"],
-["Elle en fait tout un ___","plat","noun: dish (big deal)",E,"She's making a big deal out of it"],
-["Ça n'___ pas de sens","avait","verb: to have (imparfait)",E,"It didn't make sense"],
-["J'ai ___ de + infinitif","la flemme","expression: can't be bothered",E,"I can't be bothered to…"],
-["C'est à double ___","tranchant","adj: cutting (double-edged)",E,"It's a double-edged sword"],
-["Au ___ le jour","jour","noun: day (day by day)",E,"Day by day"],
-["Je dois me ___ pour ça","battre","verb: to fight",E,"I have to fight for it"],
-["Tu as ___ juste","visé","verb: to aim (hit the nail)",E,"You hit the nail on the head"],
-["Ça s'est pas ___ passé","mal","adv: badly (went well)",E,"It went pretty well"],
-["Je me ___ pas bien","sentais","verb: se sentir (imparfait)",E,"I wasn't feeling well"],
-["J'ai ___ d'avoir la suite","hâte","noun: eagerness/impatience",E,"I can't wait for the rest (of the story)"],
-["Il a été ___","arrêté","pp: arrested",E,"He was arrested"],
-["Il a ___ sa vie","réussi","pp: succeeded",E,"He made a success of his life"],
-["Ça ___ la peine","vaut","verb: to be worth",E,"It's worth it"],
-["De ___ en temps","temps","noun: time (from time to time)",E,"From time to time"],
-["Je ___ de manger","viens","verb: venir (just did)",E,"I just ate"],
-["Je suis en ___ de travailler","train","noun: process (currently)",E,"I am currently working"],
-["Au ___ d'un moment","bout","noun: end (after a while)",E,"After a while"],
-["Comment ça s'est ___ ?","passé","pp: happened/went",E,"How did it go?"],
-["Je me ___ fait mal","suis","auxiliary: être (reflexive PC)",E,"I hurt myself"],
-["Tu as ___","raison","noun: reason (you're right)",E,"You're right"],
-["Doucement mais ___","sûrement","adv: surely (slowly but surely)",E,"Slowly but surely"],
-["C'est ___","dommage","adj: a shame/pity",E,"It's a shame / too bad"],
-["Au milieu de nulle ___","part","noun: part (nowhere)",E,"In the middle of nowhere"],
-["On s'est ___ très fort","disputé","pp: argued",E,"We had a big argument"],
-["Je n'ai ___ confiance en elle","plus","negation: no longer",E,"I no longer trust her"],
-// Grammar blanks
-["Je ___ de partir (I just left)","viens","venir de + infinitif",G,"I just left"],
-["Il faut que tu ___ (aller, subj)","ailles","subjonctif of aller",G,"It's necessary that you go"],
-["Elle fait comme ___ elle était occupée","si","conjunction: as if",G,"She acts as if she were busy"],
-["Je le ___ ai donné (to him/her)","lui","pronom COI",G,"I gave it to him/her"],
-["Les pommes, je les ai ___","mangées","accord du pp avec COD avant",G,"The apples, I ate them"],
-["Si j'___ riche, j'achèterais…","étais","imparfait (si clause)",G,"If I were rich, I would buy…"],
-["Ça ___ 6 mois que j'habite ici","fait","present (ongoing duration)",G,"It's been 6 months since I've lived here"],
-["J'ai ___ dormi","bien","adverbe (splits passé composé)",G,"I slept well"],
-["Je ___ souviens de ça","me","pronom réfléchi",G,"I remember that"],
-["Il a ___ élu président","été","voie passive (être + pp)",G,"He was elected president"],
-["J'ai ___ de l'appeler","oublié","oublier de + infinitif",G,"I forgot to call him"],
-["C'est ___ que tu veux (what)","ce que","pronom relatif (COD)",G,"It's what you want"],
-["Je ne sais pas ___ qui se passe","ce","pronom relatif (what/sujet)",G,"I don't know what's happening"],
-["Elle est ___ allée (passé composé)","y","pronom de lieu",G,"She went there"],
-["___ avoir reçu mon diplôme","Après","préposition + infinitif passé",G,"After having received my diploma"],
-// Vocab blanks
-["Les ___ alimentaires (supplements)","compléments","nom: dietary supplements",V,"Dietary supplements"],
-["L'impôt sur le ___","revenu","nom: income",V,"Income tax"],
-["Un travailleur ___","indépendant","adj: self-employed",V,"A freelancer / self-employed worker"],
-["Le ___ ferrant (farrier)","maréchal","nom: blacksmith",V,"The farrier / blacksmith"],
-["Des ___ secondaires (side effects)","effets","nom: effects",V,"Side effects"],
-["Un schéma ___","comportemental","adj: behavioral",V,"A behavioral pattern"],
-["Le libre-___","arbitre","nom: will (free will)",V,"Free will"],
-["Le relevé ___","bancaire","adj: bank (statement)",V,"The bank statement"],
-];
