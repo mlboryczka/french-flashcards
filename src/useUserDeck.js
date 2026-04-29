@@ -4,10 +4,13 @@ import { CAT_DB_TO_UI } from "./lib/cardCategories";
 
 // Loads the user's flashcard deck from user_cards.
 //
-// Returned card shape: { f, b, cat, dates, freq, id, row_id, flagged, batch_id }
+// Returned card shape:
+//   { f, b, cat, dates, freq, id, row_id, flagged, batch_id,
+//     box, next_due_at, lapses }
 //   id        — lowercase trimmed front. card_progress is keyed by this so
 //               progress survives reseeds as long as the front text is stable.
 //   row_id    — user_cards.id (bigint), used for edits / flagging / deletes.
+//   box, next_due_at, lapses — spaced-repetition state (migration_005).
 
 export function useUserDeck(user) {
   const [cards, setCards] = useState([]);
@@ -31,7 +34,7 @@ export function useUserDeck(user) {
       while (true) {
         const { data, error } = await supabase
           .from("user_cards")
-          .select("id, front, back, category, dates, flagged_for_review, batch_id")
+          .select("id, front, back, category, dates, flagged_for_review, batch_id, box, next_due_at, lapses")
           .eq("user_id", user.id)
           .range(from, from + PAGE - 1);
 
@@ -60,6 +63,9 @@ export function useUserDeck(user) {
           flagged: row.flagged_for_review === true,
           // Null for legacy cards that predate the upload-batches migration.
           batch_id: row.batch_id || null,
+          box: row.box ?? 1,
+          next_due_at: row.next_due_at || null,
+          lapses: row.lapses ?? 0,
         }));
         // Sort by frequency desc to match legacy buildDeck ordering
         shaped.sort((a, b) => b.freq - a.freq);

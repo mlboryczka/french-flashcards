@@ -22,6 +22,8 @@ import {
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
+import { buildSession, applyAnswer } from "./lib/sessionQueue";
+import { RE_QUEUE_OFFSET } from "./lib/spacedRepetition";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -179,6 +181,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   const { cards: userCards, loaded: deckLoaded, reload: reloadDeck } = useUserDeck(user);
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
+  const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const skipFlipAnim = useRef(false); // temporarily disables the card flip transition
@@ -287,25 +290,32 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Build flashcard deck — rebuilds when filters or user's card list changes,
   // NOT on every answer and NOT when switching between study/stats/feedback
   // views (that used to reshuffle and snap back to card 0 mid-session).
+  //
+  // Selection is now spaced-repetition driven: the working set comes from
+  // buildSession (lapses → due reviews → capped new → mastered spot-checks)
+  // instead of "all cards shuffled, sorted by score". Filters (cat, freqOnly)
+  // narrow the candidate pool before queue construction.
   useEffect(() => {
     if (!loaded) return;
-    let cards = cat === "all"
-      ? [...userCards]
+    let candidates = cat === "all"
+      ? userCards
       : cat === "phrases"
         ? userCards.filter(c => c.cat !== "vocab")
         : userCards.filter(c => c.cat === cat);
-    if (freqOnly) cards = cards.filter(c => c.freq >= 2);
-    for (let i = cards.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [cards[i],cards[j]]=[cards[j],cards[i]]; }
-    // Sort by current progress score (worst first) at build time only
-    cards.sort((a, b) => (progress[a.id]?.score ?? 0) - (progress[b.id]?.score ?? 0));
-    // Assign a per-card direction (stable within session)
-    // Grammar & pronunciation cards are rules with examples, not translations — always show front-as-written
-    cards = cards.map(c => {
+    if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
+
+    const { queue, counts } = buildSession(candidates);
+
+    // Assign a per-card direction (stable within session). Grammar &
+    // pronunciation cards are rules with examples, not translations —
+    // always show front-as-written.
+    const cards = queue.map(c => {
       const flippable = c.cat === "vocab" || c.cat === "expr";
       const shownDir = !flippable ? "fr" : (dir === "mix" ? (Math.random() < 0.5 ? "fr" : "en") : dir);
       return { ...c, shownDir, flippable };
     });
     setDeck(cards);
+    setSessionCounts(counts);
     // Preserve the user's position if the current card still exists in the
     // rebuilt deck — otherwise reset to the top. Tracked by row_id (DB pk)
     // because card.id is derived from front text and changes whenever the
@@ -457,7 +467,15 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [idx]);
 
 
-  // Answer handling: update progress
+  // Answer handling: update progress + spaced-repetition state.
+  //
+  // Two parallel updates per answer:
+  //   1. card_progress (legacy score/seen/got) — still drives the Stats view.
+  //   2. user_cards spaced-rep fields (box, next_due_at, lapses) — drives
+  //      session selection on the next deck build.
+  //
+  // Wrong answers also re-queue the card later in the same session so the
+  // user gets another shot before the session ends.
   const answer = async (got, source = "flip") => {
     if (!card) return;
     const prev = progress[card.id] || { score:0, seen:0, got:0 };
@@ -467,6 +485,18 @@ export default function FlashcardApp({ user, onSignOut }) {
       got: prev.got + (got?1:0),
     };
     await updateCard(card.id, newProg);
+
+    // Spaced-repetition update. Optimistic local deck patch first so the
+    // in-memory card reflects the new box if it gets re-queued; DB update
+    // is fire-and-forget (errors logged, not surfaced).
+    const sr = applyAnswer(card, got);
+    setDeck(prev => prev.map(c =>
+      c.row_id === card.row_id ? { ...c, ...sr } : c
+    ));
+    if (card.row_id != null) {
+      supabase.from("user_cards").update(sr).eq("id", card.row_id)
+        .then(({ error }) => { if (error) console.error("SR update failed:", error); });
+    }
     // Record today's review date for streak tracking.
     // Write to Supabase (persists across devices) and update local state so
     // the streak UI reflects it immediately without a refetch.
@@ -493,13 +523,30 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (source === "typed") {
       setStats(s => ({ seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }));
     }
+    // Wrong answers: re-queue the card RE_QUEUE_OFFSET positions later in
+    // the session so the user gets another shot before the session ends.
+    // Splice runs after setDeck above so we use the post-SR-patch deck.
+    if (!got) {
+      setDeck(prev => {
+        const next = [...prev];
+        const insertAt = Math.min(next.length, idx + 1 + RE_QUEUE_OFFSET);
+        const reCard = { ...card, ...sr, _bucket: "lapse" };
+        next.splice(insertAt, 0, reCard);
+        return next;
+      });
+    }
+
     // Skip the un-flip animation — snap instantly to the next card's front
     skipFlipAnim.current = true;
     setFlipped(false);
     setTypeResult(null);
     setTypedAnswer("");
     setFeedbackState(null); setFeedbackVerdict(null);
-    setIdx(i => Math.min(i+1, deck.length-1));
+    // Cap at last index. On a wrong answer the splice above grew the deck
+    // by 1, so this lands on the freshly-re-queued card. On a correct
+    // answer at the end of the deck, idx stays put and the session-complete
+    // strip surfaces.
+    setIdx(i => Math.min(i + 1, (got ? deck.length : deck.length + 1) - 1));
     // Re-enable the flip animation on the next frame
     requestAnimationFrame(() => { skipFlipAnim.current = false; });
   };
@@ -554,6 +601,9 @@ export default function FlashcardApp({ user, onSignOut }) {
     setTypedAnswer("");
     setTypeResult(null);
     setFeedbackState(null); setFeedbackVerdict(null);
+    // Refetch user_cards so the new session sees fresh box / next_due_at
+    // values written by the previous session's answer() updates.
+    reloadDeck();
   };
 
   // Keyboard shortcuts (study mode). Uses refs so the handler always
@@ -1330,7 +1380,19 @@ export default function FlashcardApp({ user, onSignOut }) {
                 {idx > 0 && (
                   <button style={S.backBtn} onClick={goBack}>← Back</button>
                 )}
-                <span style={S.counter}>Card {idx+1} of {deck.length}</span>
+                <span style={S.counter}>
+                  Card {idx+1} of {deck.length}
+                  {(sessionCounts.review + sessionCounts.new + sessionCounts.spot + sessionCounts.lapse) > 0 && (
+                    <span style={S.counterBreakdown}>
+                      {" · "}
+                      {sessionCounts.review > 0 && `${sessionCounts.review} review`}
+                      {sessionCounts.review > 0 && (sessionCounts.new + sessionCounts.spot) > 0 && " · "}
+                      {sessionCounts.new > 0 && `${sessionCounts.new} new`}
+                      {sessionCounts.new > 0 && sessionCounts.spot > 0 && " · "}
+                      {sessionCounts.spot > 0 && `${sessionCounts.spot} mastery check`}
+                    </span>
+                  )}
+                </span>
               </div>
             )}
           </div>
@@ -2262,6 +2324,7 @@ const S = {
   dirBtnA: { background:T.color.surfaceLowest, color:T.color.primary, fontWeight:600, boxShadow:T.shadow.focus },
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
+  counterBreakdown: { opacity:0.7 },
   backBtn: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500 },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
