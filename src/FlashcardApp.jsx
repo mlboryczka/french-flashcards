@@ -182,6 +182,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
   const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
+  // Number of cards in the deck at session-build time. Stays fixed even
+  // when in-session re-queues splice extra entries onto the end. The
+  // counter UI uses this so "Card N of M" doesn't tick up every time you
+  // miss one (which would feel like the session was getting longer).
+  const [initialDeckSize, setInitialDeckSize] = useState(0);
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const skipFlipAnim = useRef(false); // temporarily disables the card flip transition
@@ -316,6 +321,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     });
     setDeck(cards);
     setSessionCounts(counts);
+    setInitialDeckSize(cards.length);
     // Preserve the user's position if the current card still exists in the
     // rebuilt deck — otherwise reset to the top. Tracked by row_id (DB pk)
     // because card.id is derived from front text and changes whenever the
@@ -1375,26 +1381,42 @@ export default function FlashcardApp({ user, onSignOut }) {
                 </button>
               ))}
             </div>
-            {card && (
-              <div style={S.subToolbarRight}>
-                {idx > 0 && (
-                  <button style={S.backBtn} onClick={goBack}>← Back</button>
-                )}
-                <span style={S.counter}>
-                  Card {idx+1} of {deck.length}
-                  {(sessionCounts.review + sessionCounts.new + sessionCounts.spot + sessionCounts.lapse) > 0 && (
-                    <span style={S.counterBreakdown}>
-                      {" · "}
-                      {sessionCounts.review > 0 && `${sessionCounts.review} review`}
-                      {sessionCounts.review > 0 && (sessionCounts.new + sessionCounts.spot) > 0 && " · "}
-                      {sessionCounts.new > 0 && `${sessionCounts.new} new`}
-                      {sessionCounts.new > 0 && sessionCounts.spot > 0 && " · "}
-                      {sessionCounts.spot > 0 && `${sessionCounts.spot} mastery check`}
-                    </span>
+            {card && (() => {
+              // The counter shows progress against the *initial* deck size
+              // so re-queued retries don't make the session look longer.
+              // Once the user passes that point they're working through the
+              // retry tail — surface it explicitly with "Retry N".
+              const inOriginal = idx < initialDeckSize;
+              const retriesPending = Math.max(0, deck.length - initialDeckSize);
+              const hasBreakdown = sessionCounts.review + sessionCounts.new + sessionCounts.spot > 0;
+              return (
+                <div style={S.subToolbarRight}>
+                  {idx > 0 && (
+                    <button style={S.backBtn} onClick={goBack}>← Back</button>
                   )}
-                </span>
-              </div>
-            )}
+                  <span style={S.counter}>
+                    {inOriginal
+                      ? `Card ${idx+1} of ${initialDeckSize}`
+                      : `Retry ${idx + 1 - initialDeckSize} of ${retriesPending + (idx + 1 - initialDeckSize)}`}
+                    {inOriginal && hasBreakdown && (
+                      <span style={S.counterBreakdown}>
+                        {" · "}
+                        {[
+                          sessionCounts.review > 0 && `${sessionCounts.review} review`,
+                          sessionCounts.new > 0 && `${sessionCounts.new} new`,
+                          sessionCounts.spot > 0 && `${sessionCounts.spot} mastery check`,
+                        ].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                    {retriesPending > 0 && (
+                      <span style={S.counterBreakdown}>
+                        {` · ${retriesPending} retry pending`}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
           {card ? (
