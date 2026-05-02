@@ -121,6 +121,16 @@ export default async function handler(req, res) {
     .single();
   if (updErr) {
     console.error("[admin-update-card] update failed:", updErr);
+    // Postgres 23505 = unique_violation. Surfaces when the user already
+    // has another card with the same French front (user_cards has a
+    // unique (user_id, front) constraint). Return a clean 409 instead of
+    // a 500 so the client can render a useful message.
+    if (updErr.code === "23505") {
+      return res.status(409).json({
+        error: `You already have a card with the French side "${front.trim()}". Edit that one instead, or delete this card first.`,
+        code: "duplicate_front",
+      });
+    }
     return res.status(500).json({ error: updErr.message });
   }
 

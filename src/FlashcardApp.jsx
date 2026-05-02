@@ -839,11 +839,19 @@ export default function FlashcardApp({ user, onSignOut }) {
         let body;
         try { body = JSON.parse(text); } catch { body = text; }
         console.error("Card update failed:", body);
-        alert(
-          `Card update failed.\n` +
-          `HTTP ${res.status}\n` +
-          `Response: ${typeof body === "string" ? body.slice(0, 400) : JSON.stringify(body).slice(0, 400)}`
-        );
+        // For known 4xx errors (duplicate front, etc.) the server returns
+        // a human-readable `error` string — surface it directly. Only fall
+        // back to the noisy "HTTP N + raw response" dump for unexpected 5xx.
+        const friendly = body && typeof body === "object" && body.error;
+        if (res.status >= 400 && res.status < 500 && friendly) {
+          alert(friendly);
+        } else {
+          alert(
+            `Card update failed.\n` +
+            `HTTP ${res.status}\n` +
+            `Response: ${typeof body === "string" ? body.slice(0, 400) : JSON.stringify(body).slice(0, 400)}`
+          );
+        }
         return false;
       }
     } catch (e) {
