@@ -195,6 +195,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   // background refetch (e.g. when the browser tab regains focus). Without
   // this, every refetch reshuffles and snaps the user back to card 0.
   const currentCardIdRef = useRef(null);
+  // Signature of the filters/direction the current deck was built from.
+  // The deck-build effect uses this to tell "filters changed, fresh
+  // session" apart from "userCards re-referenced, just patch in place".
+  const filterSigRef = useRef(null);
   const [cat, setCat] = useState("all");
   const [mode, setMode] = useState("study"); // study | stats | feedback
   const [stats, setStats] = useState({ seen:0, got:0, missed:0 });
@@ -302,6 +306,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   // narrow the candidate pool before queue construction.
   useEffect(() => {
     if (!loaded) return;
+    const filterSig = `${cat}|${freqOnly}|${dir}`;
+    const filterChanged = filterSigRef.current !== filterSig;
+    filterSigRef.current = filterSig;
+
     let candidates = cat === "all"
       ? userCards
       : cat === "phrases"
@@ -309,6 +317,29 @@ export default function FlashcardApp({ user, onSignOut }) {
         : userCards.filter(c => c.cat === cat);
     if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
 
+    // Mid-session userCards refetch (card edit/delete, background reload,
+    // Supabase token refresh). Rebuilding here would reshuffle the queue,
+    // drop already-answered cards, lose in-session retries, and snap the
+    // counter to wherever the current card lands in the new ordering.
+    // Instead, patch each card's fields in place by row_id and drop any
+    // that were deleted — session order, idx, and retries stay intact.
+    if (!filterChanged && deck.length > 0) {
+      const byRow = new Map(candidates.map(c => [c.row_id, c]));
+      const patched = deck
+        .map(c => {
+          const u = byRow.get(c.row_id);
+          return u
+            ? { ...u, shownDir: c.shownDir, flippable: c.flippable, _bucket: c._bucket }
+            : null;
+        })
+        .filter(Boolean);
+      setDeck(patched);
+      setIdx(i => Math.min(i, Math.max(0, patched.length - 1)));
+      return;
+    }
+
+    // Full rebuild: initial mount, filter/direction change, or resetSession
+    // (which clears deck so the next refetch takes this branch).
     const { queue, counts } = buildSession(candidates);
 
     // Assign a per-card direction (stable within session). Grammar &
@@ -602,6 +633,14 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const resetSession = () => {
     setIdx(0);
+    // Clear the deck so the userCards refetch below takes the full-rebuild
+    // branch instead of patching the now-stale in-memory session in place.
+    // Without this, "New Session" would re-show the cards you just finished
+    // (patched but still in old order) until the next filter change.
+    setDeck([]);
+    setInitialDeckSize(0);
+    setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
+    currentCardIdRef.current = null;
     setFlipped(false);
     setStats({ seen:0, got:0, missed:0 });
     setTypedAnswer("");
