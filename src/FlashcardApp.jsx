@@ -1467,7 +1467,8 @@ export default function FlashcardApp({ user, onSignOut }) {
               // retry tail — surface it explicitly with "Retry N".
               const inOriginal = idx < initialDeckSize;
               const retriesPending = Math.max(0, deck.length - initialDeckSize);
-              const hasBreakdown = sessionCounts.review + sessionCounts.new + sessionCounts.spot > 0;
+              const hasBreakdown =
+                sessionCounts.lapse + sessionCounts.review + sessionCounts.new + sessionCounts.spot > 0;
               return (
                 <div style={S.subToolbarRight}>
                   {idx > 0 && (
@@ -1481,6 +1482,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <span style={S.counterBreakdown}>
                         {" · "}
                         {[
+                          sessionCounts.lapse > 0 && `${sessionCounts.lapse} relearning`,
                           sessionCounts.review > 0 && `${sessionCounts.review} review`,
                           sessionCounts.new > 0 && `${sessionCounts.new} new`,
                           sessionCounts.spot > 0 && `${sessionCounts.spot} mastery check`,

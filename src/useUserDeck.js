@@ -6,11 +6,12 @@ import { CAT_DB_TO_UI } from "./lib/cardCategories";
 //
 // Returned card shape:
 //   { f, b, cat, dates, freq, id, row_id, flagged, batch_id,
-//     box, next_due_at, lapses }
+//     next_due_at, lapses, stability, difficulty, fsrs_state, reps, last_review }
 //   id        — lowercase trimmed front. card_progress is keyed by this so
 //               progress survives reseeds as long as the front text is stable.
 //   row_id    — user_cards.id (bigint), used for edits / flagging / deletes.
-//   box, next_due_at, lapses — spaced-repetition state (migration_005).
+//   next_due_at, lapses, stability, difficulty, fsrs_state, reps,
+//   last_review — FSRS scheduling state (migration_006).
 
 export function useUserDeck(user) {
   const [cards, setCards] = useState([]);
@@ -41,7 +42,11 @@ export function useUserDeck(user) {
       while (true) {
         const { data, error } = await supabase
           .from("user_cards")
-          .select("id, front, back, category, dates, flagged_for_review, batch_id, box, next_due_at, lapses")
+          .select(
+            "id, front, back, category, dates, flagged_for_review, batch_id, " +
+              "next_due_at, lapses, stability, difficulty, fsrs_state, reps, " +
+              "last_review, last_answer_correct"
+          )
           .eq("user_id", user.id)
           .range(from, from + PAGE - 1);
 
@@ -71,9 +76,17 @@ export function useUserDeck(user) {
           flagged: row.flagged_for_review === true,
           // Null for legacy cards that predate the upload-batches migration.
           batch_id: row.batch_id || null,
-          box: row.box ?? 1,
+          // FSRS scheduling state (migration_006). Nulls are legitimate:
+          // a never-reviewed card has no stability and no last review.
           next_due_at: row.next_due_at || null,
           lapses: row.lapses ?? 0,
+          stability: row.stability ?? null,
+          difficulty: row.difficulty ?? null,
+          fsrs_state: row.fsrs_state ?? 0,
+          reps: row.reps ?? 0,
+          last_review: row.last_review || null,
+          // null = unknown (pre-FSRS row); false = missed on the last attempt.
+          last_answer_correct: row.last_answer_correct ?? null,
         }));
         // Sort by frequency desc to match legacy buildDeck ordering
         shaped.sort((a, b) => b.freq - a.freq);

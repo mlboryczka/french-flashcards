@@ -101,6 +101,41 @@ anyone who isn't you.
 Send the Vercel URL to your teacher and test users. They enter their email,
 click the link, and they're in. Each user's progress is isolated.
 
+## How cards are scheduled (FSRS)
+
+Scheduling is handled by [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler)
+via the [`ts-fsrs`](https://www.npmjs.com/package/ts-fsrs) package, replacing the
+fixed Leitner box ladder that came before it.
+
+The old ladder had three problems: intervals stopped growing at 21 days, so a
+word known cold for a year still came back every three weeks; a correct answer
+earned the same credit whether it was on time or a month late; and a single
+miss reset a card to day one. FSRS tracks per-card memory strength instead, so
+intervals keep growing (3d, 14d, 57d, 196d, ...), a late-but-correct answer
+earns a longer gap than an on-time one, and a miss cuts the interval
+proportionally rather than wiping it.
+
+**Setup.** Run `migrations/migration_006_fsrs.sql` in the Supabase SQL Editor.
+It adds the FSRS columns and seeds them from whatever Leitner box each card had
+reached, so existing review history carries over rather than restarting. The
+old `box` column is left in place, unread, so the migration can be reversed.
+
+**The one dial worth touching** is `requestRetention` in
+`src/lib/spacedRepetition.js` — the probability you want of recalling a card at
+the moment it comes up. It trades daily review count against how much you
+remember:
+
+| Setting | Effect |
+| --- | --- |
+| `0.95` | Remember more, noticeably more reviews per day |
+| `0.90` | Default. The usual recommendation |
+| `0.85` | Meaningfully fewer reviews, slightly more forgetting |
+| `0.80` | Use if the daily load has become unsustainable |
+
+Answers are graded binary — you typed it right or you didn't — and mapped onto
+FSRS's `Again` and `Good` ratings. The `Hard` and `Easy` ratings are for apps
+where you rate your own recall; here the typing check is the grade.
+
 ## Updating the cards
 
 Your teacher is still adding to the lesson log. To update the deck:

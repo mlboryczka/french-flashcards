@@ -1,18 +1,34 @@
 // Spaced-repetition session builder. Pure: no React, no Supabase.
 //
 // Inputs are the user's full deck (from useUserDeck) plus tuning knobs.
-// Output is a tagged queue of cards to study this session, ordered:
-//   1. Lapses        box-1 cards that have already been seen and are due now.
-//   2. Reviews       boxes 2-4, sorted by oldest-due first.
-//   3. New           never-seen cards, capped at NEW_CAP.
-//   4. Spot-checks   random sample of mastered (box-5) cards, regardless of
-//                    next_due_at — keeps the user honest about retention.
+// Output is a tagged queue of cards to study this session.
+//
+// Selection is by priority, in this order:
+//   1. Lapses       cards you're relearning after a miss, due now.
+//   2. Reviews      cards in normal rotation, due now, oldest-due first.
+//   3. New          never-seen cards, capped at newCap.
+//   4. Spot-checks  a random sample of well-known cards, ignoring due date —
+//                   cheap insurance against FSRS being over-confident.
+//
+// ORDER is then randomised. Those are two different decisions and it matters
+// that they're separate: priority decides *which* cards you see when the
+// queue is longer than the target, but presenting them in fixed blocks
+// (all lapses, then all reviews, then all new) is blocked practice, which
+// tests worse than interleaved practice for long-term retention. So we pick
+// by priority, then shuffle the result.
 //
 // Each entry is { ...card, _bucket: "lapse" | "review" | "new" | "spot" }.
 // FlashcardApp uses _bucket only for the session-counter UI; scoring logic
-// is bucket-independent (driven entirely by box transitions in answer()).
+// is bucket-independent (driven entirely by FSRS state in applyAnswer()).
 
-import { BOX_INTERVAL_DAYS } from "./spacedRepetition";
+import {
+  scheduler,
+  toFsrsCard,
+  fromFsrsCard,
+  State,
+  Rating,
+  MASTERED_STABILITY_DAYS,
+} from "./spacedRepetition";
 
 const DEFAULTS = Object.freeze({
   target: 75,
@@ -21,9 +37,10 @@ const DEFAULTS = Object.freeze({
 });
 
 function isNewCard(card) {
-  // Never seen = box 1, no review history, no lapses.
+  // Never reviewed. FSRS state is the authority; the dates/lapses checks
+  // catch pre-FSRS rows that migration_006 didn't seed for some reason.
   return (
-    (card.box ?? 1) === 1 &&
+    (card.fsrs_state ?? State.New) === State.New &&
     (!Array.isArray(card.dates) || card.dates.length === 0) &&
     (card.lapses ?? 0) === 0
   );
@@ -33,6 +50,10 @@ function dueMs(card) {
   if (!card.next_due_at) return 0;
   const t = new Date(card.next_due_at).getTime();
   return Number.isFinite(t) ? t : 0;
+}
+
+function isMastered(card) {
+  return (card.stability ?? 0) >= MASTERED_STABILITY_DAYS;
 }
 
 function shuffleInPlace(arr) {
@@ -53,18 +74,28 @@ export function buildSession(cards, opts = {}) {
   const mastered = [];
 
   for (const c of cards) {
-    const box = c.box ?? 1;
-    if (box === 5) {
-      mastered.push(c);
-    } else if (isNewCard(c)) {
+    const state = c.fsrs_state ?? State.New;
+    if (isNewCard(c)) {
       fresh.push(c);
-    } else if (box === 1 && dueMs(c) <= now) {
-      lapses.push(c);
-    } else if (box >= 2 && box <= 4 && dueMs(c) <= now) {
-      reviews.push(c);
+    } else if (dueMs(c) <= now) {
+      // A card you missed last time. FSRS's Relearning state would say this
+      // for us, but it only exists with minute-scale relearning steps turned
+      // on, which this app doesn't use — so applyAnswer records the miss on
+      // the row instead. (State is still checked for robustness in case the
+      // scheduler config ever changes.)
+      const missedLastTime =
+        c.last_answer_correct === false ||
+        state === State.Relearning ||
+        state === State.Learning;
+      if (missedLastTime) lapses.push(c);
+      else reviews.push(c);
+    } else if (isMastered(c)) {
+      // Not due, but known well enough that we can afford to sample it.
+      mastered.push(c);
     }
   }
 
+  // Oldest-due first, so the most overdue reviews survive the target cut.
   reviews.sort((a, b) => dueMs(a) - dueMs(b));
   shuffleInPlace(fresh);
   shuffleInPlace(mastered);
@@ -76,29 +107,31 @@ export function buildSession(cards, opts = {}) {
     ...mastered.slice(0, spotCheckSlots).map((c) => ({ ...c, _bucket: "spot" })),
   ].slice(0, target);
 
+  // Interleave: selection above was by priority, presentation is mixed.
+  shuffleInPlace(tagged);
+
   const counts = { lapse: 0, review: 0, new: 0, spot: 0 };
   for (const c of tagged) counts[c._bucket]++;
 
   return { queue: tagged, counts };
 }
 
-// Compute the next-due timestamp for a card after an answer.
+// Compute the new scheduling state for a card after an answer.
 //
-//   correct → box += 1 (cap at 5), next_due in BOX_INTERVAL_DAYS[newBox]
-//   wrong   → box = 1 (or 2 if previously mastered), next_due = now
+// The app grades binary — you typed it right or you didn't — so we map onto
+// two of FSRS's four ratings: Again for a miss, Good for a hit. Hard and Easy
+// exist for apps where the user self-rates their own recall; here the typing
+// check is the grade, and inventing a confidence signal the user never gave
+// would only feed FSRS noise.
 //
-// Returns { box, next_due_at, lapses } so callers can apply both DB update
-// and optimistic in-memory update from the same source of truth.
+// Returns the exact column set user_cards accepts, so callers can use the
+// same object for the DB update and the optimistic in-memory patch.
 export function applyAnswer(card, got, nowMs = Date.now()) {
-  const prevBox = card.box ?? 1;
-  let newBox;
-  if (got) {
-    newBox = Math.min(5, prevBox + 1);
-  } else {
-    newBox = prevBox === 5 ? 2 : 1;
-  }
-  const days = BOX_INTERVAL_DAYS[newBox] ?? 0;
-  const nextDueAt = new Date(nowMs + days * 86400 * 1000).toISOString();
-  const newLapses = (card.lapses ?? 0) + (got ? 0 : 1);
-  return { box: newBox, next_due_at: nextDueAt, lapses: newLapses };
+  const now = new Date(nowMs);
+  const { card: next } = scheduler.next(
+    toFsrsCard(card),
+    now,
+    got ? Rating.Good : Rating.Again
+  );
+  return fromFsrsCard(next, got);
 }
