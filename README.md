@@ -101,6 +101,56 @@ anyone who isn't you.
 Send the Vercel URL to your teacher and test users. They enter their email,
 click the link, and they're in. Each user's progress is isolated.
 
+## How cards are scheduled (FSRS)
+
+Scheduling is handled by [FSRS](https://github.com/open-spaced-repetition/free-spaced-repetition-scheduler)
+via the [`ts-fsrs`](https://www.npmjs.com/package/ts-fsrs) package, replacing the
+fixed Leitner box ladder that came before it.
+
+The old ladder had three problems: intervals stopped growing at 21 days, so a
+word known cold for a year still came back every three weeks; a correct answer
+earned the same credit whether it was on time or a month late; and a single
+miss reset a card to day one. FSRS tracks per-card memory strength instead, so
+intervals keep growing (3d, 14d, 57d, 196d, ...), a late-but-correct answer
+earns a longer gap than an on-time one, and a miss cuts the interval
+proportionally rather than wiping it.
+
+**Setup.** Run these two in the Supabase SQL Editor, in order:
+
+1. `migrations/migration_006_fsrs.sql` — adds the FSRS columns.
+2. `migrations/migration_007_fsrs_reseed.sql` — fills them in from your existing
+   review history.
+
+The split matters. Seeding lives entirely in 007 and is driven by the three
+signals that actually record a review (`card_progress.seen`, the old Leitner
+`box`, and `lapses`), so 007 is safe to re-run and re-running 006 can never
+undo it. Cards you've never answered stay in the New state and get paced in at
+the normal 20-per-session rate; cards with real history carry that history over
+rather than restarting. The old `box` column is left in place, so the change
+can be reversed.
+
+> Note for anyone reading old commits: the `dates` column holds the **lesson
+> dates a word appeared on in the cahier**, not review history. Every parsed
+> card has them. Treating them as reviews is what an earlier version of this
+> migration got wrong, and it's the same assumption that made the new-card cap
+> silently never apply in the pre-FSRS scheduler.
+
+**The one dial worth touching** is `requestRetention` in
+`src/lib/spacedRepetition.js` — the probability you want of recalling a card at
+the moment it comes up. It trades daily review count against how much you
+remember:
+
+| Setting | Effect |
+| --- | --- |
+| `0.95` | Remember more, noticeably more reviews per day |
+| `0.90` | Default. The usual recommendation |
+| `0.85` | Meaningfully fewer reviews, slightly more forgetting |
+| `0.80` | Use if the daily load has become unsustainable |
+
+Answers are graded binary — you typed it right or you didn't — and mapped onto
+FSRS's `Again` and `Good` ratings. The `Hard` and `Easy` ratings are for apps
+where you rate your own recall; here the typing check is the grade.
+
 ## Updating the cards
 
 Your teacher is still adding to the lesson log. To update the deck:
