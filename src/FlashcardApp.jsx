@@ -1088,6 +1088,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     study: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>,
     stats: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>,
     feedback: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>,
+    tutor: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9.1 9a2.5 2.5 0 0 1 4.9.6c0 1.7-2.5 2.5-2.5 2.5"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
   };
 
   const navItems = [["study", "Cards"], ["stats", "Stats"]];
@@ -1110,6 +1111,18 @@ export default function FlashcardApp({ user, onSignOut }) {
             </button>
           );
         })}
+
+        {/* The tutor chat is an overlay, not a page, so it sits alongside the
+            nav items but never takes the active state. It lives here rather
+            than in the profile menu because looking a word up mid-session is
+            a primary action, and nobody finds it behind an avatar. */}
+        <button
+          style={isNarrow ? S.sideItemBottom : S.sideItem}
+          onClick={() => setShowChat(true)}
+        >
+          <span style={S.sideIcon}>{NAV_ICONS.tutor}</span>
+          Tutor
+        </button>
       </nav>
 
       {/* Bottom: profile + feedback on one row (desktop only) */}
