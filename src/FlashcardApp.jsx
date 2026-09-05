@@ -6,6 +6,7 @@ import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
+import ChatPanel from "./ChatPanel";
 import { T } from "./theme";
 import {
   speakFrench,
@@ -212,6 +213,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Upload & onboarding state
   const [showUpload, setShowUpload] = useState(false);
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
+  // Tutor chat slide-over — global, so it opens from any view.
+  const [showChat, setShowChat] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
@@ -1027,6 +1030,14 @@ export default function FlashcardApp({ user, onSignOut }) {
               <p style={S.onbCardDesc}>Paste a public Google Doc URL and we'll fetch the contents.</p>
               <div style={S.onbCardArrow}>→</div>
             </button>
+            <button style={S.onbCard} onClick={() => setShowChat(true)}>
+              <div style={S.onbCardIcon}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
+              </div>
+              <h3 style={S.onbCardTitle}>Ask the tutor</h3>
+              <p style={S.onbCardDesc}>Look a word or phrase up and add the cards one at a time.</p>
+              <div style={S.onbCardArrow}>→</div>
+            </button>
           </section>
 
           {/* Admin seed button — small, below */}
@@ -1039,6 +1050,14 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
           )}
         </div>
+
+        <ChatPanel
+          open={showChat}
+          onClose={() => setShowChat(false)}
+          user={user}
+          deckFronts={[]}
+          onCardsAdded={reloadDeck}
+        />
 
         <CahierUpload
           open={showUpload}
@@ -1109,6 +1128,12 @@ export default function FlashcardApp({ user, onSignOut }) {
                   <div style={S.profileMenuEmail}>{user.email}</div>
                   <button
                     style={S.profileMenuItem}
+                    onClick={() => { setShowChat(true); setShowProfileMenu(false); }}
+                  >
+                    Ask the tutor
+                  </button>
+                  <button
+                    style={S.profileMenuItem}
                     onClick={() => { setUploadInitialTab("paste"); setShowUpload(true); setShowProfileMenu(false); }}
                   >
                     Upload document
@@ -1146,6 +1171,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   // they're triggered from the sidebar profile menu, which is global.
   const modals = (
     <>
+      <ChatPanel
+        open={showChat}
+        onClose={() => setShowChat(false)}
+        user={user}
+        deckFronts={userCards.map((c) => c.f)}
+        onCardsAdded={reloadDeck}
+      />
       <CahierUpload
         open={showUpload}
         onClose={() => setShowUpload(false)}

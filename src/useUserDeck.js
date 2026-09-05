@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 import { CAT_DB_TO_UI } from "./lib/cardCategories";
 
@@ -16,15 +16,22 @@ export function useUserDeck(user) {
   const [cards, setCards] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [reloadCounter, setReloadCounter] = useState(0);
+  // The user whose deck is currently on screen. A refetch for that same user
+  // (reload() after an edit, a delete, an upload, a card added from the tutor
+  // chat) is a *background* refetch: it must not flip `loaded` back off.
+  // FlashcardApp renders a bare "Loading…" whenever !loaded, which unmounts
+  // the entire tree — including whichever panel just triggered the reload.
+  const loadedForUser = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
     if (!user) {
       setCards([]);
       setLoaded(true);
+      loadedForUser.current = null;
       return;
     }
-    setLoaded(false);
+    if (loadedForUser.current !== user.id) setLoaded(false);
     (async () => {
       // Supabase caps responses at 1000 rows per request (server-side,
       // regardless of .limit()). Paginate with .range() to fetch all cards.
@@ -43,6 +50,7 @@ export function useUserDeck(user) {
           console.error("Failed to load user deck:", error);
           setCards([]);
           setLoaded(true);
+          loadedForUser.current = user.id;
           return;
         }
         allRows = allRows.concat(data || []);
@@ -71,6 +79,7 @@ export function useUserDeck(user) {
         shaped.sort((a, b) => b.freq - a.freq);
         setCards(shaped);
       setLoaded(true);
+      loadedForUser.current = user.id;
     })();
 
     return () => {
