@@ -37,13 +37,14 @@ const DEFAULTS = Object.freeze({
 });
 
 function isNewCard(card) {
-  // Never reviewed. FSRS state is the authority; the dates/lapses checks
-  // catch pre-FSRS rows that migration_006 didn't seed for some reason.
-  return (
-    (card.fsrs_state ?? State.New) === State.New &&
-    (!Array.isArray(card.dates) || card.dates.length === 0) &&
-    (card.lapses ?? 0) === 0
-  );
+  // Never answered. fsrs_state is the only authority.
+  //
+  // This used to also require an empty `dates` array, on the assumption that
+  // dates recorded past reviews. They don't — they're the LESSON dates a word
+  // appeared on in the cahier, so every parsed card has them and no card ever
+  // qualified as new. The new-card cap below silently never applied.
+  // migration_007 fixes the stored data; this fixes the reader.
+  return (card.fsrs_state ?? State.New) === State.New;
 }
 
 function dueMs(card) {
@@ -100,12 +101,24 @@ export function buildSession(cards, opts = {}) {
   shuffleInPlace(fresh);
   shuffleInPlace(mastered);
 
-  const tagged = [
+  // Reserve slots for new cards and spot-checks before spending the rest of
+  // the target on due work. Without this, a review backlog larger than the
+  // target starves new material completely — with ~1,300 cards due and a
+  // target of 75, you would not meet a new word for weeks.
+  const newSlots = Math.min(newCap, fresh.length);
+  const spotSlots = Math.min(spotCheckSlots, mastered.length);
+  const dueBudget = Math.max(0, target - newSlots - spotSlots);
+
+  const due = [
     ...lapses.map((c) => ({ ...c, _bucket: "lapse" })),
     ...reviews.map((c) => ({ ...c, _bucket: "review" })),
-    ...fresh.slice(0, newCap).map((c) => ({ ...c, _bucket: "new" })),
-    ...mastered.slice(0, spotCheckSlots).map((c) => ({ ...c, _bucket: "spot" })),
-  ].slice(0, target);
+  ].slice(0, dueBudget);
+
+  const tagged = [
+    ...due,
+    ...fresh.slice(0, newSlots).map((c) => ({ ...c, _bucket: "new" })),
+    ...mastered.slice(0, spotSlots).map((c) => ({ ...c, _bucket: "spot" })),
+  ];
 
   // Interleave: selection above was by priority, presentation is mixed.
   shuffleInPlace(tagged);

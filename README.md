@@ -115,10 +115,25 @@ intervals keep growing (3d, 14d, 57d, 196d, ...), a late-but-correct answer
 earns a longer gap than an on-time one, and a miss cuts the interval
 proportionally rather than wiping it.
 
-**Setup.** Run `migrations/migration_006_fsrs.sql` in the Supabase SQL Editor.
-It adds the FSRS columns and seeds them from whatever Leitner box each card had
-reached, so existing review history carries over rather than restarting. The
-old `box` column is left in place, unread, so the migration can be reversed.
+**Setup.** Run these two in the Supabase SQL Editor, in order:
+
+1. `migrations/migration_006_fsrs.sql` — adds the FSRS columns.
+2. `migrations/migration_007_fsrs_reseed.sql` — fills them in from your existing
+   review history.
+
+The split matters. Seeding lives entirely in 007 and is driven by the three
+signals that actually record a review (`card_progress.seen`, the old Leitner
+`box`, and `lapses`), so 007 is safe to re-run and re-running 006 can never
+undo it. Cards you've never answered stay in the New state and get paced in at
+the normal 20-per-session rate; cards with real history carry that history over
+rather than restarting. The old `box` column is left in place, so the change
+can be reversed.
+
+> Note for anyone reading old commits: the `dates` column holds the **lesson
+> dates a word appeared on in the cahier**, not review history. Every parsed
+> card has them. Treating them as reviews is what an earlier version of this
+> migration got wrong, and it's the same assumption that made the new-card cap
+> silently never apply in the pre-FSRS scheduler.
 
 **The one dial worth touching** is `requestRetention` in
 `src/lib/spacedRepetition.js` — the probability you want of recalling a card at
