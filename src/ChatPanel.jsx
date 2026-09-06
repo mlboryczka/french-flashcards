@@ -29,6 +29,13 @@ import { CAT_UI_TO_DB } from "./lib/cardCategories";
 // much when the panel is open on a wide screen, so the two must agree.
 export const CHAT_PANEL_WIDTH = 460;
 
+// Slide duration and curve. FlashcardApp animates the page's reflow with the
+// SAME pair, so the panel and the page it displaces move as one thing rather
+// than two — the panel appearing instantly against a sliding page was what
+// made this feel abrupt.
+export const CHAT_ANIM_MS = 280;
+export const CHAT_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
+
 const CATEGORY_LABEL = {
   vocab: "Vocabulary",
   expr: "Expression",
@@ -63,6 +70,41 @@ export default function ChatPanel({
   const [added, setAdded] = useState(() => new Set());
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const panelRef = useRef(null);
+
+  // Two flags rather than one so the panel can animate on the way OUT as well
+  // as in: `mounted` keeps it in the DOM until the slide finishes, `entered`
+  // drives the transform. Without the delayed unmount, closing would make it
+  // vanish instantly while the page was still sliding back.
+  const [mounted, setMounted] = useState(open);
+  const [entered, setEntered] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    setEntered(false);
+    const t = setTimeout(() => setMounted(false), CHAT_ANIM_MS);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  // Move to the entered position only once the panel has actually been PAINTED
+  // off-screen. This has to key off `mounted`, not `open`, and take two frames:
+  // on the render where open flips true the panel is not in the DOM yet, and a
+  // single rAF can still be flushed before the browser paints — either way the
+  // browser has no start position to animate from and the panel just appears.
+  useEffect(() => {
+    if (!mounted || !open) return;
+    let inner;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setEntered(true));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      if (inner) cancelAnimationFrame(inner);
+    };
+  }, [mounted, open]);
 
   // Keep the newest message in view as the thread grows.
   useEffect(() => {
@@ -73,6 +115,21 @@ export default function ChatPanel({
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+
+  // Click anywhere outside to close. In reflow mode there is no scrim to catch
+  // the click, so this listener is the only thing that does it. The tutor
+  // toggles opt out via data-tutor-toggle: otherwise this would close the
+  // panel on mousedown and the button's own click would immediately reopen it.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (panelRef.current?.contains(e.target)) return;
+      if (e.target.closest?.("[data-tutor-toggle]")) return;
+      onClose?.();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open, onClose]);
 
   // Escape closes — matches the rest of the app's overlays.
   useEffect(() => {
@@ -185,13 +242,20 @@ export default function ChatPanel({
     }
   };
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return createPortal(
     <div style={S.wrap}>
-      {!reflow && <div style={S.scrim} onClick={onClose} />}
+      {!reflow && (
+        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} onClick={onClose} />
+      )}
       <aside
-        style={reflow ? { ...S.panel, width: CHAT_PANEL_WIDTH } : S.panel}
+        ref={panelRef}
+        style={{
+          ...S.panel,
+          ...(reflow ? { width: CHAT_PANEL_WIDTH } : null),
+          transform: entered ? "translateX(0)" : "translateX(100%)",
+        }}
         role="dialog"
         aria-label="Ask the tutor"
       >
@@ -292,7 +356,13 @@ const S = {
   // pointerEvents none so that in reflow mode the app beside the panel stays
   // clickable; the scrim and panel opt themselves back in.
   wrap: { position: "fixed", inset: 0, zIndex: 1000, pointerEvents: "none" },
-  scrim: { position: "absolute", inset: 0, background: "rgba(3,22,50,0.28)", pointerEvents: "auto" },
+  scrim: {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(3,22,50,0.28)",
+    pointerEvents: "auto",
+    transition: `opacity ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
+  },
   panel: {
     position: "absolute",
     top: 0,
@@ -302,6 +372,8 @@ const S = {
     pointerEvents: "auto",
     background: T.color.surface,
     boxShadow: "-8px 0 32px rgba(3,22,50,0.16)",
+    transition: `transform ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
+    willChange: "transform",
     display: "flex",
     flexDirection: "column",
     fontFamily: T.font.sans,
