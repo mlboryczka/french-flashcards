@@ -1138,8 +1138,10 @@ export default function FlashcardApp({ user, onSignOut }) {
         </button>
       </nav>
 
-      {/* Bottom: profile + feedback on one row (desktop only) */}
+      {/* Bottom: account, then feedback beneath it (desktop only) */}
       {!isNarrow && user && (
+        <>
+        <div style={S.sideDivider} />
         <div style={S.sideBottom}>
           <div style={S.sideBottomRow}>
             <div style={S.sideProfileRow}>
@@ -1186,9 +1188,12 @@ export default function FlashcardApp({ user, onSignOut }) {
               )}
             </div>
             <span style={S.sideBottomEmail}>{user.email}</span>
+          </div>
+          <div style={S.sideFeedbackRow}>
             <BetaFeedback user={user} currentPage={mode} currentCard={mode === "study" ? card : null} />
           </div>
         </div>
+        </>
       )}
     </aside>
   );
@@ -1461,7 +1466,18 @@ export default function FlashcardApp({ user, onSignOut }) {
       <main style={S.main}>
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
-          <div style={S.topBarSpacer} />
+          <div style={S.topBarInner}>
+          <div style={S.catRow}>
+            {Object.entries(TAB_LABELS).map(([k,v]) => (
+              <button
+                key={k}
+                style={cat===k ? {...S.catBtn,...S.catBtnA,...(k!=="all"?{borderColor:TAB_COLORS[k],color:TAB_COLORS[k]}:{})} : S.catBtn}
+                onClick={() => setCat(k)}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
           <div style={S.dirGroup}>
             {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
               <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
@@ -1482,22 +1498,12 @@ export default function FlashcardApp({ user, onSignOut }) {
               Auto-speak
             </button>
           )}
+          </div>
         </div>
 
         <div style={S.mainInner}>
-          {/* Sub-toolbar: category filter + counter */}
+          {/* Sub-toolbar: session counter and back control */}
           <div style={S.subToolbar}>
-            <div style={S.catRow}>
-              {Object.entries(TAB_LABELS).map(([k,v]) => (
-                <button
-                  key={k}
-                  style={cat===k ? {...S.catBtn,...S.catBtnA,...(k!=="all"?{borderColor:TAB_COLORS[k],color:TAB_COLORS[k]}:{})} : S.catBtn}
-                  onClick={() => setCat(k)}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
             {card && (() => {
               // The counter shows progress against the *initial* deck size
               // so re-queued retries don't make the session look longer.
@@ -1508,10 +1514,14 @@ export default function FlashcardApp({ user, onSignOut }) {
               const hasBreakdown =
                 sessionCounts.lapse + sessionCounts.review + sessionCounts.new + sessionCounts.spot > 0;
               return (
+                <>
+                {idx > 0 ? (
+                  <button style={S.backBtn} onClick={goBack} title="Go back to the previous card">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
+                    Previous card
+                  </button>
+                ) : <span />}
                 <div style={S.subToolbarRight}>
-                  {idx > 0 && (
-                    <button style={S.backBtn} onClick={goBack}>← Back</button>
-                  )}
                   <span style={S.counter}>
                     {inOriginal
                       ? `Card ${idx+1} of ${initialDeckSize}`
@@ -1534,6 +1544,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     )}
                   </span>
                 </div>
+                </>
               );
             })()}
           </div>
@@ -1547,7 +1558,9 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={S.cardFront}>
-                    <div style={S.cardEyebrow}>{catToLabel(card.cat)}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
+                    {card.freq >= 2 && (
+                      <div style={S.cardEyebrow}><span style={S.freqTag}>{card.freq}× in your lessons</span></div>
+                    )}
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -1574,7 +1587,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
                   <div style={S.cardBack}>
-                    <div style={S.cardEyebrow}>{catToLabel(card.cat)}</div>
+
                     <div style={S.cardTextB}>{back}</div>
                     {TTS_AVAILABLE && card.shownDir === "en" && (
                       <div style={S.cardAudio}>
@@ -2367,7 +2380,7 @@ const S = {
   // ── Sidebar ───────────────────────────────────────────────────────
   // Fixed 256px column on desktop. The sticky positioning + 100vh height
   // means the sidebar stays fixed while the main content scrolls.
-  sideBar: { width:256, background:T.color.surfaceLow, padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
+  sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
   sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
   sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
@@ -2377,8 +2390,10 @@ const S = {
   sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideIcon: { display:"flex", alignItems:"center", flexShrink:0 },
   // ── Sidebar bottom: avatar + email + feedback in one row ────────────
-  sideBottom: { padding:"16px 20px 20px", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)" },
+  sideDivider: { marginTop:"auto", height:1, background:"rgba(3,22,50,0.07)", marginLeft:20, marginRight:20 },
+  sideBottom: { padding:"14px 20px 4px" },
   sideBottomRow: { display:"flex", alignItems:"center", gap:10 },
+  sideFeedbackRow: { marginTop:6, marginLeft:-8 },
   sideProfileRow: { position:"relative", flexShrink:0 },
   sideBottomEmail: { flex:1, fontSize:11, color:"rgba(3,22,50,0.45)", fontFamily:T.font.sans, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   profileMenuBottom: { position:"absolute", bottom:"100%", left:0, minWidth:200, marginBottom:8, background:T.color.surfaceLowest, borderRadius:T.radius.lg, boxShadow:"0 -8px 32px rgba(3,22,50,0.12)", padding:"8px 0", zIndex:20, fontFamily:T.font.sans },
@@ -2401,7 +2416,7 @@ const S = {
   sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
 
   // ── Sub-toolbar (category filter + counter, below sticky top bar) ─
-  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:14, flexShrink:0, flexWrap:"wrap" },
+  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:8, flexShrink:0, flexWrap:"wrap", minHeight:30 },
   subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
 
   // ── Card area: centered with decorative blur shapes ───────────────
@@ -2441,7 +2456,8 @@ const S = {
   // upload, beta feedback, email and sign-out. Replaces the old vertically
   // stacked header userInfo block.
   // Sticky glass-blur top app bar — direction toggle, type/auto-speak chips
-  topBar: { position:"sticky", top:0, zIndex:20, display:"flex", alignItems:"center", gap:12, padding:"16px 40px", background:"rgba(253,248,246,0.92)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", borderBottom:"1px solid rgba(3,22,50,0.06)", flexWrap:"wrap" },
+  topBar: { position:"sticky", top:0, zIndex:20, padding:"0 40px", background:"rgba(253,248,246,0.92)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", flexShrink:0 },
+  topBarInner: { display:"flex", alignItems:"center", gap:12, padding:"14px 0", maxWidth:1100, width:"100%", margin:"0 auto", borderBottom:"1px solid rgba(3,22,50,0.07)", flexWrap:"wrap" },
   topBarSpacer: { flex:1 },
   topBarBtn: { padding:"6px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
   topBarEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
@@ -2461,7 +2477,7 @@ const S = {
   navBtn: { padding:"9px 18px", border:"none", borderRadius:T.radius.md, background:"transparent", cursor:"pointer", fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, transition:"all 0.15s" },
   navActive: { background:T.color.surfaceLowest, color:T.color.primary, fontWeight:600, boxShadow:T.shadow.focus },
   filters: { marginBottom:18 },
-  catRow: { display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 },
+  catRow: { display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" },
   catBtn: { padding:"6px 14px", border:"none", borderRadius:T.radius.full, background:T.color.surfaceLow, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em" },
   catBtnA: { background:T.color.primary, color:T.color.onPrimary, fontWeight:600 },
   toggleRow: { display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" },
@@ -2476,7 +2492,7 @@ const S = {
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   counterBreakdown: { opacity:0.7 },
-  backBtn: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500 },
+  backBtn: { display:"flex", alignItems:"center", gap:6, padding:"6px 14px 6px 11px", background:T.color.surfaceLowest, border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.full, cursor:"pointer", fontSize:11.5, color:T.color.onSurface, fontFamily:T.font.sans, fontWeight:700, letterSpacing:"0.01em", boxShadow:"0 1px 2px rgba(3,22,50,0.05)", transition:"all 0.15s" },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
   // flex:0 1 auto — the card shrinks on short windows but never grows to fill
@@ -2491,7 +2507,7 @@ const S = {
   cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"44px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
-  freqTag: { marginLeft:6, background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
+  freqTag: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
   dot: { width:7, height:7, borderRadius:"50%" },
   cardText: { fontSize:40, textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:31, textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
