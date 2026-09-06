@@ -9,6 +9,8 @@ import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
 import { SplitSensesModal } from "./SplitSensesModal";
+
+const SIDEBAR_WIDTH = 256;
 import ChatPanel, { CHAT_PANEL_WIDTH, CHAT_ANIM_MS, CHAT_EASING } from "./ChatPanel";
 import { T } from "./theme";
 import {
@@ -211,6 +213,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [mode, setMode] = useState("study"); // study | stats | feedback
   const [stats, setStats] = useState({ seen:0, got:0, missed:0 });
   const [freqOnly, setFreqOnly] = useState(false);
+  // Study one type at a time. Off ("all") by default: mixing types is
+  // interleaved practice and tests better than drilling one kind in a block.
+  // But when you know your conjugations are the weak spot, being able to sit
+  // on them for a session is worth more than the interleaving penalty.
+  const [typeFilter, setTypeFilter] = useState("all");
   const [dir, setDir] = useState("mix"); // fr | en | mix
   const [typeMode, setTypeMode] = useState(false);
   const [typedAnswer, setTypedAnswer] = useState("");
@@ -349,12 +356,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   // filter here could only make sessions worse.
   useEffect(() => {
     if (!loaded) return;
-    const filterSig = `${freqOnly}|${dir}`;
+    const filterSig = `${freqOnly}|${dir}|${typeFilter}`;
     const filterChanged = filterSigRef.current !== filterSig;
     filterSigRef.current = filterSig;
 
     let candidates = userCards;
     if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
+    if (typeFilter !== "all") candidates = candidates.filter(c => classifyCard(c) === typeFilter);
 
     // Mid-session userCards refetch (card edit/delete, background reload,
     // Supabase token refresh). Rebuilding here would reshuffle the queue,
@@ -411,7 +419,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       setFlipped(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freqOnly, loaded, dir, userCards]);
+  }, [freqOnly, loaded, dir, typeFilter, userCards]);
 
   const card = deck[idx];
   // Keep the ref in sync so deck rebuilds can find the current card.
@@ -1133,8 +1141,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   // being covered — you can still read the card you're asking about. Below
   // 768px there is no room to give, so the panel stays an overlay instead.
   const chatReflow = showChat && !isNarrow;
-  const shellStyle = {
-    ...(isNarrow ? S.shellNarrow : S.shell),
+  const shellStyle = isNarrow ? S.shellNarrow : S.shell;
+  // The room is made by MAIN, not by the shell. Padding the shell shrank the
+  // sidebar too — its account block jumped up the page and left a gap —
+  // when the sidebar is not what either panel covers. Only the content column
+  // has to move.
+  const mainStyle = {
+    ...S.main,
+    boxSizing: "border-box",
     paddingRight: chatReflow ? CHAT_PANEL_WIDTH : 0,
     paddingBottom: showFeedback ? feedbackHeight : 0,
     // Same duration and curve as the panel's own slide, so the page and the
@@ -1237,6 +1251,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               user={user}
               currentPage={mode}
               currentCard={mode === "study" ? card : null}
+              offsetLeft={isNarrow ? 0 : SIDEBAR_WIDTH}
               open={showFeedback}
               onOpen={openFeedback}
               onClose={() => setShowFeedback(false)}
@@ -1442,7 +1457,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     return (
       <div style={shellStyle}>
         {sidebar}
-        <main style={S.main}>
+        <main style={mainStyle}>
           <div style={S.mainInnerScroll}>
             <h1 style={S.statsHeading}>Progress</h1>
 
@@ -1578,10 +1593,28 @@ export default function FlashcardApp({ user, onSignOut }) {
   return (
     <div style={shellStyle}>
       {sidebar}
-      <main style={S.main}>
+      <main style={mainStyle}>
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
           <div style={S.topBarInner}>
+          <div style={S.typeGroup}>
+            {[["all", "All"], ...CARD_TYPES.map((t) => [t, TYPE_LABEL[t] === "Phrase" ? "Phrases" : TYPE_LABEL[t]])]
+              .map(([k, label]) => {
+                const on = typeFilter === k;
+                return (
+                  <button
+                    key={k}
+                    style={on ? {...S.typeBtn, ...S.typeBtnA, ...(k !== "all" ? {background: TYPE_COLOR[k], borderColor: TYPE_COLOR[k]} : null)} : S.typeBtn}
+                    onClick={() => setTypeFilter(k)}
+                    title={k === "all"
+                      ? "Everything, mixed — best for long-term retention"
+                      : `Only ${label.toLowerCase()} this session`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+          </div>
           <div style={S.dirGroup}>
             {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
               <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
@@ -2489,7 +2522,7 @@ const S = {
   // ── Sidebar ───────────────────────────────────────────────────────
   // Fixed 256px column on desktop. The sticky positioning + 100vh height
   // means the sidebar stays fixed while the main content scrolls.
-  sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100%", overflowY:"auto", boxSizing:"border-box" },
+  sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
   sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
   sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
@@ -2596,6 +2629,9 @@ const S = {
   // raw checkboxes. Same pill shape as catBtn but with an active state.
   chipToggle: { padding:"6px 13px", border:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}`, borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
   chipToggleA: { background:T.color.primary, color:T.color.onPrimary, borderColor:T.color.primary, fontWeight:600 },
+  typeGroup: { display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" },
+  typeBtn: { padding:"6px 13px", borderWidth:1, borderStyle:"solid", borderColor:"rgba(3,22,50,0.08)", borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
+  typeBtnA: { background:T.color.primary, borderColor:T.color.primary, color:T.color.onPrimary, fontWeight:600 },
   dirGroup: { display:"flex", gap:2, marginLeft:"auto", padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md },
   dirBtn: { padding:"5px 12px", border:"none", borderRadius:T.radius.sm, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500 },
   dirBtnA: { background:T.color.surfaceLowest, color:T.color.primary, fontWeight:600, boxShadow:T.shadow.focus },
