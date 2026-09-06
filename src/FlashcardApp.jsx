@@ -1514,10 +1514,14 @@ export default function FlashcardApp({ user, onSignOut }) {
               const hasBreakdown =
                 sessionCounts.lapse + sessionCounts.review + sessionCounts.new + sessionCounts.spot > 0;
               return (
+                <>
+                {idx > 0 ? (
+                  <button style={S.backBtn} onClick={goBack} title="Go back to the previous card">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
+                    Previous card
+                  </button>
+                ) : <span />}
                 <div style={S.subToolbarRight}>
-                  {idx > 0 && (
-                    <button style={S.backBtn} onClick={goBack}>← Back</button>
-                  )}
                   <span style={S.counter}>
                     {inOriginal
                       ? `Card ${idx+1} of ${initialDeckSize}`
@@ -1540,6 +1544,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     )}
                   </span>
                 </div>
+                </>
               );
             })()}
           </div>
@@ -1553,7 +1558,9 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={S.cardFront}>
-                    <div style={S.cardEyebrow}>{catToLabel(card.cat)}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
+                    {card.freq >= 2 && (
+                      <div style={S.cardEyebrow}><span style={S.freqTag}>{card.freq}× in your lessons</span></div>
+                    )}
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -1580,7 +1587,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
                   <div style={S.cardBack}>
-                    <div style={S.cardEyebrow}>{catToLabel(card.cat)}</div>
+
                     <div style={S.cardTextB}>{back}</div>
                     {TTS_AVAILABLE && card.shownDir === "en" && (
                       <div style={S.cardAudio}>
@@ -2409,7 +2416,7 @@ const S = {
   sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
 
   // ── Sub-toolbar (category filter + counter, below sticky top bar) ─
-  subToolbar: { display:"flex", alignItems:"center", justifyContent:"flex-end", gap:14, marginBottom:8, flexShrink:0, flexWrap:"wrap", minHeight:28 },
+  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:8, flexShrink:0, flexWrap:"wrap", minHeight:30 },
   subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
 
   // ── Card area: centered with decorative blur shapes ───────────────
@@ -2485,7 +2492,7 @@ const S = {
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   counterBreakdown: { opacity:0.7 },
-  backBtn: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500 },
+  backBtn: { display:"flex", alignItems:"center", gap:6, padding:"6px 14px 6px 11px", background:T.color.surfaceLowest, border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.full, cursor:"pointer", fontSize:11.5, color:T.color.onSurface, fontFamily:T.font.sans, fontWeight:700, letterSpacing:"0.01em", boxShadow:"0 1px 2px rgba(3,22,50,0.05)", transition:"all 0.15s" },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
   // flex:0 1 auto — the card shrinks on short windows but never grows to fill
@@ -2500,7 +2507,7 @@ const S = {
   cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"44px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
-  freqTag: { marginLeft:6, background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
+  freqTag: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
   dot: { width:7, height:7, borderRadius:"50%" },
   cardText: { fontSize:40, textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:31, textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
