@@ -560,7 +560,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   //
   // Wrong answers also re-queue the card later in the same session so the
   // user gets another shot before the session ends.
-  const answer = async (got, source = "flip") => {
+  const answer = (got, source = "flip") => {
     if (!card) return;
     const prev = progress[card.id] || { score:0, seen:0, got:0 };
     const newProg = {
@@ -568,7 +568,13 @@ export default function FlashcardApp({ user, onSignOut }) {
       seen: prev.seen + 1,
       got: prev.got + (got?1:0),
     };
-    await updateCard(card.id, newProg);
+    // NOT awaited. updateCard writes local state synchronously and only the
+    // Supabase upsert is async, so awaiting it held the whole advance —
+    // including setIdx below — behind a network round trip. The card sat
+    // there for exactly as long as the write took. The other two writes in
+    // this function were already fire-and-forget; this one was the outlier.
+    // updateCard logs its own failures and never throws.
+    updateCard(card.id, newProg);
 
     // Spaced-repetition update. Optimistic local deck patch first so the
     // in-memory card reflects the new box if it gets re-queued; DB update

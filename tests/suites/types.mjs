@@ -31,8 +31,14 @@ for (const type of CARD_TYPES) {
   const label = TYPE_LABEL[type] === "Phrase" ? "Phrases" : TYPE_LABEL[type];
   await page.click(`button:text-is("${label}")`);
   await page.waitForTimeout(900);
-  counted[type] = (await sessionCounter(page)).total;
+  const counter = await sessionCounter(page);
+  // A filter with nothing in it has no counter — the app shows an empty state
+  // rather than a broken session, and the suite has to survive that too.
+  counted[type] = counter ? counter.total : 0;
   ck(`${label} shows exactly its own cards`, counted[type] === expected[type], `${counted[type]} vs ${expected[type]}`);
+  if (expected[type] === 0) {
+    ck(`${label} with nothing in it says so`, /no cards|nothing|all caught up|session complete/i.test(await page.evaluate(() => document.body.innerText)));
+  }
 }
 ck(
   "the three types account for the whole deck",

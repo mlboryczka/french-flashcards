@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
+import { cleanFrenchPrompt } from "./lib/cardText";
 
 // "Send feedback" trigger + bottom sheet. Posts to beta_feedback table.
 //
@@ -53,6 +54,16 @@ export function BetaFeedback({
   // composition doesn't silently flip your choice.
   const [attachCard, setAttachCard] = useState(!!currentCard);
   const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  // One line at rest, growing with the content up to five. A fixed 90px box
+  // was most of the panel's height and almost always mostly empty.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 110)}px`;
+  }, [message, open, minimized]);
 
   // If the user navigates to a page with no card (stats, etc.) while the
   // sheet is open, turn attachment off. When a card reappears, default
@@ -91,6 +102,7 @@ export function BetaFeedback({
     }
   }, [fileToBase64]);
 
+  // Bound to the sheet, so a paste lands wherever the cursor happens to be.
   const handlePaste = useCallback((e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -232,7 +244,7 @@ export function BetaFeedback({
       {open && createPortal(
         minimized ? (
           // ── Minimized bar ─────────────────────────────────────────
-          <div style={{...BF.minimizedBar, left: offsetLeft}} ref={panelRef}>
+          <div style={{...BF.minimizedBar, left: offsetLeft}} ref={panelRef} data-feedback-sheet>
             <button
               style={BF.minBarMain}
               onClick={() => setMinimized(false)}
@@ -251,125 +263,100 @@ export function BetaFeedback({
           </div>
         ) : (
           // ── Expanded bottom sheet ─────────────────────────────────
-          <div style={{...BF.sheet, left: offsetLeft}} ref={panelRef}>
+          // The WHOLE sheet is the drop target and the paste target. It used
+          // to carry a full-width dashed dropzone plus a full-width attach row
+          // plus a subtitle plus a footer, which is most of why it was 300px
+          // tall for what is really one text field.
+          <div
+            style={isDragging ? { ...BF.sheet, ...BF.sheetDrag, left: offsetLeft } : { ...BF.sheet, left: offsetLeft }}
+            ref={panelRef}
+            data-feedback-sheet
+            onPaste={handlePaste}
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragEnter={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={(e) => {
+              // Only when the pointer actually leaves the sheet, not on every
+              // crossing between the children inside it.
+              if (!e.currentTarget.contains(e.relatedTarget)) setIsDragging(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              handleImage(e.dataTransfer?.files?.[0]);
+            }}
+          >
             <div style={BF.header}>
               <h2 style={BF.title}>Send feedback</h2>
               <div style={BF.headerBtns}>
                 {status !== "submitting" && (
                   <>
-                    <button
-                      style={BF.iconBtn}
-                      onClick={() => setMinimized(true)}
-                      aria-label="Minimize"
-                      title="Minimize"
-                    >
-                      <span style={{ fontSize: 18, lineHeight: 1 }}>▼</span>
+                    <button style={BF.iconBtn} onClick={() => setMinimized(true)} aria-label="Minimize" title="Minimize">
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>▼</span>
                     </button>
-                    <button
-                      style={BF.iconBtn}
-                      onClick={handleCloseClick}
-                      aria-label="Close"
-                      title="Close"
-                    >
-                      <span style={{ fontSize: 22, lineHeight: 1 }}>×</span>
+                    <button style={BF.iconBtn} onClick={handleCloseClick} aria-label="Close" title="Close">
+                      <span style={{ fontSize: 18, lineHeight: 1 }}>×</span>
                     </button>
                   </>
                 )}
               </div>
             </div>
 
-            <p style={BF.desc}>
-              Bug, idea, or wrong translation — we want to hear it.
-            </p>
+            <textarea
+              ref={textareaRef}
+              style={BF.textarea}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder={isDragging ? "Drop the image anywhere here" : "What's on your mind?"}
+              disabled={status === "submitting" || status === "sent"}
+              rows={1}
+              autoFocus
+            />
 
-            <div style={BF.body}>
-              <textarea
-                style={BF.textarea}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onPaste={handlePaste}
-                placeholder="What's on your mind?"
-                disabled={status === "submitting" || status === "sent"}
-                autoFocus
-              />
+            {screenshot && (
+              <div style={BF.imgPreview}>
+                <img src={screenshot} alt="Attached" style={BF.imgThumb} />
+                <span style={BF.imgName}>{screenshotName}</span>
+                <button style={BF.imgRemove} onClick={() => { setScreenshot(null); setScreenshotName(""); }} aria-label="Remove image">
+                  ✕
+                </button>
+              </div>
+            )}
 
+            {error && <div style={BF.error}>{error}</div>}
+            {status === "sent" && <div style={BF.success}>Thanks! Feedback received.</div>}
+
+            <div style={BF.actions}>
               {currentCard && (
-                <label style={BF.attachRow}>
-                  <input
-                    type="checkbox"
-                    checked={attachCard}
-                    onChange={(e) => {
-                      userTouchedAttach.current = true;
-                      setAttachCard(e.target.checked);
-                    }}
-                    style={BF.attachCheckbox}
-                  />
-                  <div style={BF.attachText}>
-                    <div style={BF.attachLabel}>Attach current card</div>
-                    <div style={BF.attachPreview}>
-                      <span style={BF.attachPreviewFront}>{currentCard.f}</span>
-                      <span style={BF.attachPreviewSep}>·</span>
-                      <span style={BF.attachPreviewBack}>{currentCard.b}</span>
-                    </div>
-                  </div>
-                </label>
-              )}
-
-              {screenshot ? (
-                <div style={BF.imgPreview}>
-                  <img src={screenshot} alt="Attached" style={BF.imgThumb} />
-                  <div style={BF.imgInfo}>
-                    <span style={BF.imgName}>{screenshotName}</span>
-                    <button
-                      style={BF.imgRemove}
-                      onClick={() => { setScreenshot(null); setScreenshotName(""); }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  style={isDragging ? { ...BF.dropZone, ...BF.dropZoneActive } : BF.dropZone}
-                  onClick={() => fileInputRef.current?.click()}
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
-                  onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
-                  onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setIsDragging(false);
-                    handleImage(e.dataTransfer?.files?.[0]);
-                  }}
+                <button
+                  type="button"
+                  style={attachCard ? { ...BF.chip, ...BF.chipOn } : BF.chip}
+                  onClick={() => { userTouchedAttach.current = true; setAttachCard((v) => !v); }}
+                  aria-pressed={attachCard}
+                  title={attachCard ? `Attaching: ${currentCard.f} · ${currentCard.b}` : "Attach the card you're looking at"}
                 >
-                  <div style={BF.dropZoneText}>
-                    {isDragging ? "Drop your image here" : "📎 Drop a screenshot or click to browse"}
-                  </div>
-                  <div style={BF.dropZoneSub}>or paste from clipboard</div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleImage(e.target.files?.[0])}
-                    style={{ display: "none" }}
-                  />
-                </div>
+                  <CardIcon />
+                  {/* The prompt as you saw it, not the raw stored front — the
+                      chip shouldn't show a gloss the card itself hides. The
+                      full row is still sent, and the tooltip has the original. */}
+                  <span style={BF.chipLabel}>{cleanFrenchPrompt(currentCard.f, currentCard.b)}</span>
+                </button>
               )}
-
-              {error && <div style={BF.error}>{error}</div>}
-              {status === "sent" && (
-                <div style={BF.success}>Thanks! Feedback received.</div>
-              )}
-            </div>
-
-            <div style={BF.footer}>
               <button
-                style={BF.cancelBtn}
-                onClick={handleCloseClick}
-                disabled={status === "submitting"}
+                type="button"
+                style={screenshot ? { ...BF.chip, ...BF.chipOn } : BF.chip}
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach a screenshot — or just drop one on this panel, or paste it"
               >
-                Cancel
+                <ImageIcon />
+                Screenshot
               </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleImage(e.target.files?.[0])}
+                style={{ display: "none" }}
+              />
               <button
                 style={BF.submitBtn}
                 onClick={handleSubmit}
@@ -385,6 +372,16 @@ export function BetaFeedback({
     </>
   );
 }
+
+const ICON = { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+  strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: "none" } };
+
+const CardIcon = () => (
+  <svg {...ICON}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /></svg>
+);
+const ImageIcon = () => (
+  <svg {...ICON}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></svg>
+);
 
 // Breakpoint for narrow screens (matches sidebar-bottom behavior in app)
 const NARROW = "@media (max-width: 720px)";
@@ -412,14 +409,16 @@ const BF = {
     margin: "0 auto",
     maxWidth: 920,
     width: "100%",
-    // Also capped against the viewport: a flat 340 is nearly half the page on
-    // a laptop at zoom, and the study card pays for every pixel of it.
-    maxHeight: "min(340px, 40vh)",
+    // No fixed height any more — the sheet is as tall as its content, which is
+    // a title row, one growing field and a row of chips. The cap is a backstop
+    // for a long error plus a screenshot preview, not the usual case.
+    maxHeight: "min(300px, 38vh)",
     overflowY: "auto",
     background: T.color.surfaceLowest,
     borderRadius: `${T.radius.xl}px ${T.radius.xl}px 0 0`,
     boxShadow: "0 -12px 48px rgba(3,22,50,0.18), 0 -1px 0 rgba(3,22,50,0.06)",
-    padding: "20px 28px 16px",
+    padding: "12px 18px 12px",
+    gap: 9,
     fontFamily: T.font.sans,
     zIndex: 1000,
     display: "flex",
@@ -428,16 +427,18 @@ const BF = {
     // subtle slide-up animation
     animation: "bf-slideup 180ms ease-out",
   },
+  sheetDrag: {
+    boxShadow: `0 -12px 48px rgba(3,22,50,0.18), inset 0 0 0 2px ${T.color.secondary}`,
+  },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 4,
     flexShrink: 0,
   },
   title: {
     margin: 0,
-    fontSize: 22,
+    fontSize: 15,
     color: T.color.primary,
     fontFamily: T.font.serif,
     fontWeight: 700,
@@ -458,30 +459,17 @@ const BF = {
     alignItems: "center",
     justifyContent: "center",
   },
-  desc: {
-    fontSize: 13,
-    color: T.color.onSurfaceVariant,
-    margin: "0 0 12px",
-    lineHeight: 1.4,
-    flexShrink: 0,
-  },
-  body: {
-    overflowY: "auto",
-    flex: 1,
-    minHeight: 0,
-    paddingRight: 4,
-  },
   textarea: {
     width: "100%",
-    minHeight: 90,
-    padding: 12,
-    fontSize: 14,
+    minHeight: 38,
+    maxHeight: 110,
+    padding: "9px 12px",
+    fontSize: 13.5,
     border: "none",
     background: T.color.surfaceLow,
     borderRadius: T.radius.lg,
-    resize: "vertical",
+    resize: "none",
     boxSizing: "border-box",
-    marginBottom: 10,
     fontFamily: T.font.sans,
     color: T.color.onSurface,
     lineHeight: 1.5,
@@ -489,105 +477,36 @@ const BF = {
   },
 
   // ── Attach card toggle ───────────────────────────────────────────
-  attachRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 10,
-    padding: "10px 12px",
-    background: T.color.surfaceLow,
-    borderRadius: T.radius.lg,
-    marginBottom: 10,
-    cursor: "pointer",
-  },
-  attachCheckbox: {
-    marginTop: 3,
-    accentColor: T.color.primary,
-    cursor: "pointer",
-  },
-  attachText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  attachLabel: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: T.color.primary,
-    marginBottom: 2,
-    fontFamily: T.font.sans,
-  },
-  attachPreview: {
-    fontSize: 12,
-    color: T.color.onSurfaceVariant,
-    fontFamily: T.font.sans,
-    display: "flex",
-    gap: 6,
-    alignItems: "center",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  attachPreviewFront: {
-    fontWeight: 500,
-    color: T.color.onSurface,
-  },
-  attachPreviewSep: {
-    opacity: 0.4,
-  },
-  attachPreviewBack: {
-    opacity: 0.8,
-  },
 
   // ── Screenshot dropzone ──────────────────────────────────────────
-  dropZone: {
-    border: "2px dashed rgba(3,22,50,0.12)",
-    borderRadius: T.radius.lg,
-    background: T.color.surfaceLow,
-    padding: "14px 12px",
-    textAlign: "center",
-    cursor: "pointer",
-    transition: "all 0.2s ease",
-    marginBottom: 10,
-    fontFamily: T.font.sans,
+  actions: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" },
+  chip: {
+    display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 260,
+    borderWidth: 1, borderStyle: "solid", borderColor: "rgba(3,22,50,0.1)",
+    background: "transparent", borderRadius: T.radius.full, padding: "5px 11px",
+    fontSize: 11.5, fontWeight: 600, color: T.color.onSurfaceVariant,
+    fontFamily: T.font.sans, cursor: "pointer", whiteSpace: "nowrap",
   },
-  dropZoneActive: {
-    borderColor: T.color.secondary,
-    background: T.color.tertiaryFixed,
-  },
-  dropZoneText: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: T.color.primary,
-    marginBottom: 2,
-  },
-  dropZoneSub: {
-    fontSize: 11,
-    color: T.color.onSurfaceVariant,
-    opacity: 0.6,
-  },
+  chipOn: { background: T.color.primary, borderColor: T.color.primary, color: T.color.onPrimary },
+  chipLabel: { overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170 },
   imgPreview: {
     display: "flex",
     alignItems: "center",
-    gap: 12,
-    padding: 10,
+    gap: 10,
+    padding: 8,
     background: T.color.surfaceLow,
     borderRadius: T.radius.lg,
     marginBottom: 10,
   },
   imgThumb: {
-    width: 56,
-    height: 42,
+    width: 44,
+    height: 33,
     objectFit: "cover",
     borderRadius: T.radius.md,
   },
-  imgInfo: {
-    flex: 1,
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  },
   imgName: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 11.5,
     color: T.color.onSurfaceVariant,
     fontFamily: T.font.sans,
     overflow: "hidden",
@@ -606,46 +525,27 @@ const BF = {
 
   // ── Messages ─────────────────────────────────────────────────────
   error: {
-    padding: 10,
+    padding: "8px 10px",
     background: T.color.errorContainer,
     color: T.color.onErrorContainer,
     borderRadius: T.radius.lg,
-    fontSize: 13,
-    marginBottom: 10,
+    fontSize: 12.5,
+    flexShrink: 0,
   },
   success: {
-    padding: 10,
+    padding: "8px 10px",
     background: T.color.tertiaryFixed,
     color: T.color.onSecondaryContainer,
     borderRadius: T.radius.lg,
-    fontSize: 13,
-    marginBottom: 10,
+    fontSize: 12.5,
     fontWeight: 500,
+    flexShrink: 0,
   },
 
   // ── Footer ───────────────────────────────────────────────────────
-  footer: {
-    display: "flex",
-    gap: 10,
-    justifyContent: "flex-end",
-    paddingTop: 10,
-    flexShrink: 0,
-    borderTop: `1px solid rgba(3,22,50,0.06)`,
-    marginTop: 4,
-  },
-  cancelBtn: {
-    padding: "9px 18px",
-    background: "transparent",
-    border: "none",
-    borderRadius: T.radius.md,
-    cursor: "pointer",
-    fontSize: 14,
-    color: T.color.onSurfaceVariant,
-    fontFamily: T.font.sans,
-    fontWeight: 500,
-  },
   submitBtn: {
-    padding: "10px 22px",
+    marginLeft: "auto",
+    padding: "8px 18px",
     background: T.gradient.ink,
     color: T.color.onPrimary,
     border: "none",

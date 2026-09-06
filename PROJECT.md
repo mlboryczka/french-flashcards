@@ -215,9 +215,17 @@ These look arbitrary and are not:
 - **`cardArea`'s 130px bottom padding is breathing room, not structure.** It
   drops to 16 whenever a panel is open, so the space below the card is given up
   before the card gives up anything.
-- **The feedback sheet is capped at `min(340px, 40vh)`.** A flat 340 is nearly
-  half the page on a laptop at browser zoom, and the study card pays for every
-  pixel of it.
+- **The feedback sheet is content-sized**, roughly 138px: a title row, a field
+  that starts at one line and grows to five, and a row of chips. It was ~300px
+  — a subtitle, a 90px textarea, a full-width attach row, a full-width dashed
+  dropzone and a footer, for what is really one text field. `max-height` is
+  `min(300px, 38vh)` as a backstop, not the usual case.
+- **The whole sheet is the drop and paste target**, which is what let the
+  dedicated dropzone go. Dragging over it outlines the entire panel; the
+  Screenshot chip is the click-to-browse affordance.
+- **The sheet carries `data-feedback-sheet`.** Tests identify it by that marker:
+  matching on a line of copy broke when the subtitle went, and matching on "a
+  fixed panel containing a textarea" also matched the tutor.
 - **Tutor and feedback are mutually exclusive.** Opening one closes the other,
   routed through the feedback sheet's own close request so an unsent draft
   still prompts — and declining the prompt cancels opening the tutor rather
@@ -273,6 +281,8 @@ Open in **PR #28**:
 - Grammar / Vocab / Phrase classification, the Cards-view filter, and the
   By type panel in Stats
 - The multi-sense card cleanup tool
+- Grammar decided by what a card is, not which page of the cahier it came from
+- Answering no longer waits on the database write before advancing
 - `npm test` — seven suites, in the repo
 
 ---

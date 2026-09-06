@@ -118,11 +118,12 @@ await gotoStats(page);
 await page.click('button:has-text("Send feedback")');
 await page.waitForTimeout(800);
 const stats = await layoutProbe(page);
+// The scroll container by its style, not by whether it happens to overflow
+// right now — with a shorter panel the Stats content may well fit.
 const scrolls = await page.evaluate(() => {
-  const el = [...document.querySelectorAll("main *")].find((d) => {
-    const s = getComputedStyle(d);
-    return s.overflowY === "auto" && d.scrollHeight > d.clientHeight + 5;
-  });
+  const el = [...document.querySelectorAll("main *")].find(
+    (d) => getComputedStyle(d).overflowY === "auto"
+  );
   return el ? Math.round(el.getBoundingClientRect().bottom) : null;
 });
 ck(
