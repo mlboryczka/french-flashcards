@@ -105,11 +105,10 @@ export function layoutProbe(page) {
     const shell = main.parentElement;
     const cs = getComputedStyle(main);
     const aside = document.querySelector("aside");
-    const sheet = [...document.querySelectorAll("div")].find(
-      (n) =>
-        /Bug, idea, or wrong translation/.test(n.textContent || "") &&
-        getComputedStyle(n).position === "fixed"
-    );
+    // Identified by a marker the component owns. Matching on a line of copy
+    // broke when the subtitle was removed; matching on "a fixed panel with a
+    // textarea" then matched the tutor as well.
+    const sheet = document.querySelector("[data-feedback-sheet]");
     const r = sheet ? sheet.getBoundingClientRect() : null;
     const mainRect = main.getBoundingClientRect();
     const pb = parseFloat(cs.paddingBottom) || 0;
