@@ -137,6 +137,14 @@ export default function ChatPanel({
       // dismissing click also lands on whatever sits underneath — flipping the
       // card, revealing an answer, switching view — which is what looked like
       // the screen flashing on exit.
+      //
+      // Deliberate controls are exempt: clicking "Send feedback" while the
+      // tutor is open should close the tutor AND open feedback, not be eaten.
+      // Only accidental hits on inert surfaces need swallowing.
+      const onControl = !!e.target.closest?.(
+        "button, a, input, textarea, select, label, [role='button']"
+      );
+      if (onControl) { onClose?.(); return; }
       const swallow = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
