@@ -1550,7 +1550,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
-                  <div style={S.cardFront}>
+                  <div style={{...S.cardFront, pointerEvents: flipped ? "none" : "auto"}}>
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -1576,7 +1576,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {effectiveTypeMode && !typeResult && <div style={S.cardHint}>Tap to show answer</div>}
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
-                  <div style={S.cardBack}>
+                  <div style={{...S.cardBack, pointerEvents: flipped ? "auto" : "none"}}>
 
                     <div style={S.cardTextB}>{back}</div>
                     {TTS_AVAILABLE && card.shownDir === "en" && (
