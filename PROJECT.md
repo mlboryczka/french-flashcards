@@ -197,12 +197,27 @@ These look arbitrary and are not:
   what either panel covers.
 - **The feedback sheet is offset by `SIDEBAR_WIDTH`** so it centres over the
   content column instead of straddling the nav.
-- **The card is height-driven** — `height: 100%` capped at 375, width following
-  the 1.6:1 ratio. It used to be a fixed 600×375, and once the window was
-  shorter than that, centring overflowed in *both* directions and the top of
-  the card rode up over the counter and the back button. The card area also
-  uses `justify-content: safe center`, which falls back to top-alignment
-  rather than overflowing upward.
+- **The card is height-driven, with a floor** — `height: 100%`, `min-height:
+  170`, capped at 375, width following the 1.6:1 ratio. It used to be a fixed
+  600×375, and once the window was shorter than that, centring overflowed in
+  *both* directions and the top of the card rode up over the counter and the
+  back button. The card area also uses `justify-content: safe center`, which
+  falls back to top-alignment rather than overflowing upward.
+
+  The `min-height` and the sizing below it were the *second* fix: height-driven
+  with no floor meant the card absorbed the entire squeeze when a panel opened
+  — at a 700px viewport it collapsed to 80×50 with its text still at 40px,
+  while 130px of padding sat unused beneath it.
+- **The card text sizes to the card**, not to the page. The card sets
+  `container-type: size` and the text uses `clamp(19px, 10.7cqh, 40px)` — 40px
+  at full size, scaling down with the card so a squeezed card is still legible
+  rather than three enormous words.
+- **`cardArea`'s 130px bottom padding is breathing room, not structure.** It
+  drops to 16 whenever a panel is open, so the space below the card is given up
+  before the card gives up anything.
+- **The feedback sheet is capped at `min(340px, 40vh)`.** A flat 340 is nearly
+  half the page on a laptop at browser zoom, and the study card pays for every
+  pixel of it.
 - **Tutor and feedback are mutually exclusive.** Opening one closes the other,
   routed through the feedback sheet's own close request so an unsent draft
   still prompts — and declining the prompt cancels opening the tutor rather
@@ -239,21 +254,26 @@ suite exists to enforce, both learned from checks that lied:
 
 ## Recent work (branch `claude/french-flashcards-troubleshooting-f1z8yn`)
 
-Merged (PR #26 and earlier): FSRS migration, tutor chat panel, page reflow for
-the tutor, browser-speech TTS fallback, back-button restoration, sidebar
-alignment.
+Merged (PR #27 and earlier): FSRS migration, tutor chat panel, browser-speech
+TTS fallback, back-button restoration, sidebar alignment, the card fitting the
+window, the answer banner showing your own answer, tap-to-continue, French
+gloss stripping, and the multi-sense cleanup tool.
 
-Open in **PR #27**:
+Open in **PR #28**:
 
 - Card fits the window instead of overlapping the counter and back button
 - Result banner shows *your* answer, not a repeat of the correct one
 - Tapping the card acts as **Continue** once the answer is showing
 - French prompts have their English gloss stripped (existing deck included)
-- Feedback panel: shorter and wider (920×340), closes on outside click,
-  mutually exclusive with the tutor, and pushes only the main column
+- Feedback panel: wider and capped at `min(340px, 40vh)`, closes on outside
+  click, mutually exclusive with the tutor, and pushes only the main column —
+  never the sidebar
+- The card keeps a usable size and legible text with a panel open, at every
+  window height
 - Grammar / Vocab / Phrase classification, the Cards-view filter, and the
   By type panel in Stats
 - The multi-sense card cleanup tool
+- `npm test` — seven suites, in the repo
 
 ---
 

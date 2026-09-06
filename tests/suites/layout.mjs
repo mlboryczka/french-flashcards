@@ -73,9 +73,47 @@ ck("the panel is shorter than the old 60vh", open.sheet.height <= 340, `${open.s
 ck("and wider than the old 600", open.sheet.width > 600, `${open.sheet.width}px`);
 ck("the shell stays one viewport tall", Math.abs(open.shellHeight - open.viewport) <= 1);
 
-console.log("\n  the same on Stats, where the content scrolls");
-await page.mouse.click(80, 700);
+console.log("\n  the card survives having a panel open");
+// Making the card height-driven fixed the overflow but gave it no floor, so
+// it absorbed the entire squeeze: at 700px it collapsed to 80x50 with its
+// text still at 40px, while 130px of padding sat unused below it.
+await page.mouse.click(80, 60);
 await page.waitForTimeout(500);
+for (const height of [900, 800, 700, 640, 560]) {
+  await page.setViewportSize({ width: 1400, height });
+  await page.waitForTimeout(300);
+  await page.click('button:has-text("Send feedback")');
+  await page.waitForTimeout(800);
+  const card = await cardBox(page);
+  const probe = await layoutProbe(page);
+  const font = await page.evaluate(() => {
+    const el = [...document.querySelectorAll("div")].find(
+      (d) => getComputedStyle(d).transformStyle === "preserve-3d"
+    );
+    return parseFloat(getComputedStyle(el.children[0].querySelector("div")).fontSize);
+  });
+  ck(
+    `${height}px + panel: the card is still usable`,
+    card.height >= 150 && card.width >= 240,
+    `card ${card.width}x${card.height}, panel ${probe.sheet.width}x${probe.sheet.height}`
+  );
+  ck(
+    `${height}px + panel: the text sized to the card`,
+    font <= card.height * 0.14 && font >= 18,
+    `${font.toFixed(1)}px in a ${card.height}px card`
+  );
+  ck(
+    `${height}px + panel: the card still clears the panel`,
+    card.bottom <= probe.sheet.top,
+    `card ends ${card.bottom}, panel starts ${probe.sheet.top}`
+  );
+  await page.mouse.click(80, 60);
+  await page.waitForTimeout(600);
+}
+await page.setViewportSize({ width: 1400, height: 900 });
+await page.waitForTimeout(300);
+
+console.log("\n  the same on Stats, where the content scrolls");
 await gotoStats(page);
 await page.click('button:has-text("Send feedback")');
 await page.waitForTimeout(800);
