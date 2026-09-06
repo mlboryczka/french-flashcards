@@ -215,6 +215,36 @@ These look arbitrary and are not:
 - **`cardArea`'s 130px bottom padding is breathing room, not structure.** It
   drops to 16 whenever a panel is open, so the space below the card is given up
   before the card gives up anything.
+- **Everything under the card sits in a fixed-height well** (`S.belowCard`,
+  170px — measured, being the height of the tallest state: a wrong graded
+  answer stacks a result banner, the dispute link and the Continue row). The
+  card area centres its contents, so without the well, swapping the typed-answer
+  input for the graded state re-centred the whole column and the card jumped
+  45px up the page mid-answer. The card now holds one position in every state.
+- **`cardWrap` uses `align-items: safe center`, not `center`.** Once the well
+  reserved 170px, a short window left the card taller than its wrapper, and
+  plain centring overflowed it upward into the counter and back button. Safe
+  centring falls back to start instead. Both this and `cardArea` need it.
+- **One duration and one curve for every panel that moves the page** —
+  `src/lib/motion.js`, 420ms and `cubic-bezier(0.22, 0.61, 0.24, 1)`. The
+  feedback sheet used to slide in over 180ms with `ease-out` while the page
+  made room over 420ms and the card area gave up padding over 200ms with
+  `ease`: three timings on screen at once, which is what "jerky" was.
+- **The feedback sheet mounts and unmounts through `mounted` / `entered`**,
+  the same pattern the tutor uses. It previously had no exit animation at all —
+  it vanished in a single frame while the page took 420ms to close the gap
+  behind it, the worst jerk of the lot.
+- **The page's padding is driven by `entered`, not by mount**, and reported
+  from a `useLayoutEffect`. Both state changes then land in one React commit and
+  the two transitions start on the same frame. Reporting the height at mount
+  let the page set off two frames before the sheet did, which measured as 32px
+  of drift; tying them together makes it 0.
+- **`container-type: size` lives on the card FACES, not on the card.** The
+  faces are `inset: 0` so `cqh` resolves identically, and they hold no 3D
+  children. Containment on the rotating element is a plausible compositing
+  hazard next to `preserve-3d`; measurement in headless Chromium showed the
+  rotation still working either way, so treat this as a precaution rather than
+  a proven fix.
 - **The feedback sheet is content-sized**, roughly 138px: a title row, a field
   that starts at one line and grows to five, and a row of chips. It was ~300px
   — a subtitle, a 90px textarea, a full-width attach row, a full-width dashed
@@ -241,7 +271,7 @@ These look arbitrary and are not:
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Seven suites: two pure-logic, five driving
+`npm test` — see `tests/README.md`. Eight suites: two pure-logic, five driving
 the real app in headless Chromium against a mock Supabase, asserting on
 **measured** values (geometry, computed styles, request payloads) rather than
 on intent.
@@ -257,6 +287,21 @@ suite exists to enforce, both learned from checks that lied:
 - **Never bake in a number describing fixture data.** Read it back from the
   fixture (`servedDeck()`). A hard-coded deck size went stale and reported a
   failure the app hadn't caused.
+- **Find elements by a marker the component owns**, never by their copy or by
+  a structural coincidence. `data-feedback-sheet` and `data-attach-card` exist
+  for this. Finding the sheet by its subtitle broke when the subtitle was
+  deleted; the replacement, "a fixed panel containing a textarea", also matched
+  the tutor and made a mutual-exclusion check pass while reporting on the wrong
+  panel; and finding the attach chip by the French on it broke when the fixture
+  changed.
+- **Leave the app in a known state between sections.** A section that opened
+  the feedback panel and didn't close it made the next section's click on the
+  card read as an outside-click dismissal, which reflowed the page — and looked
+  exactly like the card moving 12px on a flip.
+- **`settled(page)` waits for `getAnimations()` to go idle.** Polling until a
+  value "stops changing" is not enough: the panel easing crawls at the end, so
+  three consecutive samples can read identical while the element is still 12px
+  from where it lands.
 
 ---
 
@@ -267,23 +312,18 @@ TTS fallback, back-button restoration, sidebar alignment, the card fitting the
 window, the answer banner showing your own answer, tap-to-continue, French
 gloss stripping, and the multi-sense cleanup tool.
 
-Open in **PR #28**:
+Merged since: the Grammar/Vocab/Phrases filter, the reflow moving only the
+content column, the test suite, the card-crush fix, the grammar classifier, the
+answer-lag fix and the smaller feedback panel (PRs #28, #29, #30).
 
-- Card fits the window instead of overlapping the counter and back button
-- Result banner shows *your* answer, not a repeat of the correct one
-- Tapping the card acts as **Continue** once the answer is showing
-- French prompts have their English gloss stripped (existing deck included)
-- Feedback panel: wider and capped at `min(340px, 40vh)`, closes on outside
-  click, mutually exclusive with the tutor, and pushes only the main column —
-  never the sidebar
-- The card keeps a usable size and legible text with a panel open, at every
-  window height
-- Grammar / Vocab / Phrase classification, the Cards-view filter, and the
-  By type panel in Stats
-- The multi-sense card cleanup tool
-- Grammar decided by what a card is, not which page of the cahier it came from
-- Answering no longer waits on the database write before advancing
-- `npm test` — seven suites, in the repo
+In flight:
+
+- One duration and one curve for every panel that moves the page, and a real
+  exit animation on the feedback sheet — measured frame by frame: 0px drift
+  between panel and page on open, no frame covering more than 12% of the move
+- The card holds one position through a flip and through grading, via the
+  fixed-height well beneath it
+- `container-type` moved off the rotating card onto its faces
 
 ---
 
@@ -299,3 +339,14 @@ Open in **PR #28**:
 - **The cleanup tool's Claude step has never run against the live deck.** The
   scan, review UI, apply path and write logic are all tested; what Claude
   actually proposes for real cards is unseen. Review before applying.
+- **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
+  hypotheses were tested and all four falsified: `container-type: size`
+  flattening `preserve-3d` (it still rotates — measured mid-flip width 66px
+  against a 600px resting width); the responsive font jittering (one font size
+  for the whole flip); the card growing and rising during rotation (real, but
+  byte-identical on the commit *before* the card-fit change — it is pre-existing
+  perspective); and the removed `await` in `answer()` leaving `skipFlipAnim`
+  set so flips snap (they animate, including on the card after advancing).
+  Headless Chromium at 1x may simply not show it. Worth asking what it looks
+  like specifically — stutter mid-rotation, both faces briefly visible, a white
+  flash — and in which mode.

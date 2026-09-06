@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
@@ -33,8 +34,8 @@ export const CHAT_PANEL_WIDTH = 460;
 // SAME pair, so the panel and the page it displaces move as one thing rather
 // than two — the panel appearing instantly against a sliding page was what
 // made this feel abrupt.
-export const CHAT_ANIM_MS = 420;
-export const CHAT_EASING = "cubic-bezier(0.22, 0.61, 0.24, 1)";
+export const CHAT_ANIM_MS = PANEL_ANIM_MS;
+export const CHAT_EASING = PANEL_EASING;
 
 const CATEGORY_LABEL = {
   vocab: "Vocabulary",

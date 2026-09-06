@@ -158,6 +158,21 @@ export function sessionCounter(page) {
   });
 }
 
+// Wait until nothing is animating before measuring.
+//
+// Sampling repeatedly until the value "stops changing" is not good enough: the
+// panel easing (cubic-bezier(0.22, 0.61, 0.24, 1)) crawls at the end, so three
+// consecutive samples can read identical while the element is still 12px from
+// where it lands. Ask the browser instead — getAnimations() knows.
+export async function settled(page) {
+  await page.waitForFunction(
+    () => document.getAnimations().every((a) => a.playState !== "running"),
+    null,
+    { timeout: 5000 }
+  ).catch(() => {});
+  await page.waitForTimeout(50);
+}
+
 export async function enableTypeMode(page) {
   if (!(await page.$('input[placeholder^="Type"]'))) {
     await page.click('button:has-text("Type answer")');
