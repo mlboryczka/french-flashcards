@@ -412,7 +412,9 @@ const BF = {
     margin: "0 auto",
     maxWidth: 920,
     width: "100%",
-    maxHeight: 340,
+    // Also capped against the viewport: a flat 340 is nearly half the page on
+    // a laptop at zoom, and the study card pays for every pixel of it.
+    maxHeight: "min(340px, 40vh)",
     overflowY: "auto",
     background: T.color.surfaceLowest,
     borderRadius: `${T.radius.xl}px ${T.radius.xl}px 0 0`,

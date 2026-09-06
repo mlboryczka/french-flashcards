@@ -1690,7 +1690,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           </div>
 
           {card ? (
-            <div style={S.cardArea}>
+            <div style={showFeedback || chatReflow ? {...S.cardArea, paddingBottom:16} : S.cardArea}>
               {/* Decorative blur shapes (per Stitch design) */}
               <div style={S.blurTL} />
               <div style={S.blurBR} />
@@ -2566,7 +2566,7 @@ const S = {
   // contents, plain centring overflows in BOTH directions and the top of the
   // card rides up over the counter and the back button. Safe centring falls
   // back to start-alignment instead of spilling into what's above.
-  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:130 },
+  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:130, transition:"padding-bottom 200ms ease" },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -2651,15 +2651,20 @@ const S = {
   cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"center", justifyContent:"center" },
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
-  card: { position:"relative", height:"100%", maxHeight:375, maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", minHeight:0 },
+  // Height-driven so a short window shrinks the card instead of overflowing
+  // it, but with a floor: making it height-driven with no minimum meant it
+  // absorbed the entire squeeze when a panel opened, collapsing to nothing
+  // while 130px of padding sat unused below it. containerType lets the text
+  // size to the card rather than staying at 40px inside a stamp.
+  card: { position:"relative", height:"100%", minHeight:170, maxHeight:375, maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", containerType:"size" },
   cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
   cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
   freqTag: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
   dot: { width:7, height:7, borderRadius:"50%" },
-  cardText: { fontSize:40, textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
-  cardTextB: { fontSize:31, textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
+  cardText: { fontSize:"clamp(19px, 10.7cqh, 40px)", textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
+  cardTextB: { fontSize:"clamp(16px, 8.3cqh, 31px)", textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
   hint: { position:"absolute", bottom:12, left:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontStyle:"italic", opacity:0.7 },
   btnRow: { display:"flex", gap:12, marginBottom:12 },
