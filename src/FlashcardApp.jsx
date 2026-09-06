@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt } from "./lib/cardText";
+import { classifyCard, CARD_TYPES, TYPE_LABEL, TYPE_COLOR } from "./lib/cardTypes";
 import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
@@ -35,13 +36,10 @@ const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 // Flip to `true` to bring it back.
 const PRONUNCIATION_ENABLED = false;
 
-// UI tabs collapse the 4 storage categories (vocab/expr/gram/pron) into
-// two: Vocabulary vs everything-else (Phrases). Storage stays 4-way.
-// Category is used only for labelling in the Stats view now — it is
+// Cards are labelled by the three types in lib/cardTypes (grammar / word /
+// phrase), derived from the four storage categories plus the shape of the
+// French side. Storage stays 4-way. This is labelling only — it is
 // deliberately not a study filter (see the session effect for why).
-const TAB_COLORS = { vocab: "#9c4234", phrases: "#1a2b48" };
-const catToTab = (cat) => cat === "vocab" ? "vocab" : "phrases";
-const catToLabel = (cat) => cat === "vocab" ? "Vocabulary" : "Phrase";
 
 // ─── STORAGE ─────────────────────────────────────────────────────────────
 // (progress is now handled by the useProgress hook via Supabase)
@@ -1403,6 +1401,29 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Pipeline bar proportions
     const pipeTotal = Math.max(total, 1);
 
+    // Breakdown by card type. Grammar, words and phrases are different kinds
+    // of work and tend to sit at different levels — this is where you find out
+    // that your vocabulary is fine and your conjugations are not.
+    const byType = CARD_TYPES.map((type) => {
+      const cards = userCards.filter((c) => classifyCard(c) === type);
+      let seen = 0, got = 0, mastered = 0, started = 0;
+      for (const c of cards) {
+        const pr = progress[c.id];
+        if (!pr || !pr.seen) continue;
+        started++;
+        seen += pr.seen;
+        got += pr.got ?? 0;
+        if ((pr.score ?? 0) >= 3) mastered++;
+      }
+      return {
+        type,
+        total: cards.length,
+        started,
+        mastered,
+        accuracy: seen > 0 ? Math.round((got / seen) * 100) : null,
+      };
+    }).filter((t) => t.total > 0);
+
     return (
       <div style={shellStyle}>
         {sidebar}
@@ -1453,6 +1474,33 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
 
+            {/* By type: grammar vs words vs phrases */}
+            {byType.length > 1 && (
+              <div style={{marginTop:24}}>
+                <h3 style={S.statsSectionTitle}>By type</h3>
+                <p style={S.statsSectionSub}>Grammar, single words and phrases ask different things of you.</p>
+                <div style={S.typeGrid}>
+                  {byType.map((t) => (
+                    <div key={t.type} style={S.typeCard}>
+                      <span style={{...S.hardTag, background: TYPE_COLOR[t.type] + "22", color: TYPE_COLOR[t.type]}}>
+                        {TYPE_LABEL[t.type]}
+                      </span>
+                      <div style={S.typeVal}>{t.accuracy === null ? "—" : `${t.accuracy}%`}</div>
+                      <div style={S.typeSub}>
+                        {t.accuracy === null
+                          ? `${t.total.toLocaleString()} card${t.total === 1 ? "" : "s"} · none studied yet`
+                          : `accuracy · ${t.mastered} of ${t.total.toLocaleString()} mastered`}
+                      </div>
+                      <div style={S.typeBarWrap}>
+                        <div style={{...S.typeBar, background: TYPE_COLOR[t.type],
+                          width: `${t.total ? Math.round((t.mastered / t.total) * 100) : 0}%`}} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Hardest Cards */}
             {hardest.length > 0 && (
               <div style={{marginTop:24}}>
@@ -1464,10 +1512,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <div style={S.hardHead}>
                         <span style={{
                           ...S.hardTag,
-                          background: TAB_COLORS[catToTab(c.cat)] + "22",
-                          color: TAB_COLORS[catToTab(c.cat)],
+                          background: TYPE_COLOR[classifyCard(c)] + "22",
+                          color: TYPE_COLOR[classifyCard(c)],
                         }}>
-                          {catToLabel(c.cat)}
+                          {TYPE_LABEL[classifyCard(c)]}
                         </span>
                       </div>
                       <h4 style={S.hardWord}>{c.f}</h4>
@@ -1672,10 +1720,14 @@ export default function FlashcardApp({ user, onSignOut }) {
                 typeResult ? (
                   <div style={S.typeFeedback}>
                     <div style={typeResult==="correct" ? S.typeCorrect : typeResult==="close" ? S.typeClose : typeResult==="revealed" ? S.typeRevealed : S.typeWrong}>
+                      {/* The card has already flipped to the correct answer, so
+                          repeating it here wastes the line. Show what you
+                          actually typed instead — that's the useful comparison.
+                          "revealed" is the exception: nothing was typed. */}
                       {typeResult==="correct" && "✓ Correct!"}
-                      {typeResult==="close" && `✓ Close enough — answer: ${back}`}
-                      {typeResult==="wrongArticle" && `✗ Wrong article — answer: ${back}`}
-                      {typeResult==="wrong" && `✗ Answer: ${back}`}
+                      {typeResult==="close" && (typedAnswer.trim() ? `✓ Close enough — you wrote: ${typedAnswer.trim()}` : "✓ Close enough")}
+                      {typeResult==="wrongArticle" && (typedAnswer.trim() ? `✗ Wrong article — you wrote: ${typedAnswer.trim()}` : `✗ Wrong article — answer: ${back}`)}
+                      {typeResult==="wrong" && (typedAnswer.trim() ? `✗ You wrote: ${typedAnswer.trim()}` : `✗ Answer: ${back}`)}
                       {typeResult==="revealed" && `Answer: ${back}`}
                     </div>
                     {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
@@ -1783,8 +1835,9 @@ export default function FlashcardApp({ user, onSignOut }) {
 // without needing an actual screenshot.
 function CardContextPreview({ ctx }) {
   if (!ctx) return null;
-  const label = ctx.category === "vocab" ? "Vocabulary" : "Phrase";
-  const color = ctx.category === "vocab" ? "#9c4234" : "#1a2b48";
+  const type = classifyCard({ cat: ctx.category, f: ctx.front, b: ctx.back });
+  const label = TYPE_LABEL[type];
+  const color = TYPE_COLOR[type];
   return (
     <div style={{
       border: "1px solid rgba(3,22,50,0.08)",
@@ -2461,7 +2514,11 @@ const S = {
   subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
 
   // ── Card area: centered with decorative blur shapes ───────────────
-  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", paddingBottom:130 },
+  // "safe center" rather than plain center: when the area is shorter than its
+  // contents, plain centring overflows in BOTH directions and the top of the
+  // card rides up over the counter and the back button. Safe centring falls
+  // back to start-alignment instead of spilling into what's above.
+  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:130 },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -2540,10 +2597,10 @@ const S = {
   // the page. Letting it grow is what pushed the buttons down to the bottom
   // edge and left a gulf in the middle; cardArea now centres the card and its
   // buttons together, so spare height sits above and below the pair.
-  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 auto", minHeight:0, display:"flex", alignItems:"center" },
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"center", justifyContent:"center" },
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
-  card: { position:"relative", width:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", maxHeight:380, minHeight:0 },
+  card: { position:"relative", height:"100%", maxHeight:375, maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", minHeight:0 },
   cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
   cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
@@ -2565,6 +2622,12 @@ const S = {
   // Stats — bento dashboard
   statsHeading: { fontSize:36, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.02em", margin:"8px 0 28px" },
   // ── New stats layout: metric cards + pipeline + hardest ───────────
+  typeGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:12, marginTop:10 },
+  typeCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"14px 16px 16px", border:"1px solid rgba(3,22,50,0.06)" },
+  typeVal: { fontSize:28, fontFamily:T.font.serif, fontWeight:700, color:T.color.primary, marginTop:8, letterSpacing:"-0.02em" },
+  typeSub: { fontSize:11.5, color:T.color.onSurfaceVariant, marginTop:2 },
+  typeBarWrap: { height:4, borderRadius:2, background:"rgba(3,22,50,0.07)", marginTop:10, overflow:"hidden" },
+  typeBar: { height:"100%", borderRadius:2, transition:"width 300ms ease" },
   statsRow3: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:12 },
   statsRow2: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 },
   metricCard: { background:T.color.surfaceLow, borderRadius:T.radius.xl, padding:"22px 24px" },
