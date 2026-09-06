@@ -2410,9 +2410,9 @@ const S = {
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
   // ── Card content (eyebrow, hint, audio circles, hover actions) ────
-  cardEyebrow: { position:"absolute", top:30, left:"50%", transform:"translateX(-50%)", fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.18em", display:"flex", alignItems:"center", gap:8, whiteSpace:"nowrap" },
-  cardHint: { position:"absolute", bottom:18, left:"50%", transform:"translateX(-50%)", fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontStyle:"italic", opacity:0.45 },
-  cardAudio: { display:"flex", gap:14, marginTop:28, justifyContent:"center" },
+  cardEyebrow: { position:"absolute", top:22, left:"50%", transform:"translateX(-50%)", fontSize:10, fontFamily:T.font.sans, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.18em", display:"flex", alignItems:"center", gap:8, whiteSpace:"nowrap" },
+  cardHint: { position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)", fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontStyle:"italic", opacity:0.45 },
+  cardAudio: { display:"flex", gap:14, marginTop:20, justifyContent:"center" },
   cardAudioBtn: { width:52, height:52, display:"flex", alignItems:"center", justifyContent:"center", border:"none", borderRadius:"50%", background:T.color.surfaceLow, cursor:"pointer", fontSize:20, color:T.color.primary, transition:"all 0.15s" },
   cardAudioMic: { background:T.color.surfaceLow, color:T.color.secondary },
   cardAudioMicActive: { background:T.color.secondary, color:T.color.onSecondary, animation:"pulse 1.2s infinite" },
@@ -2422,9 +2422,9 @@ const S = {
   // The button itself is a borderless flex column. The colored 80×80
   // box wraps the SVG, and the uppercase label sits below it.
   // ── Rectangular action buttons: AGAIN / GOT IT ─────────────────────
-  actionRow: { display:"flex", gap:16, justifyContent:"center", marginTop:4, marginBottom:4, width:"100%", maxWidth:480, alignSelf:"center", flexShrink:0 },
-  actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"20px 28px", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, background:"transparent", color:T.color.onSurfaceVariant, fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", transition:"all 0.15s" },
-  actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"20px 28px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },
+  actionRow: { display:"flex", gap:12, justifyContent:"center", marginTop:0, marginBottom:0, width:"100%", maxWidth:420, alignSelf:"center", flexShrink:0 },
+  actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"13px 24px", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, background:"transparent", color:T.color.onSurfaceVariant, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", transition:"all 0.15s" },
+  actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"13px 24px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },
 
   // ── Info tooltip (ⓘ keyboard shortcuts) ───────────────────────────
   infoWrap: { position:"absolute", bottom:14, right:18, zIndex:5 },
@@ -2479,19 +2479,22 @@ const S = {
   backBtn: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500 },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
-  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:680, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"center" },
-  // maxHeight lets the card give up height when the window is short; the old
-  // minHeight:340 floor is what made it overflow instead. Below the natural
-  // 1.6 ratio the card simply becomes wider and shorter, which reads fine.
-  card: { position:"relative", width:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", maxHeight:"100%", minHeight:0 },
-  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"52px 32px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
-  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"52px 32px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
+  // flex:0 1 auto — the card shrinks on short windows but never grows to fill
+  // the page. Letting it grow is what pushed the buttons down to the bottom
+  // edge and left a gulf in the middle; cardArea now centres the card and its
+  // buttons together, so spare height sits above and below the pair.
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 auto", minHeight:0, display:"flex", alignItems:"center" },
+  // maxHeight caps it on tall screens and lets it give up height on short
+  // ones; the old minHeight:340 floor is what made it overflow instead.
+  card: { position:"relative", width:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", maxHeight:380, minHeight:0 },
+  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"44px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
+  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"44px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
   freqTag: { marginLeft:6, background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
   dot: { width:7, height:7, borderRadius:"50%" },
-  cardText: { fontSize:48, textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
-  cardTextB: { fontSize:36, textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
+  cardText: { fontSize:40, textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
+  cardTextB: { fontSize:31, textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
   hint: { position:"absolute", bottom:12, left:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontStyle:"italic", opacity:0.7 },
   btnRow: { display:"flex", gap:12, marginBottom:12 },
@@ -2597,8 +2600,8 @@ const S = {
   typeInputRow: { display:"flex", gap:10, justifyContent:"center", marginBottom:10 },
   giveUpRow: { display:"flex", justifyContent:"center", marginBottom:4, flexShrink:0 },
   giveUpBtn: { padding:"6px 14px", background:"transparent", border:"none", cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em", textDecoration:"underline" },
-  typeInput: { flex:1, maxWidth:300, padding:"13px 16px", border:"none", background:T.color.surfaceLowest, borderRadius:T.radius.lg, fontSize:16, fontFamily:T.font.serif, outline:"none", color:T.color.primary, boxShadow:T.shadow.focus },
-  typeSubmit: { padding:"13px 26px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
+  typeInput: { flex:1, maxWidth:280, padding:"11px 15px", border:"none", background:T.color.surfaceLowest, borderRadius:T.radius.lg, fontSize:16, fontFamily:T.font.serif, outline:"none", color:T.color.primary, boxShadow:T.shadow.focus },
+  typeSubmit: { padding:"11px 22px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   // Audio: speak/mic toolbar inside the card
   audioToolbar: { marginTop:14, display:"flex", gap:10, justifyContent:"center" },
   speakBtn: { background:T.color.surfaceHigh, border:"none", borderRadius:T.radius.full, padding:"8px 16px", fontSize:16, cursor:"pointer", lineHeight:1, color:T.color.primary },
@@ -2648,7 +2651,7 @@ const S = {
   // "mark for review" override link when the matcher accepted the answer.
   typeAdvanceRow: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, marginTop:8, marginBottom:24, width:"100%", maxWidth:480, alignSelf:"center" },
   markReviewLink: { padding:"6px 2px", background:"transparent", border:"none", color:T.color.onSurfaceVariant, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:500, textDecoration:"underline", textUnderlineOffset:3, opacity:0.75, letterSpacing:"0.01em" },
-  continueBtn: { marginLeft:"auto", display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"14px 32px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 6px 20px rgba(3,22,50,0.14)", transition:"all 0.15s" },
+  continueBtn: { marginLeft:"auto", display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"11px 26px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 6px 20px rgba(3,22,50,0.14)", transition:"all 0.15s" },
   // Feedback admin view
   feedbackList: { display:"flex", flexDirection:"column", gap:18 },
   feedbackItem: { padding:22, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, fontFamily:T.font.sans, boxShadow:T.shadow.card },

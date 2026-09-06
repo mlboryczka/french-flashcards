@@ -33,8 +33,8 @@ export const CHAT_PANEL_WIDTH = 460;
 // SAME pair, so the panel and the page it displaces move as one thing rather
 // than two — the panel appearing instantly against a sliding page was what
 // made this feel abrupt.
-export const CHAT_ANIM_MS = 280;
-export const CHAT_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
+export const CHAT_ANIM_MS = 420;
+export const CHAT_EASING = "cubic-bezier(0.22, 0.61, 0.24, 1)";
 
 const CATEGORY_LABEL = {
   vocab: "Vocabulary",
@@ -78,6 +78,14 @@ export default function ChatPanel({
   // vanish instantly while the page was still sliding back.
   const [mounted, setMounted] = useState(open);
   const [entered, setEntered] = useState(false);
+
+  // Freeze the layout mode while the panel is on screen. `reflow` is derived
+  // from the open flag upstream, so it flips to false the instant you close —
+  // which used to mount the scrim over the app for the length of the exit
+  // animation, blocking the next click and reading as a flash.
+  const reflowRef = useRef(reflow);
+  if (open) reflowRef.current = reflow;
+  const activeReflow = mounted ? reflowRef.current : reflow;
 
   useEffect(() => {
     if (open) {
@@ -125,6 +133,19 @@ export default function ChatPanel({
     const onDown = (e) => {
       if (panelRef.current?.contains(e.target)) return;
       if (e.target.closest?.("[data-tutor-toggle]")) return;
+      // Swallow the click this mousedown is about to produce. Without it the
+      // dismissing click also lands on whatever sits underneath — flipping the
+      // card, revealing an answer, switching view — which is what looked like
+      // the screen flashing on exit.
+      const swallow = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      };
+      document.addEventListener("click", swallow, { capture: true, once: true });
+      setTimeout(
+        () => document.removeEventListener("click", swallow, { capture: true }),
+        400
+      );
       onClose?.();
     };
     document.addEventListener("mousedown", onDown);
@@ -246,14 +267,14 @@ export default function ChatPanel({
 
   return createPortal(
     <div style={S.wrap}>
-      {!reflow && (
+      {!activeReflow && (
         <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} onClick={onClose} />
       )}
       <aside
         ref={panelRef}
         style={{
           ...S.panel,
-          ...(reflow ? { width: CHAT_PANEL_WIDTH } : null),
+          ...(activeReflow ? { width: CHAT_PANEL_WIDTH } : null),
           transform: entered ? "translateX(0)" : "translateX(100%)",
         }}
         role="dialog"
