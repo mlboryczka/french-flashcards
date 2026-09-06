@@ -36,7 +36,8 @@ const PRONUNCIATION_ENABLED = false;
 
 // UI tabs collapse the 4 storage categories (vocab/expr/gram/pron) into
 // two: Vocabulary vs everything-else (Phrases). Storage stays 4-way.
-const TAB_LABELS = { all: "All", vocab: "Vocabulary", phrases: "Phrases" };
+// Category is used only for labelling in the Stats view now — it is
+// deliberately not a study filter (see the session effect for why).
 const TAB_COLORS = { vocab: "#9c4234", phrases: "#1a2b48" };
 const catToTab = (cat) => cat === "vocab" ? "vocab" : "phrases";
 const catToLabel = (cat) => cat === "vocab" ? "Vocabulary" : "Phrase";
@@ -200,7 +201,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   // The deck-build effect uses this to tell "filters changed, fresh
   // session" apart from "userCards re-referenced, just patch in place".
   const filterSigRef = useRef(null);
-  const [cat, setCat] = useState("all");
   const [mode, setMode] = useState("study"); // study | stats | feedback
   const [stats, setStats] = useState({ seen:0, got:0, missed:0 });
   const [freqOnly, setFreqOnly] = useState(false);
@@ -303,21 +303,22 @@ export default function FlashcardApp({ user, onSignOut }) {
   // NOT on every answer and NOT when switching between study/stats/feedback
   // views (that used to reshuffle and snap back to card 0 mid-session).
   //
-  // Selection is now spaced-repetition driven: the working set comes from
-  // buildSession (lapses → due reviews → capped new → mastered spot-checks)
-  // instead of "all cards shuffled, sorted by score". Filters (cat, freqOnly)
-  // narrow the candidate pool before queue construction.
+  // Selection is spaced-repetition driven: the working set comes from
+  // buildSession (lapses → due reviews → capped new → mastered spot-checks).
+  //
+  // There is deliberately no category filter. Studying one category at a time
+  // is blocked practice, which feels easier during the session and tests worse
+  // afterwards; mixing card types is interleaved practice, worth about g=0.42
+  // in Brunmair & Richter's (2019) meta-analysis of 59 studies. FSRS has no
+  // opinion on categories either — it schedules on memory state alone — so a
+  // filter here could only make sessions worse.
   useEffect(() => {
     if (!loaded) return;
-    const filterSig = `${cat}|${freqOnly}|${dir}`;
+    const filterSig = `${freqOnly}|${dir}`;
     const filterChanged = filterSigRef.current !== filterSig;
     filterSigRef.current = filterSig;
 
-    let candidates = cat === "all"
-      ? userCards
-      : cat === "phrases"
-        ? userCards.filter(c => c.cat !== "vocab")
-        : userCards.filter(c => c.cat === cat);
+    let candidates = userCards;
     if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
 
     // Mid-session userCards refetch (card edit/delete, background reload,
@@ -375,7 +376,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       setFlipped(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cat, freqOnly, loaded, dir, userCards]);
+  }, [freqOnly, loaded, dir, userCards]);
 
   const card = deck[idx];
   // Keep the ref in sync so deck rebuilds can find the current card.
@@ -1467,17 +1468,6 @@ export default function FlashcardApp({ user, onSignOut }) {
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
           <div style={S.topBarInner}>
-          <div style={S.catRow}>
-            {Object.entries(TAB_LABELS).map(([k,v]) => (
-              <button
-                key={k}
-                style={cat===k ? {...S.catBtn,...S.catBtnA,...(k!=="all"?{borderColor:TAB_COLORS[k],color:TAB_COLORS[k]}:{})} : S.catBtn}
-                onClick={() => setCat(k)}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
           <div style={S.dirGroup}>
             {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
               <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
@@ -2477,9 +2467,6 @@ const S = {
   navBtn: { padding:"9px 18px", border:"none", borderRadius:T.radius.md, background:"transparent", cursor:"pointer", fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, transition:"all 0.15s" },
   navActive: { background:T.color.surfaceLowest, color:T.color.primary, fontWeight:600, boxShadow:T.shadow.focus },
   filters: { marginBottom:18 },
-  catRow: { display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" },
-  catBtn: { padding:"6px 14px", border:"none", borderRadius:T.radius.full, background:T.color.surfaceLow, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em" },
-  catBtnA: { background:T.color.primary, color:T.color.onPrimary, fontWeight:600 },
   toggleRow: { display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" },
   toggle: { display:"flex", gap:6, alignItems:"center", fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, cursor:"pointer" },
   // Chip-style toggle button — used in the study filter row in place of
