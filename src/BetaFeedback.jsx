@@ -23,9 +23,22 @@ import { T } from "./theme";
 // Usage:
 //   <BetaFeedback user={user} currentPage={mode} currentCard={card} />
 
-export function BetaFeedback({ user, currentPage, currentCard }) {
-  const [open, setOpen] = useState(false);
+export function BetaFeedback({
+  user,
+  currentPage,
+  currentCard,
+  // Controlled by FlashcardApp so this and the tutor panel can never be open
+  // together, and so the page can make room for whichever is up.
+  open,
+  onOpen,
+  onClose,
+  onHeightChange,
+  // FlashcardApp puts a close-request function here so it can ask the sheet to
+  // close (and honour the discard prompt) before opening the tutor.
+  requestCloseRef,
+}) {
   const [minimized, setMinimized] = useState(false);
+  const panelRef = useRef(null);
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState("idle"); // idle | submitting | sent | error
   const [error, setError] = useState("");
@@ -88,7 +101,7 @@ export function BetaFeedback({ user, currentPage, currentCard }) {
   }, [handleImage]);
 
   const resetAndClose = useCallback(() => {
-    setOpen(false);
+    onClose?.();
     setMinimized(false);
     setMessage("");
     setScreenshot(null);
@@ -96,16 +109,55 @@ export function BetaFeedback({ user, currentPage, currentCard }) {
     setStatus("idle");
     setError("");
     userTouchedAttach.current = false;
-  }, []);
+  }, [onClose]);
 
-  const handleCloseClick = () => {
-    if (status === "submitting") return;
-    const hasDraft = message.trim().length > 0 || screenshot;
-    if (hasDraft) {
-      if (!window.confirm("Discard your feedback?")) return;
+  // Measure rather than assume: the sheet grows with a screenshot attached and
+  // shrinks to a bar when minimized, and the page has to match whichever it is.
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!open || !el) {
+      onHeightChange?.(0);
+      return;
     }
+    const report = () => onHeightChange?.(Math.round(el.getBoundingClientRect().height));
+    report();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(report) : null;
+    ro?.observe(el);
+    return () => {
+      ro?.disconnect();
+      onHeightChange?.(0);
+    };
+  }, [open, minimized, onHeightChange]);
+
+  // Click anywhere outside to close. Routed through handleCloseClick so an
+  // unsent draft still asks before it is thrown away.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (panelRef.current?.contains(e.target)) return;
+      if (e.target.closest?.("[data-feedback-toggle]")) return;
+      if (e.target.closest?.("[data-tutor-toggle]")) return;
+      handleCloseClick();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  });
+
+  // Returns true if the sheet closed, false if the user backed out of
+  // discarding a draft — callers use that to decide whether to continue.
+  const handleCloseClick = () => {
+    if (status === "submitting") return false;
+    const hasDraft = message.trim().length > 0 || screenshot;
+    if (hasDraft && !window.confirm("Discard your feedback?")) return false;
     resetAndClose();
+    return true;
   };
+
+  // Publish the close request upward. Kept current on every render so it
+  // always sees the live draft state.
+  if (requestCloseRef) {
+    requestCloseRef.current = () => (open ? handleCloseClick() : true);
+  }
 
   async function handleSubmit() {
     if (!message.trim() || message.trim().length < 5) {
@@ -166,14 +218,18 @@ export function BetaFeedback({ user, currentPage, currentCard }) {
 
   return (
     <>
-      <button style={BF.trigger} onClick={() => { setOpen(true); setMinimized(false); }}>
+      <button
+        data-feedback-toggle
+        style={BF.trigger}
+        onClick={() => { setMinimized(false); onOpen?.(); }}
+      >
         Send feedback
       </button>
 
       {open && createPortal(
         minimized ? (
           // ── Minimized bar ─────────────────────────────────────────
-          <div style={BF.minimizedBar}>
+          <div style={BF.minimizedBar} ref={panelRef}>
             <button
               style={BF.minBarMain}
               onClick={() => setMinimized(false)}
@@ -192,7 +248,7 @@ export function BetaFeedback({ user, currentPage, currentCard }) {
           </div>
         ) : (
           // ── Expanded bottom sheet ─────────────────────────────────
-          <div style={BF.sheet}>
+          <div style={BF.sheet} ref={panelRef}>
             <div style={BF.header}>
               <h2 style={BF.title}>Send feedback</h2>
               <div style={BF.headerBtns}>
@@ -351,9 +407,10 @@ const BF = {
     left: 0,
     right: 0,
     margin: "0 auto",
-    maxWidth: 600,
+    maxWidth: 920,
     width: "100%",
-    maxHeight: "60vh",
+    maxHeight: 340,
+    overflowY: "auto",
     background: T.color.surfaceLowest,
     borderRadius: `${T.radius.xl}px ${T.radius.xl}px 0 0`,
     boxShadow: "0 -12px 48px rgba(3,22,50,0.18), 0 -1px 0 rgba(3,22,50,0.06)",
@@ -603,7 +660,7 @@ const BF = {
     left: 0,
     right: 0,
     margin: "0 auto",
-    maxWidth: 600,
+    maxWidth: 920,
     width: "100%",
     background: T.color.surfaceLowest,
     borderRadius: `${T.radius.lg}px ${T.radius.lg}px 0 0`,

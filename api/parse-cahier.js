@@ -229,7 +229,15 @@ async function handleCommit(req, res, adminClient, userId) {
   // Step 0: split // pairs into separate cards. The extraction prompt
   // asks Claude to do this, but as a safety net we also catch any that
   // slipped through. "léger // lourd (adj)" → two cards.
-  const splitCards = splitSlashPairs(rawCards);
+  // The model is told to keep English glosses off the French side, but it
+  // slips — "je suis allé (I went (passé composé))" — and a card whose front
+  // contains its own answer is worse than no card. Enforce it deterministically.
+  const cleanedCards = rawCards.map((c) =>
+    c && c.front && c.back
+      ? { ...c, front: cleanFrenchFront(c.front, c.back) }
+      : c
+  );
+  const splitCards = splitSlashPairs(cleanedCards);
 
   // Step 1: expand conjugation tables into drill cards
   const { expanded, drillsGenerated } = expandConjugations(splitCards);
@@ -388,6 +396,7 @@ Rules:
    Use the position in the text to determine this — items before "Prononciation Grammaire" are V, items after are G.
 8. If an item has a SHORT inline English translation (e.g. "louer - to rent", "She had to / she was supposed to = elle devait"), use that translation.
    BUT: if the parenthetical is a LONG contextual explanation of when/why the phrase is used (e.g. "S'il partait à l'heure (he never leaves on time but I imagine a world where he does)"), that is NOT a translation — it's a usage note. Translate the French phrase directly and APPEND the context note in parentheses on the English side. Example: front = "S'il partait à l'heure", back = "If he left on time (he never leaves on time but I imagine a world where he does)". The test: if the parenthetical describes a scenario or situation rather than giving a direct equivalent, translate the French yourself and keep the parenthetical as context.
+8b. NEVER leave English on the French side. The front is the prompt — if it contains the translation, the card answers itself. "je suis allé (I went (passé composé))" must become front = "je suis allé", back = "I went (passé composé)". Grammar markers stay on the front: "(adj)", "(f)", "(pl)", "(subj)".
 9. Do not invent cards. Only extract what's actually in the text.
 10. If a line pairs two different words with "//" like "léger // lourd (adj)", split them into TWO separate cards: one for "léger (adj)" → "light" and one for "lourd (adj)" → "heavy". Two different French words with different meanings must always be separate cards.
 11. In conversational French, "on" means "we" (not "one"). Translate "on" as "we" unless the context is clearly formal/literary. For example: "on était" = "we were", "on allait" = "we were going", "on s'est dit" = "we said to each other".
@@ -698,3 +707,89 @@ function normalizeKey(s) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+// ── French-side gloss stripping ─────────────────────────────────────
+// Mirror of src/lib/cardText.js, which applies the same rule at display time
+// to decks parsed before this existed.
+// The French side of a card should be French.
+//
+// Cahier lines often carry an inline English gloss — "je suis allé (I went
+// (passé composé))" — and the parser has sometimes kept that gloss on the
+// front. When it does, the card hands you the answer before you've answered
+// it, which is worse than useless: FSRS records a recall you never made.
+//
+// Rather than migrate thousands of existing rows (and risk mangling the ones
+// that are fine), we strip the gloss at the moment the French side is used as
+// a *prompt*. The stored row is untouched, and the answer side still shows
+// everything.
+//
+// The test for "this is a gloss, not French" is overlap: if a parenthetical on
+// the French side repeats a content word from the English side, it is giving
+// the answer away. Grammar tags — (adj), (f), (pl), (passé composé) — are
+// exempt, because they are legitimate disambiguators even when the English
+// side happens to mention them too.
+
+const GRAMMAR_TAG =
+  /^(adj|adv|adje?ctif|n|nom|v|verbe?|f|m|fem|femin(in)?|masc(ulin)?|pl|plur(iel|al)?|sg|sing(ulier)?|nf|nm|inf|infinitif|pp|p\.p\.|part(icipe)?( passé)?|passé( composé)?|imparfait|futur|présent|conditionnel|subjonctif|impératif|fam|familier|litt|litteraire|littéraire)\.?$/i;
+
+function glossWords(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .split(/[^a-z0-9']+/)
+    .filter((w) => w.length >= 3);
+}
+
+// Top-level "(...)" spans, tolerant of the unbalanced parentheses these
+// malformed cards tend to have ("je suis allé (I went (passé)" never closes
+// its outer group). An unclosed group runs to the end of the string.
+function parentheticals(text) {
+  const spans = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === ")") {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0) {
+          spans.push([start, i + 1]);
+          start = -1;
+        }
+      }
+    }
+  }
+  if (depth > 0 && start !== -1) spans.push([start, text.length]);
+  return spans;
+}
+
+function cleanFrenchFront(fr, en) {
+  if (!fr || !en || !fr.includes("(")) return fr;
+
+  const answerWords = new Set(glossWords(en));
+  if (answerWords.size === 0) return fr;
+
+  const spans = parentheticals(fr);
+  let out = fr;
+  let changed = false;
+
+  // Right to left, so earlier spans keep their indices.
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const [s, e] = spans[i];
+    const inner = fr.slice(s + 1, e).replace(/[()]/g, "").trim();
+    if (!inner || GRAMMAR_TAG.test(inner)) continue;
+    if (!glossWords(inner).some((w) => answerWords.has(w))) continue;
+    out = out.slice(0, s) + out.slice(e);
+    changed = true;
+  }
+
+  if (!changed) return fr;
+  // Tidy up the hole we just left, and any parenthesis orphaned by it.
+  const tidied = out.replace(/\s{2,}/g, " ").replace(/\s+([,;.!?])/g, "$1").trim();
+  return tidied || fr;
+}
+

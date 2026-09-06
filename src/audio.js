@@ -92,10 +92,71 @@ export function stopSpeaking() {
     } catch {}
     _currentUrl = null;
   }
+  // The browser fallback is a separate audio channel — cancel it too, or the
+  // two can talk over each other.
+  try {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+  } catch {}
+}
+
+// The browser's own speech synthesis, used when Azure is unavailable.
+//
+// Azure gives far better French, but it needs AZURE_SPEECH_KEY and
+// AZURE_SPEECH_REGION on the server. Without them /api/tts 500s and the
+// speaker button did nothing at all — no sound, no message, nothing to
+// distinguish "misconfigured" from "broken". Falling back means the button
+// always does something, and the only cost of a missing key is voice quality.
+//
+// Resolves true if it actually spoke.
+function speakWithBrowser(text) {
+  return new Promise((resolve) => {
+    const synth = typeof window !== "undefined" && window.speechSynthesis;
+    if (!synth) return resolve(false);
+
+    const speak = () => {
+      try {
+        synth.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = "fr-FR";
+        utter.rate = 0.95;
+        const fr = (synth.getVoices() || []).find(
+          (v) => v.lang && v.lang.toLowerCase().startsWith("fr")
+        );
+        // Without a French voice the platform reads French with an English
+        // mouth, which is worse than useless for pronunciation practice.
+        if (!fr) {
+          console.warn("No French voice installed for browser speech.");
+          return resolve(false);
+        }
+        utter.voice = fr;
+        utter.onend = () => resolve(true);
+        utter.onerror = () => resolve(false);
+        synth.speak(utter);
+      } catch {
+        resolve(false);
+      }
+    };
+
+    // getVoices() is empty until the list loads, on first call in most
+    // browsers — wait for it once rather than deciding there are no voices.
+    if ((synth.getVoices() || []).length > 0) return speak();
+    let done = false;
+    const onVoices = () => {
+      if (done) return;
+      done = true;
+      synth.removeEventListener("voiceschanged", onVoices);
+      speak();
+    };
+    synth.addEventListener("voiceschanged", onVoices);
+    setTimeout(onVoices, 1200);
+  });
 }
 
 // Speak French text. Returns a promise that resolves when playback ends.
-// Uses cache when available. Errors are logged but not thrown.
+// Uses cache when available. Falls back to browser speech if the TTS backend
+// is unavailable; only throws nothing — failures are logged.
 export async function speakFrench(text, voice = "fr-FR-DeniseNeural") {
   if (!text || typeof window === "undefined") return;
   const clean = cleanForTts(text);
@@ -113,14 +174,20 @@ export async function speakFrench(text, voice = "fr-FR-DeniseNeural") {
       });
       if (!res.ok) {
         const err = await res.text().catch(() => "");
-        console.error("TTS API error:", res.status, err);
+        console.error(
+          `TTS API error ${res.status}: ${err} — falling back to browser speech.`
+        );
+        stopSpeaking();
+        await speakWithBrowser(clean);
         return;
       }
       blob = await res.blob();
       // Fire-and-forget cache write
       putCachedAudio(cacheKey, blob);
     } catch (e) {
-      console.error("TTS request failed:", e);
+      console.error("TTS request failed, falling back to browser speech:", e);
+      stopSpeaking();
+      await speakWithBrowser(clean);
       return;
     }
   }
@@ -146,8 +213,9 @@ export async function speakFrench(text, voice = "fr-FR-DeniseNeural") {
       audio.onended = cleanup;
       audio.onerror = cleanup;
       audio.play().catch((e) => {
-        console.error("Audio play() failed:", e);
+        console.error("Audio play() failed, falling back to browser speech:", e);
         cleanup();
+        speakWithBrowser(clean);
       });
     } catch (e) {
       console.error("Audio setup failed:", e);

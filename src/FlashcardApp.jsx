@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { useProgress } from "./useProgress";
+import { cleanFrenchPrompt } from "./lib/cardText";
 import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
@@ -178,6 +179,13 @@ function matchAnswer(typed, correct, extraAlts = []) {
   return { match: false };
 }
 
+// A typed answer counts as recalled unless the user gave up ("revealed") or
+// got it wrong. Shared by the Continue button and by tapping the card, which
+// does the same thing.
+function typedGotIt(typeResult) {
+  return typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle";
+}
+
 export default function FlashcardApp({ user, onSignOut }) {
   const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
   const { cards: userCards, loaded: deckLoaded, reload: reloadDeck } = useUserDeck(user);
@@ -215,6 +223,33 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
   // Tutor chat slide-over — global, so it opens from any view.
   const [showChat, setShowChat] = useState(false);
+  // Feedback sheet. Its open state lives here rather than inside BetaFeedback
+  // so the two panels can be kept mutually exclusive, and so the page knows to
+  // make room. Height is measured by the sheet and reported up.
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackHeight, setFeedbackHeight] = useState(0);
+
+  // Only one panel at a time: two overlapping surfaces fighting for the same
+  // screen is worse than either alone. Closing the feedback sheet goes through
+  // its own close request rather than just flipping the flag, so an unsent
+  // draft still gets the "discard?" prompt — and if you say no, the tutor
+  // doesn't open either, instead of silently eating what you typed.
+  const feedbackCloseRef = useRef(null);
+  const dismissFeedback = useCallback(() => {
+    const req = feedbackCloseRef.current;
+    if (!req) { setShowFeedback(false); return true; }
+    return req();
+  }, []);
+  const openChat = useCallback(() => {
+    if (!dismissFeedback()) return;
+    setShowChat(true);
+  }, [dismissFeedback]);
+  const toggleChat = useCallback(() => {
+    if (showChat) { setShowChat(false); return; }
+    if (!dismissFeedback()) return;
+    setShowChat(true);
+  }, [showChat, dismissFeedback]);
+  const openFeedback = useCallback(() => { setShowChat(false); setShowFeedback(true); }, []);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
@@ -390,14 +425,14 @@ export default function FlashcardApp({ user, onSignOut }) {
       (card.shownDir === "fr" && !flipped) || (card.shownDir === "en" && flipped);
     if (isFrenchVisible) {
       // Slight delay so the speech starts after the flip animation
-      const t = setTimeout(() => speakFrench(card.f), 200);
+      const t = setTimeout(() => speakFrench(cleanFrenchPrompt(card.f, card.b)), 200);
       return () => clearTimeout(t);
     }
   }, [autoSpeak, card, flipped, mode]);
 
   // Speak French manually (button handler)
   const speakCard = useCallback(() => {
-    if (card) speakFrench(card.f);
+    if (card) speakFrench(cleanFrenchPrompt(card.f, card.b));
   }, [card]);
 
   // Speak any specific text (used for "tap a word to hear it")
@@ -1031,7 +1066,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <p style={S.onbCardDesc}>Paste a public Google Doc URL and we'll fetch the contents.</p>
               <div style={S.onbCardArrow}>→</div>
             </button>
-            <button data-tutor-toggle style={S.onbCard} onClick={() => setShowChat(true)}>
+            <button data-tutor-toggle style={S.onbCard} onClick={openChat}>
               <div style={S.onbCardIcon}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
               </div>
@@ -1101,9 +1136,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   const shellStyle = {
     ...(isNarrow ? S.shellNarrow : S.shell),
     paddingRight: chatReflow ? CHAT_PANEL_WIDTH : 0,
+    paddingBottom: showFeedback ? feedbackHeight : 0,
     // Same duration and curve as the panel's own slide, so the page and the
     // panel move together instead of as two separate animations.
-    transition: `padding-right ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
+    transition: `padding-right ${CHAT_ANIM_MS}ms ${CHAT_EASING}, padding-bottom ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
   };
   
   const sidebar = (
@@ -1132,7 +1168,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         <button
           data-tutor-toggle
           style={isNarrow ? S.sideItemBottom : S.sideItem}
-          onClick={() => setShowChat((v) => !v)}
+          onClick={toggleChat}
         >
           <span style={S.sideIcon}>{NAV_ICONS.tutor}</span>
           Tutor
@@ -1158,7 +1194,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   <button
                     data-tutor-toggle
                     style={S.profileMenuItem}
-                    onClick={() => { setShowChat(true); setShowProfileMenu(false); }}
+                    onClick={() => { openChat(); setShowProfileMenu(false); }}
                   >
                     Ask the tutor
                   </button>
@@ -1191,7 +1227,16 @@ export default function FlashcardApp({ user, onSignOut }) {
             <span style={S.sideBottomEmail}>{user.email}</span>
           </div>
           <div style={S.sideFeedbackRow}>
-            <BetaFeedback user={user} currentPage={mode} currentCard={mode === "study" ? card : null} />
+            <BetaFeedback
+              user={user}
+              currentPage={mode}
+              currentCard={mode === "study" ? card : null}
+              open={showFeedback}
+              onOpen={openFeedback}
+              onClose={() => setShowFeedback(false)}
+              requestCloseRef={feedbackCloseRef}
+              onHeightChange={setFeedbackHeight}
+            />
           </div>
         </div>
         </>
@@ -1443,7 +1488,9 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // ── FEEDBACK VIEW (admin only) ──────────────────────────────────────
   // ── STUDY MODE ──────────────────────────────────────────────────────
-  const front = card ? (card.shownDir==="fr" ? card.f : card.b) : "";
+  // French shown as the prompt gets its English gloss stripped — otherwise the
+  // card answers itself. The answer side is left exactly as stored.
+  const front = card ? (card.shownDir==="fr" ? cleanFrenchPrompt(card.f, card.b) : card.b) : "";
   const back = card ? (card.shownDir==="fr" ? card.b : card.f) : "";
   // Typing mode: user enabled it AND the card exists. All cards are
   // typable — if the back is a long explanation, the user can hit
@@ -1456,9 +1503,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   // type mode tapping it has to run giveUpTyped. A bare flip() would turn the
   // card over while leaving typeResult null — the answer visible, but the app
   // still believing the card was unanswered, so the action row never appears.
+  // Once the answer is showing, the card is the same affordance as
+  // "Continue →": tapping it grades and moves on, so you can work through a
+  // session without moving the pointer off the card.
   const onCardClick = () => {
     if (!effectiveTypeMode) return flip();
-    if (!typeResult) giveUpTyped();
+    if (!typeResult) return giveUpTyped();
+    answer(typedGotIt(typeResult), "typed");
   };
 
   return (
@@ -1550,7 +1601,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
-                  <div style={S.cardFront}>
+                  <div style={{...S.cardFront, pointerEvents: flipped ? "none" : "auto"}}>
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -1576,7 +1627,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {effectiveTypeMode && !typeResult && <div style={S.cardHint}>Tap to show answer</div>}
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
-                  <div style={S.cardBack}>
+                  <div style={{...S.cardBack, pointerEvents: flipped ? "auto" : "none"}}>
 
                     <div style={S.cardTextB}>{back}</div>
                     {TTS_AVAILABLE && card.shownDir === "en" && (
@@ -1653,7 +1704,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </div>
                     )}
                     {(() => {
-                      const gotIt = typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle";
+                      const gotIt = typedGotIt(typeResult);
                       return (
                         <div style={S.typeAdvanceRow}>
                           {gotIt && (
@@ -2357,7 +2408,7 @@ const S = {
   // whatever space is left so the card and its buttons are always on screen
   // together. Anything that legitimately runs long (Stats) scrolls inside
   // main via mainInnerScroll rather than scrolling the whole page.
-  shell: { display:"flex", height:"100vh", overflow:"hidden", background:T.color.background },
+  shell: { display:"flex", height:"100vh", overflow:"hidden", boxSizing:"border-box", background:T.color.background },
   shellNarrow: { display:"flex", flexDirection:"column", minHeight:"100vh", background:T.color.background },
   // minHeight:0 is what lets the flex children actually shrink; without it a
   // flex item refuses to go below its content size and the card pushes the
@@ -2370,7 +2421,7 @@ const S = {
   // ── Sidebar ───────────────────────────────────────────────────────
   // Fixed 256px column on desktop. The sticky positioning + 100vh height
   // means the sidebar stays fixed while the main content scrolls.
-  sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
+  sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100%", overflowY:"auto", boxSizing:"border-box" },
   sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
   sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
