@@ -33,6 +33,9 @@ export function BetaFeedback({
   onOpen,
   onClose,
   onHeightChange,
+  // Left edge of the content column. The sheet centres itself over the page's
+  // main area rather than the whole window, so it doesn't straddle the nav.
+  offsetLeft = 0,
   // FlashcardApp puts a close-request function here so it can ask the sheet to
   // close (and honour the discard prompt) before opening the tutor.
   requestCloseRef,
@@ -229,7 +232,7 @@ export function BetaFeedback({
       {open && createPortal(
         minimized ? (
           // ── Minimized bar ─────────────────────────────────────────
-          <div style={BF.minimizedBar} ref={panelRef}>
+          <div style={{...BF.minimizedBar, left: offsetLeft}} ref={panelRef}>
             <button
               style={BF.minBarMain}
               onClick={() => setMinimized(false)}
@@ -248,7 +251,7 @@ export function BetaFeedback({
           </div>
         ) : (
           // ── Expanded bottom sheet ─────────────────────────────────
-          <div style={BF.sheet} ref={panelRef}>
+          <div style={{...BF.sheet, left: offsetLeft}} ref={panelRef}>
             <div style={BF.header}>
               <h2 style={BF.title}>Send feedback</h2>
               <div style={BF.headerBtns}>
