@@ -218,15 +218,22 @@ These look arbitrary and are not:
 
 ## Testing
 
-There is no test runner. Verification is done by driving the built app in
-headless Chromium (`playwright-core`, browser at
-`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) against a mock Supabase
-on port 5999, asserting on **measured** values — geometry, computed styles,
-request payloads — rather than on intent. Pure logic (`classifyCard`,
-`looksMultiSense`, `cleanFrenchPrompt`) is exercised with plain Node scripts.
+`npm test` — see `tests/README.md`. Seven suites: two pure-logic, five driving
+the real app in headless Chromium against a mock Supabase, asserting on
+**measured** values (geometry, computed styles, request payloads) rather than
+on intent.
 
 If you change layout, measure it in a browser. Several bugs in this project's
-history were "fixed" against an assumption and shipped broken.
+history were "fixed" against an assumption and shipped broken. Two rules the
+suite exists to enforce, both learned from checks that lied:
+
+- **Write the assertion from the requirement, not the implementation.** A check
+  derived from the code you just wrote can only confirm that code. This suite
+  once asserted "the sidebar stops above the panel" and passed for weeks — the
+  sidebar shrinking *was* the bug.
+- **Never bake in a number describing fixture data.** Read it back from the
+  fixture (`servedDeck()`). A hard-coded deck size went stale and reported a
+  failure the app hadn't caused.
 
 ---
 
