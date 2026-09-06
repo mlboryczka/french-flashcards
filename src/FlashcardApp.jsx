@@ -8,6 +8,7 @@ import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
+import { SplitSensesModal } from "./SplitSensesModal";
 import ChatPanel, { CHAT_PANEL_WIDTH, CHAT_ANIM_MS, CHAT_EASING } from "./ChatPanel";
 import { T } from "./theme";
 import {
@@ -251,6 +252,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
+  const [showSplitSenses, setShowSplitSenses] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState("");
 
@@ -1202,6 +1204,12 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     Upload document
                   </button>
+                  <button
+                    style={S.profileMenuItem}
+                    onClick={() => { setShowSplitSenses(true); setShowProfileMenu(false); }}
+                  >
+                    Fix multi-sense cards
+                  </button>
                   {isAdmin && (<>
                     <button
                       style={S.profileMenuItem}
@@ -1293,6 +1301,13 @@ export default function FlashcardApp({ user, onSignOut }) {
       )}
       {showUsersModal && (
         <UsersModal onClose={() => setShowUsersModal(false)} />
+      )}
+      {showSplitSenses && (
+        <SplitSensesModal
+          deck={userCards}
+          onClose={() => setShowSplitSenses(false)}
+          onApplied={reloadDeck}
+        />
       )}
       {editingCard && (
         <EditCardModal
