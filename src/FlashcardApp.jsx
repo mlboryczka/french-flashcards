@@ -6,7 +6,7 @@ import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
-import ChatPanel, { CHAT_PANEL_WIDTH } from "./ChatPanel";
+import ChatPanel, { CHAT_PANEL_WIDTH, CHAT_ANIM_MS, CHAT_EASING } from "./ChatPanel";
 import { T } from "./theme";
 import {
   speakFrench,
@@ -1030,7 +1030,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <p style={S.onbCardDesc}>Paste a public Google Doc URL and we'll fetch the contents.</p>
               <div style={S.onbCardArrow}>→</div>
             </button>
-            <button style={S.onbCard} onClick={() => setShowChat(true)}>
+            <button data-tutor-toggle style={S.onbCard} onClick={() => setShowChat(true)}>
               <div style={S.onbCardIcon}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
               </div>
@@ -1100,7 +1100,9 @@ export default function FlashcardApp({ user, onSignOut }) {
   const shellStyle = {
     ...(isNarrow ? S.shellNarrow : S.shell),
     paddingRight: chatReflow ? CHAT_PANEL_WIDTH : 0,
-    transition: "padding-right 0.22s ease",
+    // Same duration and curve as the panel's own slide, so the page and the
+    // panel move together instead of as two separate animations.
+    transition: `padding-right ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
   };
   
   const sidebar = (
@@ -1127,8 +1129,9 @@ export default function FlashcardApp({ user, onSignOut }) {
             than in the profile menu because looking a word up mid-session is
             a primary action, and nobody finds it behind an avatar. */}
         <button
+          data-tutor-toggle
           style={isNarrow ? S.sideItemBottom : S.sideItem}
-          onClick={() => setShowChat(true)}
+          onClick={() => setShowChat((v) => !v)}
         >
           <span style={S.sideIcon}>{NAV_ICONS.tutor}</span>
           Tutor
@@ -1150,6 +1153,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <div style={S.profileMenuBottom}>
                   <div style={S.profileMenuEmail}>{user.email}</div>
                   <button
+                    data-tutor-toggle
                     style={S.profileMenuItem}
                     onClick={() => { setShowChat(true); setShowProfileMenu(false); }}
                   >
@@ -1352,7 +1356,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       <div style={shellStyle}>
         {sidebar}
         <main style={S.main}>
-          <div style={S.mainInner}>
+          <div style={S.mainInnerScroll}>
             <h1 style={S.statsHeading}>Progress</h1>
 
             {/* Row 1: This session · Accuracy · Streak */}
@@ -2346,10 +2350,19 @@ const S = {
   loading: { textAlign:"center", padding:60, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
 
   // ── App shell: sidebar + main ─────────────────────────────────────
-  shell: { display:"flex", minHeight:"100vh", background:T.color.background },
+  // Fixed viewport height, not min-height: the study view sizes the card to
+  // whatever space is left so the card and its buttons are always on screen
+  // together. Anything that legitimately runs long (Stats) scrolls inside
+  // main via mainInnerScroll rather than scrolling the whole page.
+  shell: { display:"flex", height:"100vh", overflow:"hidden", background:T.color.background },
   shellNarrow: { display:"flex", flexDirection:"column", minHeight:"100vh", background:T.color.background },
-  main: { flex:1, display:"flex", flexDirection:"column", minWidth:0 },
-  mainInner: { flex:1, padding:"32px 40px 120px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
+  // minHeight:0 is what lets the flex children actually shrink; without it a
+  // flex item refuses to go below its content size and the card pushes the
+  // buttons off the bottom instead of getting smaller.
+  main: { flex:1, display:"flex", flexDirection:"column", minWidth:0, minHeight:0 },
+  mainInner: { flex:1, minHeight:0, display:"flex", flexDirection:"column", padding:"20px 40px 20px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
+  // Stats is genuinely long-form, so it scrolls within main.
+  mainInnerScroll: { flex:1, minHeight:0, overflowY:"auto", padding:"32px 40px 60px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
 
   // ── Sidebar ───────────────────────────────────────────────────────
   // Fixed 256px column on desktop. The sticky positioning + 100vh height
@@ -2388,11 +2401,11 @@ const S = {
   sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
 
   // ── Sub-toolbar (category filter + counter, below sticky top bar) ─
-  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:24, flexWrap:"wrap" },
+  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:14, flexShrink:0, flexWrap:"wrap" },
   subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
 
   // ── Card area: centered with decorative blur shapes ───────────────
-  cardArea: { position:"relative", display:"flex", flexDirection:"column", alignItems:"center", paddingTop:24 },
+  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -2409,7 +2422,7 @@ const S = {
   // The button itself is a borderless flex column. The colored 80×80
   // box wraps the SVG, and the uppercase label sits below it.
   // ── Rectangular action buttons: AGAIN / GOT IT ─────────────────────
-  actionRow: { display:"flex", gap:16, justifyContent:"center", marginTop:8, marginBottom:24, width:"100%", maxWidth:480, alignSelf:"center" },
+  actionRow: { display:"flex", gap:16, justifyContent:"center", marginTop:4, marginBottom:4, width:"100%", maxWidth:480, alignSelf:"center", flexShrink:0 },
   actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"20px 28px", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, background:"transparent", color:T.color.onSurfaceVariant, fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", transition:"all 0.15s" },
   actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"20px 28px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },
 
@@ -2466,10 +2479,13 @@ const S = {
   backBtn: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500 },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
-  cardWrap: { perspective:1200, marginBottom:48, width:"100%", maxWidth:680, position:"relative", zIndex:1 },
-  card: { position:"relative", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", minHeight:340 },
-  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"56px 36px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
-  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"56px 36px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:680, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"center" },
+  // maxHeight lets the card give up height when the window is short; the old
+  // minHeight:340 floor is what made it overflow instead. Below the natural
+  // 1.6 ratio the card simply becomes wider and shorter, which reads fine.
+  card: { position:"relative", width:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", maxHeight:"100%", minHeight:0 },
+  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"52px 32px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
+  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"52px 32px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
   freqTag: { marginLeft:6, background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
@@ -2579,7 +2595,7 @@ const S = {
   cardActionBtnFlagged: { background:T.color.tertiaryFixed, color:T.color.onSecondaryContainer, cursor:"default", fontWeight:700 },
   // Type mode (study input)
   typeInputRow: { display:"flex", gap:10, justifyContent:"center", marginBottom:10 },
-  giveUpRow: { display:"flex", justifyContent:"center", marginBottom:14 },
+  giveUpRow: { display:"flex", justifyContent:"center", marginBottom:4, flexShrink:0 },
   giveUpBtn: { padding:"6px 14px", background:"transparent", border:"none", cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em", textDecoration:"underline" },
   typeInput: { flex:1, maxWidth:300, padding:"13px 16px", border:"none", background:T.color.surfaceLowest, borderRadius:T.radius.lg, fontSize:16, fontFamily:T.font.serif, outline:"none", color:T.color.primary, boxShadow:T.shadow.focus },
   typeSubmit: { padding:"13px 26px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
