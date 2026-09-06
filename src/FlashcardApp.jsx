@@ -1505,12 +1505,15 @@ export default function FlashcardApp({ user, onSignOut }) {
                 sessionCounts.lapse + sessionCounts.review + sessionCounts.new + sessionCounts.spot > 0;
               return (
                 <>
-                {idx > 0 ? (
-                  <button style={S.backBtn} onClick={goBack} title="Go back to the previous card">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
-                    Previous card
-                  </button>
-                ) : <span />}
+                <button
+                  style={idx > 0 ? S.backBtn : {...S.backBtn, ...S.backBtnOff}}
+                  onClick={goBack}
+                  disabled={idx === 0}
+                  title={idx > 0 ? "Go back to the previous card" : "You're on the first card"}
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
+                  Previous card
+                </button>
                 <div style={S.subToolbarRight}>
                   <span style={S.counter}>
                     {inOriginal
@@ -2383,7 +2386,7 @@ const S = {
   sideDivider: { marginTop:"auto", height:1, background:"rgba(3,22,50,0.07)", marginLeft:20, marginRight:20 },
   sideBottom: { padding:"14px 20px 4px" },
   sideBottomRow: { display:"flex", alignItems:"center", gap:10 },
-  sideFeedbackRow: { marginTop:6, marginLeft:-8 },
+  sideFeedbackRow: { marginTop:2 },
   sideProfileRow: { position:"relative", flexShrink:0 },
   sideBottomEmail: { flex:1, fontSize:11, color:"rgba(3,22,50,0.45)", fontFamily:T.font.sans, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   profileMenuBottom: { position:"absolute", bottom:"100%", left:0, minWidth:200, marginBottom:8, background:T.color.surfaceLowest, borderRadius:T.radius.lg, boxShadow:"0 -8px 32px rgba(3,22,50,0.12)", padding:"8px 0", zIndex:20, fontFamily:T.font.sans },
@@ -2479,6 +2482,7 @@ const S = {
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   counterBreakdown: { opacity:0.7 },
+  backBtnOff: { opacity:0.38, cursor:"default", boxShadow:"none" },
   backBtn: { display:"flex", alignItems:"center", gap:6, padding:"6px 14px 6px 11px", background:T.color.surfaceLowest, border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.full, cursor:"pointer", fontSize:11.5, color:T.color.onSurface, fontFamily:T.font.sans, fontWeight:700, letterSpacing:"0.01em", boxShadow:"0 1px 2px rgba(3,22,50,0.05)", transition:"all 0.15s" },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
