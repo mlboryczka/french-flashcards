@@ -1511,7 +1511,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   disabled={idx === 0}
                   title={idx > 0 ? "Go back to the previous card" : "You're on the first card"}
                 >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
                   Previous card
                 </button>
                 <div style={S.subToolbarRight}>
@@ -1551,9 +1551,6 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={S.cardFront}>
-                    {card.freq >= 2 && (
-                      <div style={S.cardEyebrow}><span style={S.freqTag}>{card.freq}× in your lessons</span></div>
-                    )}
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -2366,7 +2363,7 @@ const S = {
   // flex item refuses to go below its content size and the card pushes the
   // buttons off the bottom instead of getting smaller.
   main: { flex:1, display:"flex", flexDirection:"column", minWidth:0, minHeight:0 },
-  mainInner: { flex:1, minHeight:0, display:"flex", flexDirection:"column", padding:"20px 40px 20px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
+  mainInner: { flex:1, minHeight:0, display:"flex", flexDirection:"column", padding:"12px 40px 16px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
   // Stats is genuinely long-form, so it scrolls within main.
   mainInnerScroll: { flex:1, minHeight:0, overflowY:"auto", padding:"32px 40px 60px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
 
@@ -2386,7 +2383,7 @@ const S = {
   sideDivider: { marginTop:"auto", height:1, background:"rgba(3,22,50,0.07)", marginLeft:20, marginRight:20 },
   sideBottom: { padding:"14px 20px 4px" },
   sideBottomRow: { display:"flex", alignItems:"center", gap:10 },
-  sideFeedbackRow: { marginTop:2 },
+  sideFeedbackRow: { marginTop:2, marginLeft:42 },
   sideProfileRow: { position:"relative", flexShrink:0 },
   sideBottomEmail: { flex:1, fontSize:11, color:"rgba(3,22,50,0.45)", fontFamily:T.font.sans, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   profileMenuBottom: { position:"absolute", bottom:"100%", left:0, minWidth:200, marginBottom:8, background:T.color.surfaceLowest, borderRadius:T.radius.lg, boxShadow:"0 -8px 32px rgba(3,22,50,0.12)", padding:"8px 0", zIndex:20, fontFamily:T.font.sans },
@@ -2409,11 +2406,11 @@ const S = {
   sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
 
   // ── Sub-toolbar (category filter + counter, below sticky top bar) ─
-  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:8, flexShrink:0, flexWrap:"wrap", minHeight:30 },
+  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:0, flexShrink:0, flexWrap:"wrap", minHeight:30 },
   subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
 
   // ── Card area: centered with decorative blur shapes ───────────────
-  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" },
+  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", paddingBottom:130 },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -2485,7 +2482,7 @@ const S = {
   // Unavailable keeps the shape and drops the fill, so the row never shifts
   // and the control still reads as a control rather than a ghost of one.
   backBtnOff: { background:"transparent", color:T.color.onSurfaceVariant, borderColor:"rgba(3,22,50,0.07)", boxShadow:"none", cursor:"default" },
-  backBtn: { display:"flex", alignItems:"center", gap:7, padding:"9px 18px 9px 14px", background:T.color.surfaceLowest, borderWidth:1, borderStyle:"solid", borderColor:"rgba(3,22,50,0.22)", borderRadius:T.radius.full, cursor:"pointer", fontSize:13, color:T.color.onSurface, fontFamily:T.font.sans, fontWeight:700, letterSpacing:"0.01em", boxShadow:"0 1px 3px rgba(3,22,50,0.07)", transition:"all 0.15s" },
+  backBtn: { display:"flex", alignItems:"center", gap:6, padding:"6px 14px 6px 11px", background:T.color.surfaceLowest, borderWidth:1, borderStyle:"solid", borderColor:"rgba(3,22,50,0.22)", borderRadius:T.radius.full, cursor:"pointer", fontSize:11.5, color:T.color.onSurface, fontFamily:T.font.sans, fontWeight:700, letterSpacing:"0.01em", boxShadow:"0 1px 3px rgba(3,22,50,0.07)", transition:"all 0.15s" },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
   // flex:0 1 auto — the card shrinks on short windows but never grows to fill
@@ -2496,8 +2493,8 @@ const S = {
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
   card: { position:"relative", width:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", maxHeight:380, minHeight:0 },
-  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"44px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
-  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"44px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
+  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
+  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
   freqTag: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
