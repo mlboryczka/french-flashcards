@@ -18,6 +18,16 @@ const table = (name, cases, run) => {
   }
 };
 
+// The stored category is a SECTION marker, not a card type: the parser tags
+// everything after the "Prononciation Grammaire" heading as G, so that bucket
+// holds plain vocabulary and example sentences too. These two were reported
+// from the live Grammar filter.
+table("classifyCard — a section tag is not a card type", [
+  [{ cat: "gram", f: "mon copain", b: "my boyfriend" }, "vocab", "tagged G, but it is a word"],
+  [{ cat: "gram", f: "le seul projet que j'ai vu", b: "the only project I saw" }, "phrase", "tagged G, but it is a sentence"],
+  [{ cat: "gram", f: "la voiture", b: "the car" }, "vocab"],
+], classifyCard);
+
 table("classifyCard — grammar is a rule or a form to produce", [
   [{ cat: "gram", f: "aller (subjonctif) → ils/elles", b: "aillent" }, "grammar"],
   [{ cat: "vocab", f: "vivre → nous", b: "nous vivons" }, "grammar", "drill, whatever the category says"],
@@ -67,6 +77,29 @@ table("looksMultiSense — shortlists real suspects only", [
   ["to charge (a fee)", false],
   ["I have never been so single in my life", false],
 ], (back) => looksMultiSense({ b: back }));
+
+// The deck's own grammar and pronunciation sections are the corpus every
+// pattern in isGrammarCard was derived from. If a change stops recognising
+// them, this catches it.
+console.log("\n  classifyCard — against the real cahier corpus");
+const { RAW } = await import("../../src/data/cards.js");
+const section = RAW.filter(([, , c]) => c === "gram" || c === "pron");
+const missed = section.filter(([f, b, c]) => classifyCard({ f, b, cat: c }) !== "grammar");
+ck(
+  `every card in the grammar and pronunciation sections reads as grammar (${section.length})`,
+  missed.length === 0,
+  missed.length ? missed.map(([f]) => f).join("; ").slice(0, 160) : ""
+);
+const vocabSection = RAW.filter(([, , c]) => c === "vocab" || c === "expr");
+const pulled = vocabSection.filter(([f, b, c]) => classifyCard({ f, b, cat: c }) === "grammar");
+// These are real grammar patterns the parser filed under vocab — "il faut +
+// infinitif", "après avoir + participe passé". A handful is right; a flood
+// means a pattern has gone too broad.
+ck(
+  `few vocab cards get pulled into grammar (${pulled.length} of ${vocabSection.length})`,
+  pulled.length <= 30,
+  pulled.length > 30 ? pulled.slice(0, 8).map(([f]) => f).join("; ") : ""
+);
 
 console.log("\n  cleanFrenchPrompt — strips a gloss, keeps grammar tags");
 for (const [fr, en, want] of [

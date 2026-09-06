@@ -31,6 +31,9 @@ const deck=[
    next_due_at:new Date(now-DAY).toISOString(),lapses:0,stability:6,difficulty:5,fsrs_state:2,reps:2,last_review:new Date(now-7*DAY).toISOString(),last_answer_correct:true},
   {id:14,front:"le chemin de fer",back:"the railway",category:"V",dates:["2025-06-01"],flagged_for_review:false,batch_id:null,
    next_due_at:new Date(now-DAY).toISOString(),lapses:0,stability:6,difficulty:5,fsrs_state:2,reps:2,last_review:new Date(now-7*DAY).toISOString(),last_answer_correct:true},
+  // A real conjugation drill, so the Grammar filter has something to show.
+  {id:15,front:"vivre → nous",back:"nous vivons",category:"G",dates:["2025-07-01"],flagged_for_review:false,batch_id:null,
+   next_due_at:new Date(now-DAY).toISOString(),lapses:0,stability:4,difficulty:5,fsrs_state:2,reps:2,last_review:new Date(now-5*DAY).toISOString(),last_answer_correct:true},
 ];
 http.createServer((req,res)=>{
   if(req.method==='OPTIONS'){res.writeHead(204,cors);return res.end();}

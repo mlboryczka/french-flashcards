@@ -82,12 +82,66 @@ function tokens(text) {
     .filter(Boolean);
 }
 
+// Is this card ABOUT French, rather than a piece of French?
+//
+// The stored category can't answer that. The cahier parser assigns it by
+// POSITION — everything after the "Prononciation Grammaire" heading becomes
+// G — so that bucket holds whatever the teacher happened to write in the
+// grammar section, including plain vocabulary ("mon copain") and example
+// sentences ("le seul projet que j'ai vu"). Trusting the tag put those in the
+// Grammar filter. The category is a section marker, not a card type.
+//
+// So grammar is decided by what the card looks like. Every pattern below was
+// derived from the 117 cards in this deck's grammar and pronunciation
+// sections; see tests/suites/logic.mjs, which runs the whole corpus through it.
+
+// Bare "(adj)" / "(adv)" / "(pp: agi)" are part-of-speech tags on ordinary
+// vocabulary — hundreds of cards carry them, and they mean nothing here.
+const POS_TAG = /\((?:adj|adv|n|nom|v|f|m|pl|pp)[^)]*\)/gi;
+
+// Metalinguistic vocabulary. "accord" needs its grammar sense, or "se mettre
+// d'accord" reads as grammar; "son" is left out entirely because the sound
+// term is indistinguishable from the possessive, and phonetic cards are caught
+// by the brace rule anyway.
+const GRAMMAR_TERM =
+  /\b(pronoms?|toniques?|articles?|partitifs?|accords? (?:du|des|avec)|participes?|cod|coi|relatifs?|sujet|négation|liaison|élision|conjugaison|imparfait|conditionnel|subjonctif|indicatif|impératif|plus-que-parfait|passé composé|présent|futur|auxiliaire|préposition|infinitif|placement|prononcé|prononciation|voie passive)\b/i;
+
+// Pattern templates: "il faut + infinitif", "pas aussi … que", "cela = ça".
+// An ellipsis only marks a template when something follows it — a trailing "…"
+// is just an unfinished phrase ("c'est pour ça que …").
+const FORMULA = /→|\s\+\s|(?:…|\.\.\.)\s*[a-zà-ÿ]|\s=\s|\bvs\b/i;
+
+// Phonetic respelling: "du riz {ri}", "complet / complète … {complèt}".
+const PHONETIC = /\{[^}]+\}/;
+
+// A French front carrying an English aside is describing usage, not naming a
+// thing: "dans 10 minutes (from now) / en 10 minutes (within)".
+const ENGLISH_ASIDE =
+  /\((?:with|from|within|opinion|in mind|action|state|subject|direct|indirect)[^)]*\)/i;
+
+// A back that explains a distinction instead of translating one thing.
+const EXPLAINS =
+  /\bvs\b|pronounced|silent|(?:participle|pp) agrees|agrees with|\bmasc:|\bfem:|\baction:|\bstate:|order of|only used|contraction|rhymes|negation/i;
+
+export function isGrammarCard(card) {
+  const front = String(card?.f ?? "");
+  const back = String(card?.b ?? "");
+  if (front.includes("→")) return true; // conjugation drill, definitive
+  if (PHONETIC.test(front) || PHONETIC.test(back)) return true;
+  const f = front.replace(POS_TAG, " ");
+  return (
+    GRAMMAR_TERM.test(f) ||
+    FORMULA.test(f) ||
+    ENGLISH_ASIDE.test(front) ||
+    EXPLAINS.test(back) ||
+    /\s\+\s/.test(back)
+  );
+}
+
 export function classifyCard(card) {
   if (!card) return "phrase";
 
-  // Rules and drills, whatever they look like.
-  if (card.cat === "gram" || card.cat === "pron") return "grammar";
-  if (typeof card.f === "string" && card.f.includes("→")) return "grammar";
+  if (isGrammarCard(card)) return "grammar";
 
   // An expression is a phrase by definition, however short — "au début" is
   // two small words but you learn it whole, as a turn of phrase.
