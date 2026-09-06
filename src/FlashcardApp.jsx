@@ -6,7 +6,7 @@ import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
-import ChatPanel from "./ChatPanel";
+import ChatPanel, { CHAT_PANEL_WIDTH } from "./ChatPanel";
 import { T } from "./theme";
 import {
   speakFrench,
@@ -1092,6 +1092,16 @@ export default function FlashcardApp({ user, onSignOut }) {
   };
 
   const navItems = [["study", "Cards"], ["stats", "Stats"]];
+
+  // Open the tutor panel and the app reflows to sit beside it rather than
+  // being covered — you can still read the card you're asking about. Below
+  // 768px there is no room to give, so the panel stays an overlay instead.
+  const chatReflow = showChat && !isNarrow;
+  const shellStyle = {
+    ...(isNarrow ? S.shellNarrow : S.shell),
+    paddingRight: chatReflow ? CHAT_PANEL_WIDTH : 0,
+    transition: "padding-right 0.22s ease",
+  };
   
   const sidebar = (
     <aside style={isNarrow ? S.sideBarBottom : S.sideBar}>
@@ -1190,6 +1200,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         user={user}
         deckFronts={userCards.map((c) => c.f)}
         onCardsAdded={reloadDeck}
+        reflow={chatReflow}
       />
       <CahierUpload
         open={showUpload}
@@ -1338,7 +1349,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     const pipeTotal = Math.max(total, 1);
 
     return (
-      <div style={isNarrow ? S.shellNarrow : S.shell}>
+      <div style={shellStyle}>
         {sidebar}
         <main style={S.main}>
           <div style={S.mainInner}>
@@ -1430,8 +1441,18 @@ export default function FlashcardApp({ user, onSignOut }) {
   // silently disabled type mode on many cards, making the toggle button
   // appear broken.
   const effectiveTypeMode = typeMode && !!card;
+
+  // The card face is the same affordance as the "Show answer" button, so in
+  // type mode tapping it has to run giveUpTyped. A bare flip() would turn the
+  // card over while leaving typeResult null — the answer visible, but the app
+  // still believing the card was unanswered, so the action row never appears.
+  const onCardClick = () => {
+    if (!effectiveTypeMode) return flip();
+    if (!typeResult) giveUpTyped();
+  };
+
   return (
-    <div style={isNarrow ? S.shellNarrow : S.shell}>
+    <div style={shellStyle}>
       {sidebar}
       <main style={S.main}>
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
@@ -1519,7 +1540,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.blurTL} />
               <div style={S.blurBR} />
 
-              <div style={S.cardWrap} onClick={flip}>
+              <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={S.cardFront}>
                     <div style={S.cardEyebrow}>{catToLabel(card.cat)}{card.freq>=2 && <span style={S.freqTag}>{card.freq}×</span>}</div>
@@ -1545,6 +1566,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </div>
                     )}
                     {!effectiveTypeMode && <div style={S.cardHint}>Tap to reveal translation</div>}
+                    {effectiveTypeMode && !typeResult && <div style={S.cardHint}>Tap to show answer</div>}
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
                   <div style={S.cardBack}>

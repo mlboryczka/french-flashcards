@@ -25,6 +25,10 @@ import { CAT_UI_TO_DB } from "./lib/cardCategories";
 //   <ChatPanel open={showChat} onClose={...} user={user}
 //              deckFronts={userCards.map(c => c.f)} onCardsAdded={reloadDeck} />
 
+// Panel width. Exported because FlashcardApp reflows the app by exactly this
+// much when the panel is open on a wide screen, so the two must agree.
+export const CHAT_PANEL_WIDTH = 460;
+
 const CATEGORY_LABEL = {
   vocab: "Vocabulary",
   expr: "Expression",
@@ -38,7 +42,18 @@ const SUGGESTIONS = [
   "When do I use the subjunctive after bien que?",
 ];
 
-export default function ChatPanel({ open, onClose, user, deckFronts = [], onCardsAdded }) {
+export default function ChatPanel({
+  open,
+  onClose,
+  user,
+  deckFronts = [],
+  onCardsAdded,
+  // Wide screens push the app aside to make room for the panel rather than
+  // covering it, so you can read the card you're asking about while you type.
+  // Narrow screens have no room to reflow, so the panel stays an overlay with
+  // a scrim.
+  reflow = false,
+}) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -174,8 +189,12 @@ export default function ChatPanel({ open, onClose, user, deckFronts = [], onCard
 
   return createPortal(
     <div style={S.wrap}>
-      <div style={S.scrim} onClick={onClose} />
-      <aside style={S.panel} role="dialog" aria-label="Ask the tutor">
+      {!reflow && <div style={S.scrim} onClick={onClose} />}
+      <aside
+        style={reflow ? { ...S.panel, width: CHAT_PANEL_WIDTH } : S.panel}
+        role="dialog"
+        aria-label="Ask the tutor"
+      >
         <header style={S.head}>
           <div>
             <div style={S.title}>Ask the tutor</div>
@@ -270,14 +289,17 @@ export default function ChatPanel({ open, onClose, user, deckFronts = [], onCard
 }
 
 const S = {
-  wrap: { position: "fixed", inset: 0, zIndex: 1000 },
-  scrim: { position: "absolute", inset: 0, background: "rgba(3,22,50,0.28)" },
+  // pointerEvents none so that in reflow mode the app beside the panel stays
+  // clickable; the scrim and panel opt themselves back in.
+  wrap: { position: "fixed", inset: 0, zIndex: 1000, pointerEvents: "none" },
+  scrim: { position: "absolute", inset: 0, background: "rgba(3,22,50,0.28)", pointerEvents: "auto" },
   panel: {
     position: "absolute",
     top: 0,
     right: 0,
     bottom: 0,
     width: "min(460px, 100vw)",
+    pointerEvents: "auto",
     background: T.color.surface,
     boxShadow: "-8px 0 32px rgba(3,22,50,0.16)",
     display: "flex",
