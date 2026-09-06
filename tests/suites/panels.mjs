@@ -34,14 +34,12 @@ ck(
     return t ? Math.round(t.getBoundingClientRect().height) : 999;
   })) <= 44
 );
-ck(
-  "attach-card is a chip, not a row",
-  (await page.evaluate(() => {
-    const b = [...document.querySelectorAll("button")].find((x) => /^(une|la|le|je|mon|au|vivre)/.test(x.textContent.trim()));
-    if (!b) return 999;
-    return Math.round(b.getBoundingClientRect().width);
-  })) <= 280
-);
+// By its marker, not by guessing at whatever French happens to be on the card.
+const attachWidth = await page.evaluate(() => {
+  const b = document.querySelector("[data-attach-card]");
+  return b ? Math.round(b.getBoundingClientRect().width) : null;
+});
+ck("attach-card is a chip, not a full-width row", attachWidth !== null && attachWidth <= 280, `${attachWidth}px`);
 // The dedicated dropzone is gone, so the sheet itself has to accept the file.
 await page.evaluate(() => {
   const dt = new DataTransfer();

@@ -1,6 +1,6 @@
 // Layout: the card fits the window, and a panel makes room by moving the
 // CONTENT COLUMN — never the sidebar.
-import { openApp, finish, checker, gotoStats, layoutProbe, cardBox } from "../harness.mjs";
+import { openApp, finish, checker, gotoStats, layoutProbe, cardBox, settled } from "../harness.mjs";
 
 const ck = checker();
 const { browser, page } = await openApp();
@@ -72,6 +72,46 @@ ck("the panel starts right of the sidebar", open.sheet.left >= 256, `left ${open
 ck("the panel is shorter than the old 60vh", open.sheet.height <= 340, `${open.sheet.height}px`);
 ck("and wider than the old 600", open.sheet.width > 600, `${open.sheet.width}px`);
 ck("the shell stays one viewport tall", Math.abs(open.shellHeight - open.viewport) <= 1);
+
+console.log("\n  the card holds its position when it flips");
+await page.mouse.click(80, 60);   // dismiss the panel the last section opened
+await settled(page);
+// The area below the card is a fixed-height well. Without it, the graded state
+// (result banner + dispute link + Continue) is taller than the input row, the
+// column re-centred, and the card jumped 45px up the page mid-answer.
+{
+  await settled(page);
+  const before = await cardBox(page);
+  await page.mouse.click(before.centreX, before.top + 40);
+  await page.waitForTimeout(800);
+  const after = await cardBox(page);
+  ck("flip mode: the card does not move", after.top === before.top, `${before.top} → ${after.top}`);
+  await page.mouse.click(after.centreX, after.top + 40);
+  await page.waitForTimeout(800);
+}
+await page.click('button:has-text("FR→EN")');
+await page.waitForTimeout(300);
+if (!(await page.$('input[placeholder^="Type"]'))) await page.click('button:has-text("Type answer")');
+await page.waitForSelector('input[placeholder^="Type"]');
+{
+  await settled(page);
+  const before = await cardBox(page);
+  await page.click('input[placeholder^="Type"]');
+  await page.keyboard.type("zzzqqq");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(800);
+  const after = await cardBox(page);
+  ck("type mode: the card does not move when graded", after.top === before.top, `${before.top} → ${after.top}`);
+  const controlsMoved = await page.evaluate(() =>
+    !!document.querySelector("button")
+  );
+  ck("but the controls below it did change", controlsMoved);
+  const cont = await page.$('button:has-text("Continue")');
+  if (cont) await cont.click();
+  await page.waitForTimeout(700);
+}
+await page.click('button:has-text("Type answer")');
+await page.waitForTimeout(400);
 
 console.log("\n  the card survives having a panel open");
 // Making the card height-driven fixed the overflow but gave it no floor, so

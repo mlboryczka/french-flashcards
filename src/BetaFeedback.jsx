@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 import { cleanFrenchPrompt } from "./lib/cardText";
+import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 
 // "Send feedback" trigger + bottom sheet. Posts to beta_feedback table.
 //
@@ -43,6 +44,31 @@ export function BetaFeedback({
 }) {
   const [minimized, setMinimized] = useState(false);
   const panelRef = useRef(null);
+
+  // `mounted` keeps the sheet in the DOM until the exit slide finishes;
+  // `entered` drives the transform. Without this the sheet vanished in one
+  // frame while the page took 420ms to close the gap behind it — the single
+  // worst jerk of the lot. Same pattern the tutor panel uses.
+  const [mounted, setMounted] = useState(open);
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    if (open) { setMounted(true); return; }
+    setEntered(false);
+    const t = setTimeout(() => setMounted(false), PANEL_ANIM_MS);
+    return () => clearTimeout(t);
+  }, [open]);
+  // Two frames: one to paint the sheet off-screen, one to move it. Keying off
+  // `open` alone would set the end state before the start state ever painted,
+  // and the slide would never run.
+  useEffect(() => {
+    if (!mounted || !open) return;
+    const a = requestAnimationFrame(() => {
+      const b = requestAnimationFrame(() => setEntered(true));
+      cleanup.current = () => cancelAnimationFrame(b);
+    });
+    return () => { cancelAnimationFrame(a); cleanup.current?.(); };
+  }, [mounted, open]);
+  const cleanup = useRef(null);
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState("idle"); // idle | submitting | sent | error
   const [error, setError] = useState("");
@@ -128,9 +154,18 @@ export function BetaFeedback({
 
   // Measure rather than assume: the sheet grows with a screenshot attached and
   // shrinks to a bar when minimized, and the page has to match whichever it is.
-  useEffect(() => {
+  //
+  // useLayoutEffect, not useEffect: the height has to reach the page in the
+  // same commit the sheet mounts in, so the page's padding transition and the
+  // sheet's slide start on the same frame. Reporting it after paint let the
+  // sheet get a head start and opened a visible gap behind it.
+  useLayoutEffect(() => {
     const el = panelRef.current;
-    if (!open || !el) {
+    // The page makes room exactly while the sheet is in its entered position —
+    // both driven by `entered`, so both state changes land in one React commit
+    // and the two transitions start on the same frame. Reporting at mount
+    // instead let the page set off two frames before the sheet did.
+    if (!open || !entered || !el) {
       onHeightChange?.(0);
       return;
     }
@@ -142,7 +177,7 @@ export function BetaFeedback({
       ro?.disconnect();
       onHeightChange?.(0);
     };
-  }, [open, minimized, onHeightChange]);
+  }, [open, entered, minimized, onHeightChange]);
 
   // Click anywhere outside to close. Routed through handleCloseClick so an
   // unsent draft still asks before it is thrown away.
@@ -241,10 +276,10 @@ export function BetaFeedback({
         Send feedback
       </button>
 
-      {open && createPortal(
+      {mounted && createPortal(
         minimized ? (
           // ── Minimized bar ─────────────────────────────────────────
-          <div style={{...BF.minimizedBar, left: offsetLeft}} ref={panelRef} data-feedback-sheet>
+          <div style={{...BF.minimizedBar, left: offsetLeft, transform: entered ? "translateY(0)" : "translateY(100%)"}} ref={panelRef} data-feedback-sheet>
             <button
               style={BF.minBarMain}
               onClick={() => setMinimized(false)}
@@ -268,7 +303,12 @@ export function BetaFeedback({
           // plus a subtitle plus a footer, which is most of why it was 300px
           // tall for what is really one text field.
           <div
-            style={isDragging ? { ...BF.sheet, ...BF.sheetDrag, left: offsetLeft } : { ...BF.sheet, left: offsetLeft }}
+            style={{
+              ...BF.sheet,
+              ...(isDragging ? BF.sheetDrag : null),
+              left: offsetLeft,
+              transform: entered ? "translateY(0)" : "translateY(100%)",
+            }}
             ref={panelRef}
             data-feedback-sheet
             onPaste={handlePaste}
@@ -329,6 +369,7 @@ export function BetaFeedback({
               {currentCard && (
                 <button
                   type="button"
+                  data-attach-card
                   style={attachCard ? { ...BF.chip, ...BF.chipOn } : BF.chip}
                   onClick={() => { userTouchedAttach.current = true; setAttachCard((v) => !v); }}
                   aria-pressed={attachCard}
@@ -424,8 +465,8 @@ const BF = {
     display: "flex",
     flexDirection: "column",
     boxSizing: "border-box",
-    // subtle slide-up animation
-    animation: "bf-slideup 180ms ease-out",
+    transition: `transform ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
+    willChange: "transform",
   },
   sheetDrag: {
     boxShadow: `0 -12px 48px rgba(3,22,50,0.18), inset 0 0 0 2px ${T.color.secondary}`,
@@ -576,6 +617,8 @@ const BF = {
     zIndex: 1000,
     height: 44,
     boxSizing: "border-box",
+    transition: `transform ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
+    willChange: "transform",
   },
   minBarMain: {
     flex: 1,
@@ -614,11 +657,3 @@ const BF = {
     lineHeight: 1,
   },
 };
-
-// Inject slide-up keyframes once (idempotent)
-if (typeof document !== "undefined" && !document.getElementById("bf-keyframes")) {
-  const style = document.createElement("style");
-  style.id = "bf-keyframes";
-  style.textContent = `@keyframes bf-slideup { from { transform: translateY(100%); } to { transform: translateY(0); } }`;
-  document.head.appendChild(style);
-}

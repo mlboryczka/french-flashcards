@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt } from "./lib/cardText";
+import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 import { classifyCard, CARD_TYPES, TYPE_LABEL, TYPE_COLOR } from "./lib/cardTypes";
 import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
@@ -1756,6 +1757,14 @@ export default function FlashcardApp({ user, onSignOut }) {
                 </div>
               </div>
 
+              {/* Everything under the card lives in one fixed-height well.
+                  The area centres its contents, so when the typed-answer row
+                  (one input) was replaced by the result banner plus the
+                  "should have been accepted" link plus Continue, the whole
+                  column re-centred and the card jumped 45px up the page.
+                  Reserving the tallest state's height keeps the card still and
+                  lets only the controls change. */}
+              <div style={S.belowCard}>
               {/* Pronunciation panel — appears below card when recording or showing results */}
               {PRONUNCIATION_ENABLED && (recState !== "idle") && (
                 <PronunciationPanel
@@ -1862,6 +1871,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   </div>
                   </>
               )}
+              </div>
             </div>
           ) : (
             <div style={S.empty}><div style={{fontSize:48}}>🎉</div><p>No cards in this selection.</p><button style={S.resetSBtn} onClick={resetSession}>Start Over</button></div>
@@ -2572,7 +2582,7 @@ const S = {
   // contents, plain centring overflows in BOTH directions and the top of the
   // card rides up over the counter and the back button. Safe centring falls
   // back to start-alignment instead of spilling into what's above.
-  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:130, transition:"padding-bottom 200ms ease" },
+  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:130, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -2654,17 +2664,28 @@ const S = {
   // the page. Letting it grow is what pushed the buttons down to the bottom
   // edge and left a gulf in the middle; cardArea now centres the card and its
   // buttons together, so spare height sits above and below the pair.
-  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"center", justifyContent:"center" },
+  // Sized to the TALLEST thing that goes here — a wrong graded answer, which
+  // stacks a result banner, the "should have been accepted" link and the
+  // Continue row, and measures 170. Anything less and the card still shifts
+  // when that state appears; measured, not estimated.
+  belowCard: { width:"100%", maxWidth:600, minHeight:170, flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start" },
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"safe center", justifyContent:"center" },
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
   // Height-driven so a short window shrinks the card instead of overflowing
   // it, but with a floor: making it height-driven with no minimum meant it
   // absorbed the entire squeeze when a panel opened, collapsing to nothing
-  // while 130px of padding sat unused below it. containerType lets the text
-  // size to the card rather than staying at 40px inside a stamp.
-  card: { position:"relative", height:"100%", minHeight:170, maxHeight:375, maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1", containerType:"size" },
-  cardFront: { backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
-  cardBack: { backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
+  // while 130px of padding sat unused below it.
+  //
+  // NO containerType here. container-type: size applies containment, which
+  // makes the element a grouping element and so FLATTENS transform-style:
+  // preserve-3d — the computed style still reads preserve-3d, but the card
+  // stopped rotating and just swapped faces mid-flip. The query container is
+  // each face instead; they are inset:0 so their size is the card's, and they
+  // hold no 3D children of their own.
+  card: { position:"relative", height:"100%", minHeight:170, maxHeight:375, maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1" },
+  cardFront: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
+  cardBack: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
   freqTag: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
