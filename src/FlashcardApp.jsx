@@ -1511,7 +1511,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   disabled={idx === 0}
                   title={idx > 0 ? "Go back to the previous card" : "You're on the first card"}
                 >
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 3 5 8l5 5"/></svg>
                   Previous card
                 </button>
                 <div style={S.subToolbarRight}>
@@ -2482,8 +2482,10 @@ const S = {
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   counterBreakdown: { opacity:0.7 },
-  backBtnOff: { opacity:0.38, cursor:"default", boxShadow:"none" },
-  backBtn: { display:"flex", alignItems:"center", gap:6, padding:"6px 14px 6px 11px", background:T.color.surfaceLowest, border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.full, cursor:"pointer", fontSize:11.5, color:T.color.onSurface, fontFamily:T.font.sans, fontWeight:700, letterSpacing:"0.01em", boxShadow:"0 1px 2px rgba(3,22,50,0.05)", transition:"all 0.15s" },
+  // Unavailable keeps the shape and drops the fill, so the row never shifts
+  // and the control still reads as a control rather than a ghost of one.
+  backBtnOff: { background:"transparent", color:T.color.onSurfaceVariant, borderColor:"rgba(3,22,50,0.07)", boxShadow:"none", cursor:"default" },
+  backBtn: { display:"flex", alignItems:"center", gap:7, padding:"9px 18px 9px 14px", background:T.color.surfaceLowest, borderWidth:1, borderStyle:"solid", borderColor:"rgba(3,22,50,0.22)", borderRadius:T.radius.full, cursor:"pointer", fontSize:13, color:T.color.onSurface, fontFamily:T.font.sans, fontWeight:700, letterSpacing:"0.01em", boxShadow:"0 1px 3px rgba(3,22,50,0.07)", transition:"all 0.15s" },
   backBtnDisabled: { padding:"6px 14px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"default", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:500, opacity:0.3 },
   backBtnSpacer: { width:60 },
   // flex:0 1 auto — the card shrinks on short windows but never grows to fill
