@@ -22,11 +22,11 @@ still open.
 | AI | Anthropic SDK, model `claude-opus-5`, called only from serverless functions |
 | Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
 
-**Free-tier gotcha:** Supabase pauses a project after ~7 days idle. When it
-does, the app hangs on "Loading…" forever — `getSession()` never settles and
-`App.jsx` has no timeout or `.catch()`. Resuming the project in the Supabase
-dashboard fixes it. *Adding a timeout so this fails visibly instead of hanging
-is still an open item.*
+**Free-tier gotcha:** Supabase pauses a project after ~7 days idle, and
+`getSession()` then never settles. `App.jsx` races it against a 10s timeout and
+catches rejections, so this now surfaces as "Couldn't reach the server" with a
+Try again button and a note about paused projects, rather than "Loading…"
+forever. Resuming the project in the Supabase dashboard is still the fix.
 
 ---
 
@@ -266,12 +266,19 @@ These look arbitrary and are not:
 - **Nav markers use CSS longhands**, not the `borderRight` shorthand. React
   diffs per property, so a shorthand base plus a longhand override leaves a
   stale value when the item deactivates — both nav items showed a marker.
+- **`shellNarrow` clips one axis, `shell` clips both.** The card area's two
+  decorative blur circles are positioned outside their container on purpose
+  (`left:-60` / `right:-60`); the desktop shell's `overflow:hidden` hid that
+  fact for a long time. Below 768px the narrow shell clipped nothing and the
+  document came out 20px wider than the window. It takes `overflowX` only:
+  the narrow layout scrolls vertically by design — its nav is a fixed bottom
+  bar — so clipping both axes would be wrong.
 
 ---
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Eight suites: two pure-logic, five driving
+`npm test` — see `tests/README.md`. Nine suites: two pure-logic, seven driving
 the real app in headless Chromium against a mock Supabase, asserting on
 **measured** values (geometry, computed styles, request payloads) rather than
 on intent.
@@ -316,24 +323,71 @@ Merged since: the Grammar/Vocab/Phrases filter, the reflow moving only the
 content column, the test suite, the card-crush fix, the grammar classifier, the
 answer-lag fix and the smaller feedback panel (PRs #28, #29, #30).
 
-In flight:
+Merged since that: one duration and one curve for every panel that moves the
+page plus a real exit animation on the feedback sheet (0px drift between panel
+and page on open, no frame covering more than 12% of the move); the card
+holding one position through a flip and through grading, via the fixed-height
+well beneath it; `container-type` moved off the rotating card onto its faces
+(PR #31).
 
-- One duration and one curve for every panel that moves the page, and a real
-  exit animation on the feedback sheet — measured frame by frame: 0px drift
-  between panel and page on open, no frame covering more than 12% of the move
-- The card holds one position through a flip and through grading, via the
-  fixed-height well beneath it
-- `container-type` moved off the rotating card onto its faces
+---
+
+## Recent work (branch `claude/app-testing-bugs-ncyhde`)
+
+A pass driving the app by hand rather than by test, looking for what the suite
+wasn't asking about. Five bugs, four of them only reachable by working the app
+the way a person does:
+
+- **A flip-mode session had no end.** The completion notice was gated on
+  `stats.seen > 0`, and `stats.seen` counts *typed* answers only — so in the
+  default flip mode you reached the last card and it simply sat there, "Got It"
+  still live under your cursor. Clicking it wrote another FSRS review each
+  time; a stuck session put 45 reviews on one card in under a minute. The end
+  of the queue now replaces the card with a completion panel and `answer()`
+  refuses to grade past it. The same notice also used to appear one card
+  early, because `idx` sits on the last card both before and after you answer
+  it — hence the explicit `sessionDone` flag rather than a comparison against
+  `deck.length`.
+- **Study shortcuts reached the card through overlays.** The keydown handler
+  checked only whether the event target was an `INPUT` or `TEXTAREA`, and most
+  of a panel is neither: pressing Enter to submit in the upload dialog, or
+  after clicking anywhere inert in the tutor, graded the card behind it as
+  "Got It" — a real scheduling write, for a card whose answer was never on
+  screen, invisible in the UI and not undoable. Both handlers now bail on
+  `overlayOpen`.
+- **The profile menu couldn't be put away** — no outside click, no Escape.
+  Dismissal is on `mousedown` and decided by containment, so the menu's own
+  items still fire.
+- **20px of horizontal scroll on a phone.** The two decorative blur circles in
+  the card area sit deliberately outside their container (`left:-60` /
+  `right:-60`); `S.shell` clips them, but the narrow layout uses
+  `S.shellNarrow`, which clipped nothing. `overflowX: hidden` there — the
+  narrow layout is meant to scroll vertically, so only the one axis.
+- **The "Loading…" hang and the missing tables**, both long-standing open
+  items below, closed. See those entries.
+
+Also fixed a real flake in the `cards` suite that had nothing to do with the
+app: see the third rule in `tests/README.md`.
+
+New `session` suite covers the queue ending, the keyboard isolation and the
+menu dismissal; the `layout` suite gained a horizontal-overflow sweep across
+the 768px breakpoint.
 
 ---
 
 ## Open items
 
-- **The silent "Loading…" hang.** No timeout or `.catch()` in `App.jsx` around
-  `getSession()`. When Supabase is paused the app hangs with no explanation.
-  Offered several times, never picked up.
-- **`create table user_cards` is missing from the setup SQL.** A fresh deploy
-  following the README won't have the table.
+- ~~**The silent "Loading…" hang.**~~ Fixed. `getSession()` races a 10s
+  timeout and carries a `.catch()`; either way you get an explanation and a
+  Try again button instead of "Loading…" forever. `onAuthStateChange` clears
+  the error if the backend comes back on its own. The message names the likely
+  cause, since on the free tier it is almost always a paused project.
+- ~~**`create table user_cards` is missing from the setup SQL.**~~ Fixed —
+  along with `user_review_dates` and `beta_feedback`, which were missing too.
+  All three are now in `supabase/schema.sql` with their RLS policies. The
+  scheduling columns deliberately stay in the migrations rather than being
+  inlined, so a project set up today and one running since the Leitner era end
+  up with the same table: run `schema.sql`, then 002 → 007 in order.
 - **Mobile / PWA.** Discussed, never started. The layout is responsive below
   720px but there is no install manifest or offline support.
 - **The cleanup tool's Claude step has never run against the live deck.** The

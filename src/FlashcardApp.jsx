@@ -212,7 +212,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   // session" apart from "userCards re-referenced, just patch in place".
   const filterSigRef = useRef(null);
   const [mode, setMode] = useState("study"); // study | stats | feedback
-  const [stats, setStats] = useState({ seen:0, got:0, missed:0 });
+  // seen/got/missed count TYPED answers only — those are verifiable, and
+  // accuracy built from self-reported flips would be meaningless. `answered`
+  // counts every graded card in either mode, so the end-of-session summary
+  // has something true to say when nothing was typed.
+  const [stats, setStats] = useState({ seen:0, got:0, missed:0, answered:0 });
+  // The queue has been worked to the end. Not derivable from `idx` alone:
+  // idx sits on the last card both before and after that card is answered.
+  const [sessionDone, setSessionDone] = useState(false);
   const [freqOnly, setFreqOnly] = useState(false);
   // Study one type at a time. Off ("all") by default: mixing types is
   // interleaved practice and tests better than drilling one kind in a block.
@@ -258,6 +265,27 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [showChat, dismissFeedback]);
   const openFeedback = useCallback(() => { setShowChat(false); setShowFeedback(true); }, []);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileRef = useRef(null);
+
+  // Close the profile menu on an outside click or Escape. Mousedown rather
+  // than click so the menu is gone before whatever was underneath reacts,
+  // and containment rather than a target check so clicks on the menu's own
+  // items still run their handlers.
+  useEffect(() => {
+    if (!showProfileMenu) return;
+    const onDown = (e) => {
+      if (profileRef.current && profileRef.current.contains(e.target)) return;
+      setShowProfileMenu(false);
+    };
+    const onKey = (e) => { if (e.key === "Escape") setShowProfileMenu(false); };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [showProfileMenu]);
+
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
   const [showSplitSenses, setShowSplitSenses] = useState(false);
@@ -401,6 +429,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     setDeck(cards);
     setSessionCounts(counts);
     setInitialDeckSize(cards.length);
+    // A rebuilt queue is unworked, whatever the last one's state was.
+    setSessionDone(false);
     // Preserve the user's position if the current card still exists in the
     // rebuilt deck — otherwise reset to the top. Tracked by row_id (DB pk)
     // because card.id is derived from front text and changes whenever the
@@ -563,6 +593,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   // user gets another shot before the session ends.
   const answer = (got, source = "flip") => {
     if (!card) return;
+    // Once the queue is worked out the last card stays on screen behind the
+    // completion panel. Grading it again would write a second FSRS review for
+    // a card that was answered once, so the session end is a hard stop.
+    if (sessionDone) return;
+    // Whether this answer empties the queue. Read BEFORE the wrong-answer
+    // splice below, which grows the deck by one and would hide the end.
+    const wasLastCard = idx >= deck.length - 1;
     const prev = progress[card.id] || { score:0, seen:0, got:0 };
     const newProg = {
       score: Math.max(0, Math.min(5, prev.score + (got?1:-1))),
@@ -609,11 +646,16 @@ export default function FlashcardApp({ user, onSignOut }) {
         )
         .then(({ error }) => { if (error) console.error("Record review date failed:", error); });
     }
-    // Session stats only count typed answers (verifiable). Flip-mode
-    // "got it" is self-reported and doesn't count toward accuracy.
-    if (source === "typed") {
-      setStats(s => ({ seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }));
-    }
+    // Accuracy counts typed answers only — those are verifiable, and a
+    // flip-mode "got it" is self-reported. `answered` counts both, so the
+    // end of a flip-only session still has something true to report.
+    setStats(s => ({
+      ...s,
+      answered: s.answered + 1,
+      ...(source === "typed"
+        ? { seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }
+        : null),
+    }));
     // Wrong answers: re-queue the card RE_QUEUE_OFFSET positions later in
     // the session so the user gets another shot before the session ends.
     // Splice runs after setDeck above so we use the post-SR-patch deck.
@@ -635,9 +677,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     setFeedbackState(null); setFeedbackVerdict(null);
     // Cap at last index. On a wrong answer the splice above grew the deck
     // by 1, so this lands on the freshly-re-queued card. On a correct
-    // answer at the end of the deck, idx stays put and the session-complete
-    // strip surfaces.
+    // answer at the end of the deck idx stays put, and `sessionDone` below
+    // is what turns that into a visible end — the clamp alone can't, since
+    // idx reads the same before and after the last card is answered.
     setIdx(i => Math.min(i + 1, (got ? deck.length : deck.length + 1) - 1));
+    // A correct answer on the last card empties the queue; a wrong one
+    // re-queued it, so there is still work left.
+    if (got && wasLastCard) setSessionDone(true);
     // Re-enable the flip animation on the next frame
     requestAnimationFrame(() => { skipFlipAnim.current = false; });
   };
@@ -672,6 +718,9 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const goBack = () => {
     if (idx === 0) return;
+    // Stepping back puts an answerable card on screen again, so the session
+    // is no longer over.
+    setSessionDone(false);
     if (autoAdvanceTimer.current) {
       clearTimeout(autoAdvanceTimer.current);
       autoAdvanceTimer.current = null;
@@ -696,7 +745,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
     currentCardIdRef.current = null;
     setFlipped(false);
-    setStats({ seen:0, got:0, missed:0 });
+    setStats({ seen:0, got:0, missed:0, answered:0 });
+    setSessionDone(false);
     setTypedAnswer("");
     setTypeResult(null);
     setFeedbackState(null); setFeedbackVerdict(null);
@@ -719,8 +769,19 @@ export default function FlashcardApp({ user, onSignOut }) {
   useEffect(() => { goBackRef.current = goBack; });
   useEffect(() => { giveUpRef.current = giveUpTyped; });
 
+  // Anything layered over the study view. While one of these is up the card
+  // is not what the keyboard is addressing: pressing Enter to submit in a
+  // modal, or after clicking anywhere in the tutor that isn't its textarea,
+  // used to fall through and grade the card behind it as "Got It" — a real
+  // FSRS review, written for a card the user never saw an answer for.
+  // Checking the event target for INPUT/TEXTAREA isn't enough; most of a
+  // panel is neither.
+  const overlayOpen =
+    showChat || showFeedback || showUpload || showSplitSenses ||
+    showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
+
   useEffect(() => {
-    if (mode !== "study" || typeMode) return;
+    if (mode !== "study" || typeMode || overlayOpen || sessionDone) return;
     const handler = (e) => {
       if (!card) return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
@@ -730,13 +791,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [card, mode, typeMode]);
+  }, [card, mode, typeMode, overlayOpen, sessionDone]);
 
   // In type mode, after a result is showing (input gone), Enter/Space/→
   // auto-commits the matcher's verdict and advances to the next card.
   // The matcher's verdict is the progress update — no self-report needed.
   useEffect(() => {
-    if (mode !== "study" || !typeMode || !typeResult) return;
+    if (mode !== "study" || !typeMode || !typeResult || overlayOpen || sessionDone) return;
     const gotIt = typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle";
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
@@ -747,7 +808,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [mode, typeMode, typeResult]);
+  }, [mode, typeMode, typeResult, overlayOpen, sessionDone]);
 
   // Submit a feedback claim: "my answer should have been accepted"
   const [feedbackErrMsg, setFeedbackErrMsg] = useState("");
@@ -1202,7 +1263,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         <div style={S.sideDivider} />
         <div style={S.sideBottom}>
           <div style={S.sideBottomRow}>
-            <div style={S.sideProfileRow}>
+            <div style={S.sideProfileRow} ref={profileRef}>
               <button
                 style={S.profileBtn}
                 onClick={() => setShowProfileMenu(v => !v)}
@@ -1585,6 +1646,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   const effectiveTypeMode = typeMode && !!card;
 
   // The card face is the same affordance as the "Show answer" button, so in
+  // What the completion panel says it did. Accuracy needs a denominator you
+  // can trust, so it is only offered when something was actually typed;
+  // otherwise the honest report is a count of what you worked through.
+  const sessionSummary = stats.seen > 0
+    ? `${stats.got}/${stats.seen} typed correctly (${Math.round(stats.got / stats.seen * 100)}%)`
+    : `${stats.answered} ${stats.answered === 1 ? "card" : "cards"} reviewed`;
+
   // type mode tapping it has to run giveUpTyped. A bare flip() would turn the
   // card over while leaving typeResult null — the answer visible, but the app
   // still believing the card was unanswered, so the action row never appears.
@@ -1696,7 +1764,19 @@ export default function FlashcardApp({ user, onSignOut }) {
             })()}
           </div>
 
-          {card ? (
+          {sessionDone ? (
+            // The queue is worked out. This REPLACES the card rather than
+            // sitting under it: leaving the last card on screen with Again /
+            // Got It still live let you grade the same card over and over,
+            // writing an FSRS review each time.
+            <div style={S.cardArea}>
+              <div style={S.sessionDone}>
+                <div style={{fontSize:48}}>🎉</div>
+                <p style={S.doneText}>Session complete! {sessionSummary}</p>
+                <button style={S.resetSBtn} onClick={resetSession}>New Session</button>
+              </div>
+            </div>
+          ) : card ? (
             <div style={showFeedback || chatReflow ? {...S.cardArea, paddingBottom:16} : S.cardArea}>
               {/* Decorative blur shapes (per Stitch design) */}
               <div style={S.blurTL} />
@@ -1875,13 +1955,6 @@ export default function FlashcardApp({ user, onSignOut }) {
             </div>
           ) : (
             <div style={S.empty}><div style={{fontSize:48}}>🎉</div><p>No cards in this selection.</p><button style={S.resetSBtn} onClick={resetSession}>Start Over</button></div>
-          )}
-
-          {idx >= deck.length-1 && deck.length > 0 && stats.seen > 0 && (
-            <div style={S.sessionDone}>
-              <p style={S.doneText}>Session complete! {stats.got}/{stats.seen} ({Math.round(stats.got/Math.max(stats.seen,1)*100)}%)</p>
-              <button style={S.resetSBtn} onClick={resetSession}>New Session</button>
-            </div>
           )}
         </div>
 
@@ -2526,7 +2599,13 @@ const S = {
   // together. Anything that legitimately runs long (Stats) scrolls inside
   // main via mainInnerScroll rather than scrolling the whole page.
   shell: { display:"flex", height:"100vh", overflow:"hidden", boxSizing:"border-box", background:T.color.background },
-  shellNarrow: { display:"flex", flexDirection:"column", minHeight:"100vh", background:T.color.background },
+  // overflowX matters here and not on `shell`, which clips both axes
+  // already. The decorative blur circles in the card area are deliberately
+  // positioned outside their container (left:-60 / right:-60); on a phone
+  // that put the document 20px wider than the viewport and the whole page
+  // slid sideways. Clip horizontally only — the narrow layout scrolls
+  // vertically by design, and overflow-y stays effectively visible.
+  shellNarrow: { display:"flex", flexDirection:"column", minHeight:"100vh", background:T.color.background, overflowX:"hidden" },
   // minHeight:0 is what lets the flex children actually shrink; without it a
   // flex item refuses to go below its content size and the card pushes the
   // buttons off the bottom instead of getting smaller.

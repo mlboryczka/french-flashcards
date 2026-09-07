@@ -1,8 +1,6 @@
 // Card behaviour: the French prompt never gives away its own answer, the
 // result banner shows what YOU typed, and tapping the card continues.
-import {
-  openApp, finish, checker, cardBox, sessionCounter, enableTypeMode,
-} from "../harness.mjs";
+import { openApp, finish, checker, cardBox, enableTypeMode } from "../harness.mjs";
 
 const ck = checker();
 
@@ -41,7 +39,6 @@ await page.waitForTimeout(400);
 await enableTypeMode(page);
 
 console.log("\n  the banner shows your answer, not a repeat of the right one");
-const before = await sessionCounter(page);
 const correct = (await cardBox(page)).back;
 await page.click('input[placeholder^="Type"]');
 await page.keyboard.type("a mountain");
@@ -61,11 +58,29 @@ ck(
 );
 
 console.log("\n  tapping the card continues");
+// Compared on the counter's own words, not on index + 1.
+//
+// The counter is not one running number: past the initial deck size it
+// switches to "Retry 1 of 1" and starts again from one. So when the shuffle
+// happened to leave the suite on the LAST card, a wrong answer re-queued it,
+// tapping advanced correctly onto that retry, and the arithmetic read
+// 15 → 1 and called a working app broken. It failed about one run in fifteen,
+// which is exactly often enough to be dismissed as a flake.
+//
+// Read after grading and before the tap, so the tap is the only thing that
+// happened in between — reading it before the answer would also pick up the
+// "· 1 retry pending" the grade itself adds.
+const counterText = () =>
+  page.evaluate(() => {
+    const m = document.body.innerText.match(/(?:Card|Retry) \d+ of \d+[^\n]*/i);
+    return m ? m[0] : null;
+  });
+const graded = await counterText();
 const card = await cardBox(page);
 await page.mouse.click(card.centreX, Math.round((card.top + card.bottom) / 2));
 await page.waitForTimeout(800);
-const advanced = await sessionCounter(page);
-ck("advanced to the next card", advanced.index === before.index + 1, `${before.index} → ${advanced.index}`);
+const advanced = await counterText();
+ck("advanced off the card you answered", !!advanced && advanced !== graded, `${graded} → ${advanced}`);
 ck(
   "and it is unanswered",
   !(await page.evaluate(() => [...document.querySelectorAll("button")].some((b) => /Continue/.test(b.textContent))))
