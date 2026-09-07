@@ -1777,11 +1777,12 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
           ) : card ? (
-            <div style={showFeedback || chatReflow ? {...S.cardArea, paddingBottom:16} : S.cardArea}>
+            <div style={S.cardArea}>
               {/* Decorative blur shapes (per Stitch design) */}
               <div style={S.blurTL} />
               <div style={S.blurBR} />
 
+              <div style={S.cardTopSpacer} />
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={{...S.cardFront, pointerEvents: flipped ? "none" : "auto"}}>
@@ -2661,7 +2662,29 @@ const S = {
   // contents, plain centring overflows in BOTH directions and the top of the
   // card rides up over the counter and the back button. Safe centring falls
   // back to start-alignment instead of spilling into what's above.
-  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:130, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
+  // The CARD is centred on the window, not the card-plus-well stack.
+  //
+  // cardArea centres its children as a group, and everything below the card —
+  // cardWrap's 20px margin and the 170px belowCard well — is part of that
+  // group. Centring the group therefore pushes the card itself up by half of
+  // whatever sits under it. With a 130px bottom padding on top of that, the
+  // card measured a consistent 118px above the middle of the window at every
+  // viewport height. The fix is `cardTopSpacer` below; the bottom padding is
+  // gone because it was the larger half of the same error, and the well
+  // already leaves plenty of space beneath the card.
+  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:0, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
+  // Mirrors what sits below the card, less the chrome that already sits above
+  // cardArea, so the card's own midpoint lands on the window's midpoint:
+  //
+  //   below the card   170 (belowCard) + 20 (cardWrap marginBottom) = 190
+  //   above cardArea   100 (top bar + sub-toolbar + mainInner padTop)
+  //   below cardArea    16 (mainInner padBottom)
+  //   spacer = 190 + 16 - 100 = 106
+  //
+  // `0 1 106px` and not a fixed height: it must give its space up first when
+  // the window is short or a panel opens, so the card keeps its size rather
+  // than crushing. That is the job the old paddingBottom toggle was doing.
+  cardTopSpacer: { flex:"0 1 106px", minHeight:0, width:"100%", pointerEvents:"none" },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
