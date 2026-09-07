@@ -175,4 +175,40 @@ ck("the scrolling area stops there too", scrolls !== null && scrolls <= stats.sh
 ck("THE SIDEBAR DOES NOT MOVE", stats.sidebarBottom === fullSidebar, `${stats.sidebarBottom}`);
 ck("the account block stays at the bottom", stats.accountTop > stats.sheet.top);
 
+console.log("\n  nothing scrolls sideways, at any width");
+// The requirement is the page, not any particular element: a phone-width
+// viewport should have nothing to scroll horizontally to. The decorative blur
+// circles in the card area sit deliberately outside their container
+// (left:-60 / right:-60); the narrow shell didn't clip, so on a phone the
+// document came out 20px wider than the window and the whole page slid.
+//
+// Measured against documentElement.clientWidth rather than a remembered
+// number, and swept across the responsive breakpoint (768px) so a regression
+// on either side of it shows up.
+for (const width of [360, 390, 480, 700, 767, 800, 1100, 1400]) {
+  await page.setViewportSize({ width, height: 860 });
+  await page.waitForTimeout(350);
+  const { scrollW, clientW, culprit } = await page.evaluate(() => {
+    const clientW = document.documentElement.clientWidth;
+    const over = [...document.querySelectorAll("*")].find((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && (r.right > clientW + 0.5 || r.left < -0.5);
+    });
+    return {
+      scrollW: document.documentElement.scrollWidth,
+      clientW,
+      culprit: over ? `${over.tagName}.${over.className || "?"}` : null,
+    };
+  });
+  ck(
+    `${width}px wide: no horizontal scroll`,
+    scrollW <= clientW,
+    // Name the offender only when there is one to chase — a clipped element
+    // still reads as out of bounds on a page that doesn't scroll.
+    `scrollWidth ${scrollW} vs ${clientW}${scrollW > clientW && culprit ? ` — ${culprit}` : ""}`
+  );
+}
+await page.setViewportSize({ width: 1400, height: 900 });
+await page.waitForTimeout(300);
+
 await finish(browser, ck);

@@ -21,9 +21,10 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `panels` | tutor/feedback mutual exclusion, outside-click dismissal, reflow axis | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |
+| `session` | working a queue to the end, and what the keyboard is allowed to touch | yes |
 | `split-senses` | the cleanup tool's client flow, with the audit and write endpoints stubbed | yes |
 
-## Two rules, both learned from checks that lied
+## Three rules, all learned from checks that lied
 
 **Write the assertion from the requirement, not from the implementation.**
 A check derived from the code you just wrote can only confirm that code. This
@@ -35,6 +36,16 @@ makes room for the panel"; the sidebar was never what the panel covered.
 fixture — `servedDeck()` exists for exactly this. A hard-coded deck size went
 stale the moment the fixture grew and then reported a failure the app hadn't
 caused.
+
+**Don't assume a displayed value counts the way you'd count.** The `cards`
+suite asserted that tapping a graded card moved the counter to `index + 1`.
+The counter isn't one running number: past the initial deck size it becomes
+"Retry 1 of 1" and starts again from one. So on the roughly one run in fifteen
+where the shuffle left the suite on the last card, the app advanced correctly
+and the arithmetic read `15 → 1` and failed. It now compares the counter's own
+text across the tap, and reads it *after* grading — reading before would also
+pick up the "· 1 retry pending" the grade itself adds, and pass no matter what
+the tap did.
 
 ## Adding a card to the fixture
 
