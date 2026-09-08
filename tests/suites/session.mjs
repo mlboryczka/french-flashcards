@@ -175,7 +175,7 @@ await page.click("aside button[data-tutor-toggle]");
 await settled(page);
 
 console.log("\n  the profile menu can be put away");
-const menuOpen = () => bodyHas(/Fix multi-sense cards/);
+const menuOpen = () => bodyHas(/Upload document/);
 const openMenu = async () => {
   await page.evaluate(() => {
     [...document.querySelectorAll("aside button")].find((b) => b.innerText.trim() === "T").click();
@@ -198,9 +198,9 @@ ck("Escape closes it", !(await menuOpen()));
 // correct if the items still fire.
 await openMenu();
 await page.evaluate(() => {
-  [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "Fix multi-sense cards").click();
+  [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "Upload document").click();
 });
 await page.waitForTimeout(700);
-ck("its own items still work", await bodyHas(/looks suspicious|Check these/));
+ck("its own items still work", await bodyHas(/Upload your cahier/));
 
 await finish(browser, ck);

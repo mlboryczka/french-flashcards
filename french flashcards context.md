@@ -278,7 +278,7 @@ These look arbitrary and are not:
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Nine suites: two pure-logic, seven driving
+`npm test` — see `tests/README.md`. Eight suites: two pure-logic, seven driving
 the real app in headless Chromium against a mock Supabase, asserting on
 **measured** values (geometry, computed styles, request payloads) rather than
 on intent.
@@ -429,9 +429,14 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
 
 - **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
   there is no install manifest or offline support.
-- **The multi-sense cleanup tool is user-facing and probably should not be.**
-  It sits in the profile menu; it is a maintenance tool, not a student feature.
-  Its Claude step has still never run against the live deck.
+- **The multi-sense cleanup has no UI any more.** `SplitSensesModal` and its
+  browser suite are gone — cleaning up cards that teach two words is
+  maintenance on the deck, not a task to hand a student. What remains is the
+  backend: `api/split-senses.js` (audit, read-only), `api/apply-splits.js`
+  (write, service role + manual ownership checks), the scanner in
+  `src/lib/multiSense.js`, and the `apply-splits` suite. Nothing invokes them
+  now, so running the cleanup needs a deliberate call. The Claude audit step
+  has still never run against the live deck.
 - **A second lesson has not been attempted.** The generator idea — parsing
   Laura's PDFs into cards automatically — was scoped but not built, and
   designing it from one example would be a mistake. Her materials look

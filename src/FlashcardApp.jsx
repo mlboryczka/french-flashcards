@@ -11,7 +11,6 @@ import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
-import { SplitSensesModal } from "./SplitSensesModal";
 
 const SIDEBAR_WIDTH = 256;
 // Narrowest content column worth reflowing to.
@@ -315,7 +314,6 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
-  const [showSplitSenses, setShowSplitSenses] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState("");
 
@@ -813,7 +811,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Checking the event target for INPUT/TEXTAREA isn't enough; most of a
   // panel is neither.
   const overlayOpen =
-    showChat || showFeedback || showUpload || showSplitSenses ||
+    showChat || showFeedback || showUpload ||
     showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
 
   useEffect(() => {
@@ -1473,12 +1471,6 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     Upload document
                   </button>
-                  <button
-                    style={S.profileMenuItem}
-                    onClick={() => { setShowSplitSenses(true); setShowProfileMenu(false); }}
-                  >
-                    Fix multi-sense cards
-                  </button>
                   {isAdmin && (<>
                     <button
                       style={S.profileMenuItem}
@@ -1577,13 +1569,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       )}
       {showUsersModal && (
         <UsersModal onClose={() => setShowUsersModal(false)} />
-      )}
-      {showSplitSenses && (
-        <SplitSensesModal
-          deck={userCards}
-          onClose={() => setShowSplitSenses(false)}
-          onApplied={reloadDeck}
-        />
       )}
       {editingCard && (
         <EditCardModal

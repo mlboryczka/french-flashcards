@@ -22,7 +22,6 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |
 | `session` | working a queue to the end, and what the keyboard is allowed to touch | yes |
-| `split-senses` | the cleanup tool's client flow, with the audit and write endpoints stubbed | yes |
 
 ## Four rules, all learned from checks that lied
 
