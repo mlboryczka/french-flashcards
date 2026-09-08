@@ -332,75 +332,127 @@ well beneath it; `container-type` moved off the rotating card onto its faces
 
 ---
 
-## Recent work (branch `claude/app-testing-bugs-ncyhde`)
+## Lessons
 
-A pass driving the app by hand rather than by test, looking for what the suite
-wasn't asking about. Five bugs, four of them only reachable by working the app
-the way a person does:
+A lesson is a fixed set of cards built from a teacher's materials, the same for
+everyone. `src/data/lessons/` holds them; `LESSONS` in `index.js` is the
+catalogue. The first is **L'impératif** (108 cards), built from Laura Caufour's
+LFL METHOD lesson and exercise PDFs.
+
+The shape of it:
+
+- **Static in the app, copied into the deck.** The lesson is shared; adding it
+  copies its cards into `user_cards`, and that copy is what makes the
+  scheduling personal, since FSRS state lives on the row.
+- **Tagged `source = "lesson:<id>"`.** That column already existed — the cahier
+  parser writes `cahier-upload`, the tutor writes `tutor-chat` — so lessons
+  needed no migration.
+- **Synced on load, once per mount.** A student finds L'impératif in their deck
+  without pressing anything. The lesson is the authority, so the sync also
+  *retires* cards it no longer contains: that is how the eight abandoned "state
+  the rule" cards were removed from decks that had already added them. Only
+  writes when the deck and the lesson actually differ.
+- **`lessonFilter` narrows the candidate pool** exactly as `typeFilter` does, so
+  a lesson still schedules through FSRS rather than becoming a separate mode.
+- **Notes live on the lesson** (`LESSON.notes`) and render in `LessonPanel`, a
+  slide-over reusing the tutor's mount/enter mechanics. Distilled for glancing
+  at mid-card, not for reading: tables for paradigms, two columns for
+  contrasts, and the rules people get wrong called out on their own.
+
+### Card-design rules the impératif module established
+
+- **Every card is a thing to produce, never a rule to recite.** An early version
+  had `impératif : -er et aller devant en / y` answered by `prennent un -s`.
+  That is a statement, not a question, and there is nothing to type. Each rule
+  is now carried by examples that make you apply it.
+- **Every French-answered card carries an arrow in its front.** Load bearing:
+  `classifyCard()` treats it as a conjugation drill, and `answerLang()` reads it
+  to know the typed answer should be French rather than English.
+- **The card wears its lesson as a badge**, so fronts do not spend their opening
+  words on `(impératif)`. The badge is also what keeps a shortened front
+  unambiguous once the cards mix into the wider deck.
+- **Exercises are sampled, not transcribed.** Laura's ~150 items became 49
+  cards. A worksheet's twenty pronominal verbs work because they are twenty in
+  one sitting; as cards they would be twenty review streams for one rule. The
+  test is whether an item teaches something no other card teaches.
+
+---
+
+## Recent work (session of 2026-09-07/08, committed straight to `main`)
+
+Bugs found by driving the app rather than by running the suite:
 
 - **A flip-mode session had no end.** The completion notice was gated on
-  `stats.seen > 0`, and `stats.seen` counts *typed* answers only — so in the
-  default flip mode you reached the last card and it simply sat there, "Got It"
-  still live under your cursor. Clicking it wrote another FSRS review each
-  time; a stuck session put 45 reviews on one card in under a minute. The end
-  of the queue now replaces the card with a completion panel and `answer()`
-  refuses to grade past it. The same notice also used to appear one card
-  early, because `idx` sits on the last card both before and after you answer
-  it — hence the explicit `sessionDone` flag rather than a comparison against
-  `deck.length`.
-- **Study shortcuts reached the card through overlays.** The keydown handler
-  checked only whether the event target was an `INPUT` or `TEXTAREA`, and most
-  of a panel is neither: pressing Enter to submit in the upload dialog, or
-  after clicking anywhere inert in the tutor, graded the card behind it as
-  "Got It" — a real scheduling write, for a card whose answer was never on
-  screen, invisible in the UI and not undoable. Both handlers now bail on
-  `overlayOpen`.
-- **The profile menu couldn't be put away** — no outside click, no Escape.
-  Dismissal is on `mousedown` and decided by containment, so the menu's own
-  items still fire.
-- **20px of horizontal scroll on a phone.** The two decorative blur circles in
-  the card area sit deliberately outside their container (`left:-60` /
-  `right:-60`); `S.shell` clips them, but the narrow layout uses
-  `S.shellNarrow`, which clipped nothing. `overflowX: hidden` there — the
-  narrow layout is meant to scroll vertically, so only the one axis.
-- **The "Loading…" hang and the missing tables**, both long-standing open
-  items below, closed. See those entries.
+  `stats.seen > 0`, which counts *typed* answers only, so in the default mode
+  you reached the last card and it sat there with "Got It" live — writing a
+  fresh FSRS review on every click. 45 reviews landed on one card in a minute.
+- **Study shortcuts reached the card through overlays.** Enter in the upload
+  dialog, or after clicking anywhere inert in the tutor, graded the hidden card.
+- **The typed-answer box asked for the wrong language.** `Type English…` on
+  every conjugation drill, whose answer is French. Wrong for the whole
+  impératif module and for every drill that predated it.
+- **The card sat 118px above the middle of the window** at every height —
+  arithmetic, not a rendering quirk. See the card-area notes above.
+- **Reflow ran when there was nothing to reflow for.** Gated on "not a phone",
+  so at 900px it still fired and left 184px of content column: chips stacked one
+  per line, the card went portrait, the answer row ran off the edge. Now gated
+  on `MIN_REFLOW_CONTENT` (680px), below which the panel is an overlay.
+- **The nav kept the other layout's marker.** Wide marks on the right, narrow on
+  top; React diffs styles per property, so crossing 768px left a stale border on
+  every item. Every nav style now declares all four sides.
+- **Two nav items marked at once.** Studying a lesson is still `mode === "study"`,
+  so Cards and the lesson both lit up. `navActive()` gives it to the most
+  specific selection, and Cards clears `lessonFilter`.
+- **"Loading…" flashed on returning to a backgrounded tab.** Traced by recording
+  every distinct screen after a reload. Two causes: `App` dropped to the sign-in
+  screen for any null session, including the transient one a token refresh
+  reports; and `useProgress` cleared `loaded` on every effect re-run, which
+  unmounts the whole tree — the tutor panel and its conversation included.
+- **20px of horizontal scroll on a phone.** Decorative blur circles bleeding out
+  of `shellNarrow`, which clipped nothing.
+- **`user_cards`, `user_review_dates` and `beta_feedback` were missing from
+  `supabase/schema.sql`.** A fresh deploy following the README had no deck
+  table.
 
-Also fixed a real flake in the `cards` suite that had nothing to do with the
-app: see the third rule in `tests/README.md`.
+### The rule that keeps coming up
 
-New `session` suite covers the queue ending, the keyboard isolation and the
-menu dismissal; the `layout` suite gained a horizontal-overflow sweep across
-the 768px breakpoint.
+`loaded` gates the entire tree — `if (!loaded) return <div>Loading…</div>`
+unmounts everything, including whatever panel you were using. A refetch for the
+same person is a BACKGROUND refresh and must never clear it. Both `useUserDeck`
+and `useProgress` now hold a `loadedForUser` ref for this. Both also cache to
+localStorage so a fresh boot has something to paint; the deck cache opts out
+above 2.5MB, since a deck in the thousands does not fit the quota.
 
 ---
 
 ## Open items
 
-- ~~**The silent "Loading…" hang.**~~ Fixed. `getSession()` races a 10s
-  timeout and carries a `.catch()`; either way you get an explanation and a
-  Try again button instead of "Loading…" forever. `onAuthStateChange` clears
-  the error if the backend comes back on its own. The message names the likely
-  cause, since on the free tier it is almost always a paused project.
-- ~~**`create table user_cards` is missing from the setup SQL.**~~ Fixed —
-  along with `user_review_dates` and `beta_feedback`, which were missing too.
-  All three are now in `supabase/schema.sql` with their RLS policies. The
-  scheduling columns deliberately stay in the migrations rather than being
-  inlined, so a project set up today and one running since the Leitner era end
-  up with the same table: run `schema.sql`, then 002 → 007 in order.
-- **Mobile / PWA.** Discussed, never started. The layout is responsive below
-  720px but there is no install manifest or offline support.
-- **The cleanup tool's Claude step has never run against the live deck.** The
-  scan, review UI, apply path and write logic are all tested; what Claude
-  actually proposes for real cards is unseen. Review before applying.
+- **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
+  there is no install manifest or offline support.
+- **The multi-sense cleanup tool is user-facing and probably should not be.**
+  It sits in the profile menu; it is a maintenance tool, not a student feature.
+  Its Claude step has still never run against the live deck.
+- **A second lesson has not been attempted.** The generator idea — parsing
+  Laura's PDFs into cards automatically — was scoped but not built, and
+  designing it from one example would be a mistake. Her materials look
+  templated (numbered sections, *Détail* callouts, a "phrases à apprendre par
+  cœur" list); worth confirming across two or three more lessons first.
+- **`expandConjugations` is mood-blind.** `SUBJECT_PRONOUNS` is a fixed
+  six-person list indexed positionally and the tense enum has no `impératif`,
+  so a three-form table imports as `être → je = "sois"`. It did not bite the
+  impératif module because those cards were authored rather than parsed, but it
+  will bite the next cahier containing a non-indicative paradigm.
+- **New cards are introduced in random order.** `buildSession` shuffles `fresh`
+  before taking the cap, which is right for a mixed deck and wrong for a taught
+  module — a student can meet `Donne-les-leur` before `Regarde`. Interleaving on
+  review and sequencing on first exposure are not in conflict.
 - **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
-  hypotheses were tested and all four falsified: `container-type: size`
-  flattening `preserve-3d` (it still rotates — measured mid-flip width 66px
-  against a 600px resting width); the responsive font jittering (one font size
-  for the whole flip); the card growing and rising during rotation (real, but
-  byte-identical on the commit *before* the card-fit change — it is pre-existing
-  perspective); and the removed `await` in `answer()` leaving `skipFlipAnim`
-  set so flips snap (they animate, including on the card after advancing).
-  Headless Chromium at 1x may simply not show it. Worth asking what it looks
-  like specifically — stutter mid-rotation, both faces briefly visible, a white
-  flash — and in which mode.
+  hypotheses tested and falsified; see the history in git. Separately, the card
+  DOES resize on ~16 of 25 frames during a panel reflow, because `padding-bottom`
+  is a layout property and the card's `cqh` text re-resolves each time. Measured
+  under CPU throttling. Animating `transform` instead would fix it, and would
+  change what the layout and motion suites assert.
+- **Answers in the impératif module were written by Claude, not by Laura.** Her
+  exercise sheet ships no answer key, and her lesson PDF has at least one error
+  (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
+  pass from her before it goes to students.

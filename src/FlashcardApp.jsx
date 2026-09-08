@@ -1345,6 +1345,15 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const navItems = [["study", "Cards"], ["lessons", "Lessons"], ["stats", "Stats"]];
 
+  // Exactly one thing in the nav is ever marked.
+  //
+  // Studying a lesson is still mode "study", so Cards and the lesson under
+  // Lessons were both lighting up — two selected items, which says nothing
+  // about where you are. The most specific selection wins: pick a lesson and
+  // only the lesson is marked; Cards means the whole deck.
+  const navActive = (m) =>
+    m === "study" ? mode === "study" && lessonFilter === "all" : mode === m;
+
   // Open the tutor panel and the app reflows to sit beside it rather than
   // being covered — you can still read the card you're asking about. Below
   // 768px there is no room to give, so the panel stays an overlay instead.
@@ -1387,8 +1396,14 @@ export default function FlashcardApp({ user, onSignOut }) {
           return (
             <Fragment key={m}>
               <button
-                style={mode === m ? {...baseStyle, ...activeStyle} : baseStyle}
-                onClick={() => { setMode(m); }}
+                style={navActive(m) ? {...baseStyle, ...activeStyle} : baseStyle}
+                onClick={() => {
+                  // Cards means the whole deck, so it clears any lesson you
+                  // were inside — otherwise it selects itself while the lesson
+                  // beneath it stays filtered and marked.
+                  if (m === "study") setLessonFilter("all");
+                  setMode(m);
+                }}
               >
                 <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
                 {label}

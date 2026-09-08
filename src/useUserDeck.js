@@ -44,8 +44,27 @@ function readCache(userId) {
   }
 }
 
+// localStorage gives an origin about 5MB. A deck in the thousands serialises
+// past that, so the write throws, the key is cleared, and every load repeats
+// the attempt for nothing. Above the cap the cache simply opts out — `loaded`
+// no longer depends on it either way.
+const MAX_CACHE_BYTES = 2_500_000;
+
 function writeCache(userId, cards) {
   if (!userId) return;
+  try {
+    const payload = JSON.stringify({ v: CACHE_VERSION, cards });
+    if (payload.length > MAX_CACHE_BYTES) {
+      try { localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
+      return;
+    }
+    localStorage.setItem(CACHE_PREFIX + userId, payload);
+    return;
+  } catch {
+    try { localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
+    return;
+  }
+  // eslint-disable-next-line no-unreachable
   try {
     localStorage.setItem(
       CACHE_PREFIX + userId,

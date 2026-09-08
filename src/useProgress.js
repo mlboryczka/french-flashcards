@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 
 // Cached alongside the deck, and for the same reason.
@@ -43,6 +43,16 @@ function writeCache(userId, progress) {
 export function useProgress(user) {
   const [progress, setProgress] = useState(() => readCache(user?.id) || {});
   const [loaded, setLoaded] = useState(() => readCache(user?.id) !== null);
+  // Whose progress is already on screen.
+  //
+  // This effect re-runs whenever the `user` OBJECT changes, and supabase hands
+  // back a new one every time it refreshes the token — which it does in the
+  // middle of whatever you were doing. Dropping `loaded` on each of those made
+  // FlashcardApp return its bare "Loading…", and that unmounts the entire
+  // tree: the tutor panel with a question in flight, its whole conversation,
+  // everything. A refetch for the SAME person is a background refresh and must
+  // never take the app off screen. Same guard as useUserDeck's.
+  const loadedForUser = useRef(null);
 
   // Initial load: fetch all progress rows for this user
   useEffect(() => {
@@ -50,6 +60,7 @@ export function useProgress(user) {
     if (!user) {
       setProgress({});
       setLoaded(true);
+      loadedForUser.current = null;
       return;
     }
     // A cached copy counts as loaded, so the fetch below is a background
@@ -58,7 +69,8 @@ export function useProgress(user) {
     if (cached) {
       setProgress(cached);
       setLoaded(true);
-    } else {
+      loadedForUser.current = user.id;
+    } else if (loadedForUser.current !== user.id) {
       setLoaded(false);
     }
     (async () => {
@@ -90,6 +102,7 @@ export function useProgress(user) {
       }
       setProgress(obj);
       setLoaded(true);
+      loadedForUser.current = user.id;
       writeCache(user.id, obj);
     })();
     return () => {
