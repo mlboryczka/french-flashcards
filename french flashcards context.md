@@ -30,6 +30,24 @@ forever. Resuming the project in the Supabase dashboard is still the fix.
 
 ---
 
+## Working protocol
+
+**Commit straight to `main`.** Vercel deploys from `main`, so a change is not
+real until it lands there — a feature branch is invisible to the live app and
+to anyone looking at it. Work has been going to `main` directly since the
+2026-09-07 session and that is the convention.
+
+An agent session may arrive pre-configured with its own feature branch and an
+instruction not to push anywhere else. That configuration does not know about
+this project. Say so at the START of the session and get it resolved, rather
+than working for an hour and pushing somewhere nobody is looking — which is
+exactly what happened on 2026-09-08, and cost a whole session's work being
+invisible until it was noticed.
+
+`npm test` before every push. It is 12 suites and a few minutes.
+
+---
+
 ## How a session is built
 
 `src/lib/sessionQueue.js` → `buildSession(cards, opts)`.
@@ -497,6 +515,40 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
   under CPU throttling. Animating `transform` instead would fix it, and would
   change what the layout and motion suites assert.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
-  exercise sheet ships no answer key, and her lesson PDF has at least one error
-  (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
-  pass from her before it goes to students.
+  exercise sheet ships no answer key. Worth a pass from her before it goes to
+  students.
+
+---
+
+## Recent work (session of 2026-09-08, lesson notes)
+
+`LESSON.notes` was rebuilt from Laura's source PDF. The old distillation had
+been cut past usefulness: rules with the examples removed, French specimens
+with the captions removed, and two sections that stated no rule at all — tables
+with nothing telling you what to do.
+
+- **Sections are an ORDERED list of blocks** (`lead`, `sub`, `note`, `list`,
+  `forms`, `pairs`, `table`). Her material interleaves — a rule, its examples, a
+  caveat on those examples — which the old fixed note/table/pairs/lines order
+  could not express.
+- **One tab per section.** Section 3 is taller than the window; on one scroll
+  the pronoun rules sat below the fold every time the panel opened.
+- **Every example keeps its label, every rule keeps an example.** Her PDF
+  captions each specimen block; stripping those left French floating with
+  nothing saying what it was. This was the single biggest source of confusion
+  in review, three separate times.
+
+Three source errors are corrected rather than reproduced: `Vous lui donnez →
+Donnez-lui` (her `Donne-lui` is the *tu* form); `Ne faites pas de bêtises !`
+(missing its exclamation mark); and her "EXCEPTION" for `Dis-le-moi`, which is
+not one — it obeys the same order as `Dis-le-lui`. It only looked exceptional
+because she never states the order, deferring to a pronoun lesson this app does
+not have. The panel gives the order instead.
+
+Two sentences are **not hers** and carry rules her prose only implies through
+its tables: how the imperative is formed, and `me`/`te` → `moi`/`toi`.
+
+Also: French spacing before `!` `?` `;` `:` and inside `« »` is applied at
+display time as U+202F, so punctuation cannot wrap onto its own line; and lesson
+titles render as written — the card badge and filter chip case-folded them,
+which loses the name and mangles the accented capital.
