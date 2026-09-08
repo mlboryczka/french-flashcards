@@ -14,6 +14,15 @@ import { BetaFeedback } from "./BetaFeedback";
 import { SplitSensesModal } from "./SplitSensesModal";
 
 const SIDEBAR_WIDTH = 256;
+// Narrowest content column worth reflowing to.
+//
+// Measured, not guessed. The card is height-driven and 1.6:1, so in a 900px
+// window it wants 375 tall and 600 wide; with mainInner's 40px of padding
+// either side that is a 680px column. Give it less and the width caps while
+// the height does not, and the card turns portrait — 404x375 at a 484px
+// column, 340x375 at 420. The top bar goes first, though: below about 700 the
+// chips stop fitting on one row and stack one per line.
+const MIN_REFLOW_CONTENT = 680;
 import ChatPanel, { CHAT_PANEL_WIDTH, CHAT_ANIM_MS, CHAT_EASING } from "./ChatPanel";
 import { T } from "./theme";
 import {
@@ -319,8 +328,16 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== "undefined" && window.innerWidth < 768
   );
+  // The actual width too, because whether a panel can reflow the page is a
+  // question about how much room is LEFT, not about phone versus desktop.
+  const [winWidth, setWinWidth] = useState(
+    typeof window !== "undefined" ? window.innerWidth : 1400
+  );
   useEffect(() => {
-    const onResize = () => setIsNarrow(window.innerWidth < 768);
+    const onResize = () => {
+      setIsNarrow(window.innerWidth < 768);
+      setWinWidth(window.innerWidth);
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -1263,8 +1280,20 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Open the tutor panel and the app reflows to sit beside it rather than
   // being covered — you can still read the card you're asking about. Below
   // 768px there is no room to give, so the panel stays an overlay instead.
-  const chatReflow = showChat && !isNarrow;
-  const lessonReflow = showLessonPanel && !isNarrow;
+  // Reflow only while the content column stays usable.
+  //
+  // "Not a phone" was the wrong test. A 900px window is not narrow by that
+  // rule, but 900 - 256 of sidebar - 460 of panel leaves 184px of column: the
+  // chips stack one per line, the card turns portrait and crushes, and the
+  // answer row runs off the edge. Below the floor the panel goes back to being
+  // an overlay with a scrim, which is what it already does on a phone and what
+  // it should always have done when there was nothing to reflow FOR.
+  //
+  // See MIN_REFLOW_CONTENT for where the floor comes from.
+  const roomToReflow = (panelWidth) =>
+    winWidth - SIDEBAR_WIDTH - panelWidth >= MIN_REFLOW_CONTENT;
+  const chatReflow = showChat && !isNarrow && roomToReflow(CHAT_PANEL_WIDTH);
+  const lessonReflow = showLessonPanel && !isNarrow && roomToReflow(LESSON_PANEL_WIDTH);
   const shellStyle = isNarrow ? S.shellNarrow : S.shell;
   // The room is made by MAIN, not by the shell. Padding the shell shrank the
   // sidebar too — its account block jumped up the page and left a gap —

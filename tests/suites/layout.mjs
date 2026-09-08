@@ -211,4 +211,63 @@ for (const width of [360, 390, 480, 700, 767, 800, 1100, 1400]) {
 await page.setViewportSize({ width: 1400, height: 900 });
 await page.waitForTimeout(300);
 
+console.log("\n  a panel never costs the card its shape");
+// The Stats section above left us there, and Stats has no card. Back to the
+// study view before measuring one.
+await page.evaluate(() => {
+  [...document.querySelectorAll("aside nav button")]
+    .find((b) => /^cards$/i.test(b.innerText.trim()))
+    .click();
+});
+await page.waitForSelector('button:has-text("Previous card")', { timeout: 8000 });
+// And the feedback sheet is still open from those sections, padding main's
+// bottom. Left open it makes the card 350 tall instead of 375, and opening the
+// tutor dismisses the sheet — so the card would GROW on open and the
+// comparison would measure the sheet closing, not the panel's effect.
+await page.evaluate(() => {
+  const close = [...document.querySelectorAll("[data-feedback-sheet] button")]
+    .find((b) => b.innerText.trim() === "×");
+  close?.click();
+});
+await settled(page);
+await page.waitForTimeout(400);
+// The requirement is that opening a panel does not damage what you were
+// looking at. Reflow was gated on "not a phone", so at 900px wide it still
+// fired and left 900 - 256 of sidebar - 460 of panel = 184px of column: the
+// top-bar chips stacked one per line, the card turned portrait, and the answer
+// row ran off the edge. Below the floor the panel is an overlay instead.
+//
+// Measured as a comparison against the same window with nothing open, so it
+// stays true whatever the card's natural size is at that width.
+for (const width of [1600, 1400, 1200, 1000, 900, 800]) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.waitForTimeout(350);
+  const shut = await cardBox(page);
+  await page.evaluate(() => document.querySelector("aside button[data-tutor-toggle]").click());
+  await settled(page);
+  await page.waitForTimeout(150);
+  const open = await cardBox(page);
+  const reflowed = await page.evaluate(
+    () => Math.round(parseFloat(getComputedStyle(document.querySelector("main")).paddingRight) || 0)
+  );
+  ck(
+    `${width}px: the tutor leaves the card its shape`,
+    open.width === shut.width && open.height === shut.height,
+    `${shut.width}x${shut.height} shut, ${open.width}x${open.height} open, ${reflowed ? "reflowed" : "overlay"}`
+  );
+  // And when it does reflow, the column left behind is actually usable.
+  if (reflowed) {
+    const column = await page.evaluate(() => {
+      const m = document.querySelector("main");
+      return Math.round(m.getBoundingClientRect().width - (parseFloat(getComputedStyle(m).paddingRight) || 0));
+    });
+    ck(`${width}px: and the column it reflows to is usable`, column >= 680, `${column}px`);
+  }
+  await page.evaluate(() => document.querySelector("aside button[data-tutor-toggle]").click());
+  await settled(page);
+  await page.waitForTimeout(150);
+}
+await page.setViewportSize({ width: 1400, height: 900 });
+await page.waitForTimeout(300);
+
 await finish(browser, ck);
