@@ -20,11 +20,24 @@
 //   { reply: "<prose explanation>", cards: [{ front, back, category, note }] }
 //   or { error: "..." } on 4xx/5xx
 //
+// Who pays: the caller's own Anthropic key, sent in an x-anthropic-key
+// header and never stored server-side. Without one this answers 402. The
+// deploy owner (ADMIN_EMAIL) falls back to the server's ANTHROPIC_API_KEY.
+// See api/_lib/anthropicKey.js.
+//
 // Environment variables:
-//   ANTHROPIC_API_KEY — server-side only, never VITE_-prefixed
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — to VERIFY the caller's token
+//   ADMIN_EMAIL                             — the one account that may fall back
+//   ANTHROPIC_API_KEY                       — optional, owner's requests only
 
 import Anthropic from "@anthropic-ai/sdk";
-import { extractUserIdFromJwt } from "./_lib/auth.js";
+import { requireUser } from "./_lib/auth.js";
+import { requireAnthropicKey } from "./_lib/anthropicKey.js";
+
+// Opus 5 thinks before it answers, so a tutoring question does not fit in
+// Vercel's default function timeout. Without this the request is killed
+// mid-thought and the client shows its 504 message.
+export const config = { maxDuration: 60 };
 
 const MODEL = "claude-opus-5";
 
@@ -122,19 +135,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Signed-in users only. This endpoint spends money per call, so an
-  // unauthenticated caller would be spending the deploy owner's Anthropic
-  // credit. The JWT is not cryptographically verified here (same posture as
-  // the other routes), but it does keep the endpoint off the open internet.
-  const userId = extractUserIdFromJwt(req.headers.authorization || "");
-  if (!userId) {
-    return res.status(401).json({ error: "Sign in to use the tutor." });
-  }
-
-  const { ANTHROPIC_API_KEY } = process.env;
-  if (!ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: "Missing ANTHROPIC_API_KEY" });
-  }
+  // Signed in, with something to pay with. The token is verified against
+  // Supabase, not just decoded — and the key that pays is the caller's own
+  // unless the caller is the deploy owner.
+  const user = await requireUser(req, res);
+  if (!user) return;
+  const apiKey = requireAnthropicKey(req, res, user);
+  if (!apiKey) return;
 
   const messages = sanitizeMessages(req.body?.messages);
   if (!messages.length) {
@@ -154,7 +161,7 @@ export default async function handler(req, res) {
     : SYSTEM_PROMPT;
 
   try {
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const anthropic = new Anthropic({ apiKey });
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 2000,
@@ -198,7 +205,11 @@ export default async function handler(req, res) {
       return res.status(429).json({ error: "Rate limited — give it a moment and try again." });
     }
     if (err instanceof Anthropic.AuthenticationError) {
-      return res.status(500).json({ error: "Anthropic API key is invalid." });
+      // Almost always the user's own key now, so say which one is wrong.
+      return res.status(401).json({
+        error: "Anthropic rejected that API key. Check it in your profile menu.",
+        code: "bad_key",
+      });
     }
     if (err instanceof Anthropic.APIError) {
       return res.status(502).json({ error: `Anthropic API: ${err.message}` });

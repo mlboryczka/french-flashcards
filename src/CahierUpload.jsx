@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 
+import { keyHeaders } from "./lib/anthropicKey";
 // Modal for uploading a cahier. Three input modes:
 //   - paste: user pastes raw text into a textarea
 //   - file:  user uploads a .txt file (PDF/DOCX client-side parsing deferred
@@ -16,7 +17,7 @@ import { T } from "./theme";
 //   onSuccess     — called with the server response on successful upload
 //   hasExisting   — if true, shows a "replace existing deck" checkbox
 
-export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab }) {
+export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user }) {
   const [tab, setTab] = useState(initialTab || "paste"); // paste | file | link
   // When the modal is reopened with a different initialTab, switch to it.
   useEffect(() => {
@@ -327,6 +328,9 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
+        // Parsing a cahier is many Claude calls, so it bills the user's own
+        // Anthropic key like everything else that spends.
+        ...keyHeaders(user?.id),
       },
       body: JSON.stringify(body),
     });

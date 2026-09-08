@@ -1,69 +1,17 @@
 // French Flashcards — audio module
 //
-// Uses Azure Speech Services for high-quality TTS and pronunciation assessment.
-// All API calls go through Vercel serverless functions; the Azure key never
-// touches the browser.
+// Speech is the browser's own speechSynthesis. There is no backend and no
+// key: the Azure TTS and pronunciation-assessment endpoints (api/tts.js,
+// api/pronounce.js) were unauthenticated proxies to the deploy owner's Azure
+// subscription — anyone who found the URLs could bill them — and have been
+// removed rather than secured. Browser speech was already the fallback and
+// costs nothing.
 //
-// Three subsystems:
-//   1. speakFrench(text)        — TTS with IndexedDB cache, returns when done
-//   2. WavRecorder              — captures mic audio as 16kHz mono WAV
-//   3. assessPronunciation(...) — sends WAV to backend, returns parsed scores
-
-// ═══════════════════════════════════════════════════════════════════════════
-// TTS — text-to-speech with persistent client-side cache
-// ═══════════════════════════════════════════════════════════════════════════
-
-const DB_NAME = "fc-audio";
-const STORE = "tts";
-const DB_VERSION = 1;
-
-let _dbPromise = null;
-function openDb() {
-  if (_dbPromise) return _dbPromise;
-  if (typeof indexedDB === "undefined") return Promise.resolve(null);
-  _dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => resolve(req.result);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE);
-      }
-    };
-  });
-  return _dbPromise;
-}
-
-async function getCachedAudio(key) {
-  try {
-    const db = await openDb();
-    if (!db) return null;
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readonly");
-      const req = tx.objectStore(STORE).get(key);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function putCachedAudio(key, blob) {
-  try {
-    const db = await openDb();
-    if (!db) return;
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(blob, key);
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {
-    // cache failures are non-fatal
-  }
-}
+// Two subsystems now:
+//   1. speakFrench(text)  — browser speech synthesis, resolves when done
+//   2. WavRecorder        — captures mic audio as 16kHz mono WAV (local only)
+//
+// The IndexedDB audio cache went with the MP3s it existed to cache.
 
 // Clean text for cleaner TTS output: strip parentheticals, replace slashes
 // with commas (so "le vendeur / la vendeuse" reads naturally), collapse spaces
@@ -75,25 +23,7 @@ function cleanForTts(text) {
     .trim();
 }
 
-let _currentAudio = null;
-let _currentUrl = null;
-
 export function stopSpeaking() {
-  if (_currentAudio) {
-    try {
-      _currentAudio.pause();
-      _currentAudio.currentTime = 0;
-    } catch {}
-    _currentAudio = null;
-  }
-  if (_currentUrl) {
-    try {
-      URL.revokeObjectURL(_currentUrl);
-    } catch {}
-    _currentUrl = null;
-  }
-  // The browser fallback is a separate audio channel — cancel it too, or the
-  // two can talk over each other.
   try {
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -154,74 +84,22 @@ function speakWithBrowser(text) {
   });
 }
 
-// Speak French text. Returns a promise that resolves when playback ends.
-// Uses cache when available. Falls back to browser speech if the TTS backend
-// is unavailable; only throws nothing — failures are logged.
-export async function speakFrench(text, voice = "fr-FR-DeniseNeural") {
+// Speak French text. Resolves when playback ends.
+//
+// This used to call /api/tts, which proxied Azure Speech on the deploy
+// owner's subscription — with no authentication, so anyone who found the URL
+// could bill it. The endpoint is gone. The browser's own speech synthesis was
+// already the fallback path and costs nothing, so it is now the only path.
+//
+// Bringing Azure back means restoring api/tts.js behind requireUser (and,
+// if it should not be the owner paying, a per-user credential like the
+// Anthropic one).
+export async function speakFrench(text) {
   if (!text || typeof window === "undefined") return;
   const clean = cleanForTts(text);
   if (!clean) return;
-
-  const cacheKey = `${voice}|${clean}`;
-
-  let blob = await getCachedAudio(cacheKey);
-  if (!blob) {
-    try {
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: clean, voice }),
-      });
-      if (!res.ok) {
-        const err = await res.text().catch(() => "");
-        console.error(
-          `TTS API error ${res.status}: ${err} — falling back to browser speech.`
-        );
-        stopSpeaking();
-        await speakWithBrowser(clean);
-        return;
-      }
-      blob = await res.blob();
-      // Fire-and-forget cache write
-      putCachedAudio(cacheKey, blob);
-    } catch (e) {
-      console.error("TTS request failed, falling back to browser speech:", e);
-      stopSpeaking();
-      await speakWithBrowser(clean);
-      return;
-    }
-  }
-
-  // Stop any previous playback
   stopSpeaking();
-
-  // Play the new audio
-  return new Promise((resolve) => {
-    try {
-      const url = URL.createObjectURL(blob);
-      _currentUrl = url;
-      const audio = new Audio(url);
-      _currentAudio = audio;
-      const cleanup = () => {
-        if (_currentUrl === url) {
-          URL.revokeObjectURL(url);
-          _currentUrl = null;
-        }
-        if (_currentAudio === audio) _currentAudio = null;
-        resolve();
-      };
-      audio.onended = cleanup;
-      audio.onerror = cleanup;
-      audio.play().catch((e) => {
-        console.error("Audio play() failed, falling back to browser speech:", e);
-        cleanup();
-        speakWithBrowser(clean);
-      });
-    } catch (e) {
-      console.error("Audio setup failed:", e);
-      resolve();
-    }
-  });
+  await speakWithBrowser(clean);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -413,130 +291,22 @@ function writeString(view, offset, str) {
 //
 // Or { error: "..." } on failure.
 
-export async function assessPronunciation(audioBlob, referenceText, lang = "fr-FR") {
-  // Strip parentheticals from the reference text — we don't want Azure
-  // expecting the user to say "(adj)" out loud
-  const cleanRef = referenceText
-    .replace(/\([^)]*\)/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!cleanRef) return { error: "No reference text" };
-  if (!audioBlob || audioBlob.size < 1000) return { error: "Recording too short" };
-
-  const params = new URLSearchParams({ text: cleanRef, lang });
-
-  try {
-    const res = await fetch(`/api/pronounce?${params}`, {
-      method: "POST",
-      headers: { "Content-Type": "audio/wav" },
-      body: audioBlob,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return { error: err.error || `HTTP ${res.status}` };
-    }
-    const data = await res.json();
-    return parseAssessment(data, cleanRef);
-  } catch (e) {
-    console.error("Pronunciation request failed:", e);
-    return { error: e.message || "Request failed" };
-  }
-}
-
-// Azure returns scores in TWO different shapes depending on which interface
-// you use:
-//
-//   REST endpoint (cognitiveservices/v1, what we use):
-//     NBest[0].AccuracyScore, .PronScore, .FluencyScore, .CompletenessScore,
-//             .ProsodyScore   ← flat properties on NBest
-//     Words[i].AccuracyScore, .ErrorType   ← also flat
-//     Phonemes[i].AccuracyScore   ← also flat
-//
-//   Speech SDK (WebSocket):
-//     NBest[0].PronunciationAssessment = { AccuracyScore, PronScore, ... }
-//     Words[i].PronunciationAssessment = { AccuracyScore, ErrorType }
-//     Phonemes[i].PronunciationAssessment = { AccuracyScore }
-//
-// `pick(obj, key)` looks at both — flat first, then the wrapper as fallback.
-// This makes the parser tolerant if Azure ever changes shape on us, and lets
-// us swap to the SDK later without rewriting this function.
-//
-// Additionally: French (and several other non-English locales) return EMPTY
-// Phoneme strings — Azure doesn't have IPA labels for those locales. But
-// Syllables[].Grapheme is populated ("vi", "vre", etc), so when phonemes
-// lack labels we map syllables as the per-unit breakdown instead.
-function pick(obj, key) {
-  if (obj == null) return undefined;
-  if (obj[key] != null) return obj[key];
-  if (obj.PronunciationAssessment && obj.PronunciationAssessment[key] != null) {
-    return obj.PronunciationAssessment[key];
-  }
-  return undefined;
-}
-
-function parseAssessment(data, refText) {
-  if (data.RecognitionStatus && data.RecognitionStatus !== "Success") {
-    return {
-      error: data.RecognitionStatus === "InitialSilenceTimeout"
-        ? "Didn't hear anything — try again"
-        : data.RecognitionStatus,
-    };
-  }
-  const best = Array.isArray(data.NBest) && data.NBest[0];
-  if (!best) return { error: "No transcription returned" };
-
-  const words = (best.Words || []).map((w) => {
-    // Prefer real phonemes when Azure gave us labels; otherwise fall back to
-    // syllables (Grapheme) so French has something to render.
-    const rawPhonemes = w.Phonemes || [];
-    const hasPhonemeLabels = rawPhonemes.some((p) => p.Phoneme && p.Phoneme.length > 0);
-
-    let phonemes;
-    if (hasPhonemeLabels) {
-      phonemes = rawPhonemes.map((p) => ({
-        phoneme: p.Phoneme,
-        accuracy: round(pick(p, "AccuracyScore")),
-      }));
-    } else {
-      // Syllable fallback for locales without phoneme labels (French et al)
-      phonemes = (w.Syllables || []).map((s) => ({
-        phoneme: s.Grapheme || s.Syllable || "·",
-        accuracy: round(pick(s, "AccuracyScore")),
-      }));
-    }
-
-    return {
-      word: w.Word,
-      accuracy: round(pick(w, "AccuracyScore")),
-      errorType: pick(w, "ErrorType") || "None",
-      phonemes,
-    };
-  });
-
-  return {
-    transcribed: best.Display || best.Lexical || "",
-    referenceText: refText,
-    accuracy: round(pick(best, "AccuracyScore")),
-    pronunciation: round(pick(best, "PronScore") ?? pick(best, "PronunciationScore")),
-    completeness: round(pick(best, "CompletenessScore")),
-    fluency: round(pick(best, "FluencyScore")),
-    prosody: round(pick(best, "ProsodyScore")),
-    words,
-  };
-}
-
-function round(n) {
-  if (n == null) return null;
-  return Math.round(n);
+export async function assessPronunciation() {
+  // /api/pronounce proxied Azure's pronunciation assessment, unauthenticated,
+  // on the deploy owner's subscription. It has been removed. The UI that
+  // called this is behind PRONUNCIATION_ENABLED, which is already false.
+  return { error: "Pronunciation scoring is turned off." };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FEATURE DETECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Was `typeof Audio !== "undefined"`, which described playing an MP3 blob
+// from Azure. What speaks now is speechSynthesis, so that is what to test —
+// otherwise the speaker button renders on a browser that cannot use it.
 export const TTS_AVAILABLE =
-  typeof window !== "undefined" && typeof Audio !== "undefined";
+  typeof window !== "undefined" && "speechSynthesis" in window;
 
 export const STT_AVAILABLE =
   typeof window !== "undefined" &&

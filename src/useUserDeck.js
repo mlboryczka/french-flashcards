@@ -59,17 +59,6 @@ function writeCache(userId, cards) {
       return;
     }
     localStorage.setItem(CACHE_PREFIX + userId, payload);
-    return;
-  } catch {
-    try { localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
-    return;
-  }
-  // eslint-disable-next-line no-unreachable
-  try {
-    localStorage.setItem(
-      CACHE_PREFIX + userId,
-      JSON.stringify({ v: CACHE_VERSION, cards })
-    );
   } catch {
     // Over quota or storage unavailable. The cache is an optimisation; losing
     // it costs a loading state, not correctness.
@@ -78,6 +67,11 @@ function writeCache(userId, cards) {
 }
 
 export function useUserDeck(user) {
+  // Depend on the ID, not the object. supabase-js hands back a NEW user object
+  // every time it refreshes the token — roughly hourly — and keying the effect
+  // on the object meant every refresh re-downloaded the whole deck. The id is
+  // what actually identifies whose deck this is.
+  const userId = user?.id ?? null;
   // Seeded from the cache so the very first render already has a deck. Lazy
   // initialisers, so the read happens once rather than on every render.
   const [cards, setCards] = useState(() => readCache(user?.id) || []);
@@ -92,7 +86,7 @@ export function useUserDeck(user) {
 
   useEffect(() => {
     let cancelled = false;
-    if (!user) {
+    if (!userId) {
       setCards([]);
       setLoaded(true);
       loadedForUser.current = null;
@@ -100,12 +94,12 @@ export function useUserDeck(user) {
     }
     // A cached deck counts as loaded: the refetch below is then a background
     // refresh, exactly like a reload after an edit.
-    const cached = readCache(user.id);
+    const cached = readCache(userId);
     if (cached) {
       setCards(cached);
       setLoaded(true);
-      loadedForUser.current = user.id;
-    } else if (loadedForUser.current !== user.id) {
+      loadedForUser.current = userId;
+    } else if (loadedForUser.current !== userId) {
       setLoaded(false);
     }
     (async () => {
@@ -122,7 +116,15 @@ export function useUserDeck(user) {
               "next_due_at, lapses, stability, difficulty, fsrs_state, reps, " +
               "last_review, last_answer_correct"
           )
-          .eq("user_id", user.id)
+          .eq("user_id", userId)
+          // ORDER BY is not decoration here. A deck of several thousand cards
+          // takes nine of these requests, and SQL makes no promise about row
+          // order without one — so nothing guaranteed page 2 began where page 1
+          // stopped. Grading a card or adding one from the tutor writes to this
+          // table, and a write landing mid-paging could shift rows across the
+          // boundary: a card fetched twice, or silently not fetched at all. A
+          // card that isn't fetched isn't scheduled, and nothing says so.
+          .order("id", { ascending: true })
           .range(from, from + PAGE - 1);
 
         if (cancelled) return;
@@ -130,7 +132,7 @@ export function useUserDeck(user) {
           console.error("Failed to load user deck:", error);
           setCards([]);
           setLoaded(true);
-          loadedForUser.current = user.id;
+          loadedForUser.current = userId;
           return;
         }
         allRows = allRows.concat(data || []);
@@ -170,14 +172,14 @@ export function useUserDeck(user) {
         shaped.sort((a, b) => b.freq - a.freq);
         setCards(shaped);
       setLoaded(true);
-      loadedForUser.current = user.id;
-      writeCache(user.id, shaped);
+      loadedForUser.current = userId;
+      writeCache(userId, shaped);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [user, reloadCounter]);
+  }, [userId, reloadCounter]);
 
   const reload = useCallback(() => setReloadCounter((n) => n + 1), []);
 

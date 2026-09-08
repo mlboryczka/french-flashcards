@@ -22,7 +22,8 @@
 //   { results: [{ row_id, action: "split" | "keep", reason, cards: [...] }] }
 
 import Anthropic from "@anthropic-ai/sdk";
-import { extractUserIdFromJwt } from "./_lib/auth.js";
+import { requireUser } from "./_lib/auth.js";
+import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 
 const MODEL = "claude-opus-5";
 const MAX_CARDS = 25;
@@ -115,14 +116,13 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
-  }
-  // Signed-in users only. The endpoint never touches the database, so the
-  // JWT is a rate-limiting gate rather than an ownership check.
-  if (!extractUserIdFromJwt(req.headers.authorization || "")) {
-    return res.status(401).json({ error: "Sign in first" });
-  }
+  // A verified session, and a key of their own to spend. The JWT used to
+  // be decoded rather than verified, and the deploy owner's key paid for
+  // every caller.
+  const user = await requireUser(req, res);
+  if (!user) return;
+  const apiKey = requireAnthropicKey(req, res, user);
+  if (!apiKey) return;
 
   let body = req.body;
   if (typeof body === "string") {
@@ -141,7 +141,7 @@ export default async function handler(req, res) {
   }));
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = new Anthropic({ apiKey });
     const msg = await client.messages.create({
       model: MODEL,
       max_tokens: 4000,

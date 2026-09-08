@@ -13,6 +13,7 @@
 // handout needs is exactly what gets in the way here.
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { T } from "./theme";
 import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 
@@ -83,7 +84,17 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
   const sections = lesson.notes || [];
   const active = sections[Math.min(tab, Math.max(0, sections.length - 1))];
 
-  return (
+  // Rendered into <body>, the way the tutor and the feedback sheet already
+  // are. This one was rendered where it sits in the tree, which is inside the
+  // app shell — and the shell sets `overflow: hidden`.
+  //
+  // It escaped that clipping only because a fixed-position element ignores an
+  // ancestor's overflow, and that stops being true the moment any ancestor
+  // gets a transform, filter, perspective, backdrop-filter or will-change.
+  // Adding a shadow or a zoom to the shell one day would clip or vanish this
+  // panel, and nothing about the change would point here. Three panels, one
+  // mechanism, no trap.
+  return createPortal(
     <div style={S.wrap} data-lesson-panel>
       {!activeReflow && (
         <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} onClick={onClose} />
@@ -122,7 +133,8 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

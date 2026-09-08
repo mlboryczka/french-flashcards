@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
+import { keyHeaders, BYOK_REQUIRED } from "./lib/anthropicKey";
 
 // "Ask the tutor" slide-over. Look a word or phrase up, get an explanation,
 // and add the cards Claude proposes straight into the deck.
@@ -56,6 +57,10 @@ export default function ChatPanel({
   user,
   deckFronts = [],
   onCardsAdded,
+  // Opens the "connect your Claude account" dialog. The tutor spends money
+  // per question and the server refuses without a key, so the error needs a
+  // way out of itself rather than just an explanation.
+  onNeedKey,
   // Wide screens push the app aside to make room for the panel rather than
   // covering it, so you can read the card you're asking about while you type.
   // Narrow screens have no room to reflow, so the panel stays an overlay with
@@ -66,6 +71,9 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  // "byok_required" when the server refused for want of a key, so the error
+  // can offer the fix instead of only naming the problem.
+  const [errorCode, setErrorCode] = useState("");
   // Fronts added this session, so the chip can flip to "Added" without a
   // full deck refetch on every click.
   const [added, setAdded] = useState(() => new Set());
@@ -177,6 +185,7 @@ export default function ChatPanel({
       if (!trimmed || sending) return;
 
       setError("");
+      setErrorCode("");
       setInput("");
       const nextMessages = [...messages, { role: "user", content: trimmed }];
       setMessages(nextMessages);
@@ -193,6 +202,9 @@ export default function ChatPanel({
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${session.access_token}`,
+            // The user's own Anthropic key. Absent when they haven't
+            // connected one; the server then answers 402.
+            ...keyHeaders(user?.id),
           },
           body: JSON.stringify({
             // Only the prose goes back to the model — card proposals are
@@ -216,7 +228,11 @@ export default function ChatPanel({
               : `Server error (${res.status}).`
           );
         }
-        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+        if (!res.ok) {
+          const err = new Error(data.error || `Request failed (${res.status})`);
+          err.code = data.code || "";
+          throw err;
+        }
 
         setMessages((prev) => [
           ...prev,
@@ -224,6 +240,7 @@ export default function ChatPanel({
         ]);
       } catch (e) {
         setError(e.message || "Something went wrong.");
+        setErrorCode(e.code || "");
         // Put the question back so it isn't lost to a network blip.
         setInput(trimmed);
         setMessages(messages);
@@ -231,7 +248,7 @@ export default function ChatPanel({
         setSending(false);
       }
     },
-    [input, sending, messages, deckFronts]
+    [input, sending, messages, deckFronts, user]
   );
 
   const addCard = useCallback(
@@ -355,7 +372,16 @@ export default function ChatPanel({
           )}
         </div>
 
-        {error && <div style={S.error}>{error}</div>}
+        {error && (
+          <div style={S.error}>
+            {error}
+            {errorCode === BYOK_REQUIRED && onNeedKey && (
+              <button style={S.errorAction} onClick={onNeedKey}>
+                Connect Claude account
+              </button>
+            )}
+          </div>
+        )}
 
         <div style={S.composer}>
           <textarea
@@ -501,6 +527,19 @@ const S = {
     fontWeight: 500,
     fontFamily: T.font.sans,
     cursor: "default",
+  },
+  errorAction: {
+    display: "block",
+    marginTop: 8,
+    padding: "6px 12px",
+    background: T.gradient.ink,
+    color: T.color.onPrimary,
+    border: "none",
+    borderRadius: T.radius.md,
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: T.font.sans,
+    cursor: "pointer",
   },
   error: {
     margin: "0 20px 8px",
