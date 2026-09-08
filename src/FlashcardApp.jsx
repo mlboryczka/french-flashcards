@@ -3107,7 +3107,11 @@ const S = {
   // button so the two read as one row rather than two near-misses. The pencil
   // is 25px tall against the badge's 20, so their tops differ by design —
   // top:23 is what puts the two centre lines together.
-  cardBadge: { position:"absolute", top:23, right:70, padding:"4px 10px", borderRadius:999, border:`1px solid ${T.color.outline || "rgba(3,22,50,0.18)"}`, fontSize:9, fontWeight:700, letterSpacing:"0.09em", textTransform:"uppercase", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:"transparent", pointerEvents:"none", maxWidth:"48%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  // Set as written, not uppercased: a lesson title is a name ("L'impératif"),
+  // and forcing caps on it both loses that and mangles the accented capital.
+  // Sentence case needs a little more size and a lot less tracking than the
+  // 9px micro-caps it replaces.
+  cardBadge: { position:"absolute", top:23, right:70, padding:"4px 10px", borderRadius:999, border:`1px solid ${T.color.outline || "rgba(3,22,50,0.18)"}`, fontSize:10.5, fontWeight:600, letterSpacing:"0.01em", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:"transparent", pointerEvents:"none", maxWidth:"48%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   cardText: { fontSize:"clamp(19px, 10.7cqh, 40px)", textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:"clamp(16px, 8.3cqh, 31px)", textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
@@ -3116,7 +3120,7 @@ const S = {
   btnWrong: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.color.secondary, color:T.color.onSecondary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   btnRight: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   shortcuts: { textAlign:"center", fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7, letterSpacing:"0.03em" },
-  lessonChip: { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px 6px 12px", borderRadius:999, border:"none", background:T.color.primary, color:"#fff", fontSize:11, fontWeight:700, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", textTransform:"uppercase", letterSpacing:"0.05em" },
+  lessonChip: { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px 6px 12px", borderRadius:999, border:"none", background:T.color.primary, color:"#fff", fontSize:12, fontWeight:600, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", letterSpacing:"0.01em" },
   lessonChipX: { fontSize:14, lineHeight:1, opacity:0.75 },
   lessonIntro: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, maxWidth:560, lineHeight:1.55, marginBottom:24 },
   lessonError: { fontSize:13, color:"#9c4234", fontFamily:T.font.sans, marginBottom:16 },

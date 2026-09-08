@@ -149,83 +149,205 @@ export const CARDS = [
 
 // The lesson itself, distilled to what fits beside a card you are stuck on.
 //
-// Laura's PDF is six pages of prose and worked tables. A panel you open
-// mid-session is a different job: you are not reading it, you are checking one
-// thing. So this keeps the paradigms, the pairs and the two rules people
-// actually get wrong, and drops every sentence that only restates them.
+// Built from Laura Caufour's PDF, translated. Six pages of prose and worked
+// tables are a different job from a panel you open mid-session: you are not
+// reading it, you are checking one thing. So this keeps the paradigms, the
+// pairs and the rules people actually get wrong, and drops the sentences that
+// only restate them.
 //
-// Sections render as: a `table` (header row + rows), `pairs` (two columns,
-// used for contrasts like affirmative vs negative), `lines` (plain bullets),
-// and an optional `note` above them.
+// SHAPE. Four sections, one per numbered section of her lesson, each rendered
+// as a tab. A section is an ORDERED list of blocks, because her material
+// interleaves — a rule, its examples, then a caveat on those examples. The
+// earlier fixed order (note, then table, then pairs, then lines) could not
+// express that.
+//
+// Block types:
+//   lead   the one sentence saying what this section is for
+//   sub    a subheading within a section
+//   note   a paragraph. Supports **bold** and *italic*
+//   list   bullets; an item may be { v, ex } to carry its own example
+//   forms  a labelled line of French specimens
+//   pairs  two columns, `head` names them
+//   table  `cols` + `rows`; `bold` picks the column that carries the weight
+//
+// EVERY EXAMPLE KEEPS ITS LABEL. Her PDF captions each specimen block
+// ("Impératif présent", "Exemples :"). Stripping those captions while
+// distilling left French words floating with nothing saying what they were —
+// the single biggest source of confusion in review. Likewise every rule keeps
+// an example: a rule stated in the abstract is a riddle.
+//
+// THREE ERRORS IN THE SOURCE ARE CORRECTED HERE, not reproduced:
+//   - She pairs "Vous lui donnez" with "Donne-lui". The subject is vous, so
+//     the imperative is "Donnez-lui" — which is also what the card says.
+//   - "Ne faites pas de bêtises" was missing its exclamation mark.
+//   - She calls "Dis-le-moi" an exception to pronoun order. It is not: it
+//     obeys the same order as "Dis-le-lui" — direct object first, always. It
+//     only looks exceptional because she never states the order, deferring to
+//     a pronoun lesson this app does not have. The order is given instead.
+//
+// Two sentences here are NOT hers and carry rules her prose never states,
+// only implies through its tables: the "take the present indicative and drop
+// the subject pronoun" lead, and the me/te -> moi/toi table. Without them the
+// sections were tables with nothing telling you what to do.
 export const NOTES = [
   {
-    h: "The shape of it",
-    note: "An order or a piece of advice. Only three persons, and the subject pronoun is never said — the only French tense that works that way.",
-  },
-  {
-    h: "Regular forms",
-    table: {
-      cols: ["", "regarder", "finir", "prendre"],
-      rows: [
-        ["tu", "regarde", "finis", "prends"],
-        ["nous", "regardons", "finissons", "prenons"],
-        ["vous", "regardez", "finissez", "prenez"],
-      ],
-    },
-    note: "The present indicative with the subject removed. -er verbs drop the -s of the tu form.",
-  },
-  {
-    h: "The four irregulars",
-    pairs: [
-      ["être", "sois · soyons · soyez"],
-      ["avoir", "aie · ayons · ayez"],
-      ["aller", "va · allons · allez"],
-      ["savoir", "sache · sachons · sachez"],
+    tab: "Use",
+    h: "1 · Presentation and use",
+    blocks: [
+      { t: "note", v: "The present imperative is used mainly to express an order or a piece of advice." },
+      { t: "note", v: "It has two major specificities:" },
+      { t: "list", v: [
+        "It is made up of only 3 persons: 2nd person singular (tu), 1st person plural (nous), 2nd person plural (vous).",
+        { v: "The personal pronoun is not expressed. It is the only tense in French that is used without mentioning the subject.",
+          ex: "tu regardes → regarde" },
+      ]},
+      { t: "table", bold: 1,
+        cols: ["Present indicative", "Present imperative"],
+        rows: [
+          ["Tu regardes", "Regarde"],
+          ["Nous regardons", "Regardons"],
+          ["Vous regardez", "Regardez"],
+        ]},
+      { t: "sub", v: "Second person · tu, vous" },
+      { t: "note", v: "In the second person (tu and vous), the present imperative is used like the imperative in English." },
+      { t: "pairs", head: ["French", "English"], v: [
+        ["Arrête de faire du bruit !", "Stop making noise!"],
+        ["Viens ici !", "Come here!"],
+        ["Prenez votre manteau !", "Take your coat!"],
+        ["Ne faites pas de bêtises !", "Don't do anything stupid!"],
+      ]},
+      { t: "sub", v: "First person plural · nous" },
+      { t: "note", v: "In the first person plural (nous), it can be used to translate « let's » + base form." },
+      { t: "pairs", head: ["French", "English"], v: [
+        ["Allons-y", "Let's go"],
+        ["Parlons-en", "Let's talk about it"],
+      ]},
+      { t: "note", v: "However, the first person is very little used. The most common translation for « let's » + base form is « on » + the present indicative." },
     ],
   },
   {
-    h: "Negative",
-    note: "ne + verb + pas.",
-    lines: ["Ne regarde pas", "Ne finissons pas", "Ne prenez pas"],
-  },
-  {
-    h: "Pronouns",
-    note: "Affirmative: after the verb, joined by a hyphen, and me / te become moi / toi. Negative: back in front of the verb, in their ordinary form.",
-    pairs: [
-      ["Regarde-moi", "Ne me regarde pas"],
-      ["Dis-moi", "Ne me dis pas"],
-      ["Achète-le", "Ne l'achète pas"],
-      ["Donne-lui", "Ne lui donne pas"],
-      ["Prends-en", "N'en prends pas"],
-      ["Réfléchis-y", "N'y réfléchis pas"],
-      ["Parlons-en", "N'en parlons plus"],
+    tab: "Forms",
+    h: "2 · Formation",
+    blocks: [
+      { t: "lead", v: "Take the present indicative and drop the subject pronoun. That is the whole rule — with one wrinkle: -er verbs also drop the -s of the tu form." },
+      { t: "sub", v: "Affirmative form" },
+      { t: "note", v: "The three verbs below are one from each French verb family: **regarder** (-er), **finir** (-ir), **prendre** (everything else). The rule is the same for all three." },
+      { t: "table", caption: "Present indicative", dense: true,
+        cols: ["Person", "regarder", "finir", "prendre"],
+        rows: [
+          ["tu", "Tu regardes", "Tu finis", "Tu prends"],
+          ["nous", "Nous regardons", "Nous finissons", "Nous prenons"],
+          ["vous", "Vous regardez", "Vous finissez", "Vous prenez"],
+        ]},
+      { t: "table", caption: "Present imperative",
+        cols: ["Person", "regarder", "finir", "prendre"],
+        rows: [
+          ["tu", "Regarde", "Finis", "Prends"],
+          ["nous", "Regardons", "Finissons", "Prenons"],
+          ["vous", "Regardez", "Finissez", "Prenez"],
+        ]},
+      { t: "sub", v: "Very irregular verbs" },
+      { t: "pairs", head: ["Verb", "tu · nous · vous"], v: [
+        ["Être", "Sois · Soyons · Soyez"],
+        ["Avoir", "Aie · Ayons · Ayez"],
+        ["Aller", "Va · Allons · Allez"],
+        ["Savoir", "Sache · Sachons · Sachez"],
+      ]},
+      { t: "sub", v: "Negative form" },
+      { t: "note", v: "Ne + verb in the imperative + pas / plus / jamais etc." },
+      { t: "table", caption: "Present imperative · negative", dense: true,
+        cols: ["Person", "regarder", "finir", "prendre"],
+        rows: [
+          ["tu", "Ne regarde pas", "Ne finis pas", "Ne prends pas"],
+          ["nous", "Ne regardons pas", "Ne finissons pas", "Ne prenons pas"],
+          ["vous", "Ne regardez pas", "Ne finissez pas", "Ne prenez pas"],
+        ]},
     ],
   },
   {
-    h: "Reflexive verbs",
-    note: "The reflexive pronoun behaves like any other.",
-    pairs: [
-      ["Lève-toi", "Ne te lève pas"],
-      ["Amuse-toi", "Ne t'amuse pas"],
-      ["Levez-vous", "Ne vous levez pas"],
+    tab: "Pronouns",
+    h: "3 · Use of object pronouns",
+    blocks: [
+      { t: "sub", v: "Affirmative form" },
+      { t: "lead", v: "Object pronouns go after the verb, joined by a hyphen. Two of those pronouns change form when they move there." },
+      { t: "table", bold: 1,
+        cols: ["Normally", "After the verb"],
+        rows: [
+          ["me", "moi"],
+          ["te", "toi"],
+        ]},
+      { t: "note", v: "Every other pronoun keeps its usual form: **le / la / l'**, **les**, **lui**, **leur**, **nous**, **vous**, **en**, **y**." },
+      { t: "sub", v: "Direct object" },
+      { t: "pairs", head: ["Indicative", "Imperative"], v: [
+        ["Tu me regardes", "Regarde-moi"],
+        ["Tu l'achètes", "Achète-le"],
+        ["Vous nous attendez", "Attendez-nous"],
+      ]},
+      { t: "sub", v: "Indirect object · verbs of communication" },
+      { t: "pairs", head: ["Indicative", "Imperative"], v: [
+        ["Tu me dis", "Dis-moi"],
+        ["Vous lui donnez", "Donnez-lui"],
+        ["Tu nous envoies une lettre", "Envoie-nous une lettre"],
+      ]},
+      { t: "sub", v: "Other object pronouns" },
+      { t: "pairs", head: ["Indicative", "Imperative"], v: [
+        ["Tu y réfléchis", "Réfléchis-y"],
+        ["Tu en prends", "Prends-en"],
+        ["Nous en parlons", "Parlons-en"],
+      ]},
+      { t: "sub", v: "Negative form" },
+      { t: "note", v: "In the negative form, on the other hand, object pronouns are used normally. They are therefore placed before the verb." },
+      { t: "pairs", head: ["Affirmative", "Negative"], v: [
+        ["Regarde-moi", "Ne me regarde pas"],
+        ["Dis-moi", "Ne me dis pas"],
+        ["Réfléchis-y", "N'y réfléchis pas"],
+        ["Achète-le", "Ne l'achète pas"],
+        ["Donne-lui", "Ne lui donne pas"],
+        ["Prends-en", "N'en prends pas"],
+        ["Attendez-nous", "Ne nous attendez pas"],
+        ["Envoie-nous une lettre", "Ne nous envoie pas de lettre"],
+        ["Parlons-en", "N'en parlons plus"],
+      ]},
+      { t: "sub", v: "Detail 1 · advanced" },
+      { t: "note", v: "First-group verbs and the verb aller take an « s » in the second person singular when they are followed by the pronouns « en » and « y », to make pronunciation easier." },
+      { t: "forms", label: "Examples", v: ["Profites-en bien !", "Retournes-y !", "Vas-y !"] },
+      { t: "sub", v: "Detail 2 · advanced" },
+      { t: "note", v: "When two pronouns are present, they follow the verb in this order. The hyphen is doubled, or an apostrophe is added (for « y » and « en »)." },
+      { t: "table", bold: 1,
+        cols: ["Order", "Pronouns"],
+        rows: [
+          ["1st", "le / la / les"],
+          ["2nd", "moi / toi / lui / nous / vous / leur"],
+          ["3rd", "y"],
+          ["4th", "en"],
+        ]},
+      { t: "forms", label: "Examples", v: [
+        "Dis-le-lui !", "Dis-le-moi.", "Donne-la-moi.",
+        "Donne-les-leur.", "Ramène-m'en ce soir.", "Rappelle-le-moi demain.",
+      ]},
+      { t: "note", v: "**The trap:** in every other tense me and te come *first* — *Tu me le dis*. After the verb they come second and become moi and toi — *Dis-le-moi*." },
     ],
   },
   {
-    h: "Two that catch people",
-    lines: [
-      "-er verbs and aller take an -s before en and y — Vas-y, Profites-en, Retournes-y, Penses-y",
-      "With two pronouns, le / la / les come before moi / toi — Dis-le-moi, Donne-la-moi, Rappelle-le-moi",
-    ],
-  },
-  {
-    h: "Worth knowing by heart",
-    pairs: [
-      ["Dis-moi ce que tu as", "Tell me what's wrong"],
-      ["Amuse-toi bien !", "Have fun!"],
-      ["Allons-y !", "Let's go!"],
-      ["Ne me parle pas comme ça !", "Don't talk to me like that!"],
-      ["Profites-en bien !", "Make the most of it!"],
-      ["Dis-le-moi !", "Tell me!"],
+    tab: "Reflexive",
+    h: "4 · Reflexive verbs",
+    blocks: [
+      { t: "lead", v: "The reflexive pronoun moves like any other. Affirmative: after the verb, and te becomes toi — *Lève-toi*. Negative: back in front of the verb, and toi returns to te — *Ne te lève pas*." },
+      { t: "note", v: "nous and vous never change; only te does." },
+      { t: "pairs", head: ["Affirmative", "Negative"], v: [
+        ["Lève-toi", "Ne te lève pas"],
+        ["Levons-nous", "Ne nous levons pas"],
+        ["Levez-vous", "Ne vous levez pas"],
+        ["Souviens-toi", "Ne te souviens pas"],
+        ["Souvenons-nous", "Ne nous souvenons pas"],
+        ["Souvenez-vous", "Ne vous souvenez pas"],
+        ["Amuse-toi", "Ne t'amuse pas"],
+        ["Amusons-nous", "Ne nous amusons pas"],
+        ["Amusez-vous", "Ne vous amusez pas"],
+        ["Bats-toi", "Ne te bats pas"],
+        ["Battons-nous", "Ne nous battons pas"],
+        ["Battez-vous", "Ne vous battez pas"],
+      ]},
     ],
   },
 ];
