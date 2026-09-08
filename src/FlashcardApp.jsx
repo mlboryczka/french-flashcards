@@ -2773,8 +2773,20 @@ const S = {
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
   // Indented to sit under its parent nav item, and quieter than one: a lesson
   // is a place inside Lessons, not a peer of Cards and Stats.
-  sideSubItem: { display:"block", width:"100%", padding:"7px 24px 7px 52px", border:"none", borderLeftWidth:2, borderLeftStyle:"solid", borderLeftColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:12, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left" },
-  sideSubItemActive: { color:T.color.primary, fontWeight:700, borderLeftColor:T.color.primary },
+  // A lesson sitting under Lessons. Its text starts at 64px, which is exactly
+  // where a nav item's LABEL starts — sideItem is padded 32 and its 18px icon
+  // is followed by a 14px gap. That makes one clean vertical line down the
+  // nav's text, with the lesson visibly a child of the item above it. At the
+  // old 52 it aligned to neither the icon nor the label and just looked
+  // dropped in the wrong place.
+  //
+  // The active marker is the same right-hand bar the parent items use, rather
+  // than a left bar 64px away from the text it was supposed to be marking.
+  // Longhands, not the borderRight shorthand: React diffs per property, so a
+  // shorthand base plus a longhand override strands the old value when the
+  // item deactivates.
+  sideSubItem: { display:"block", width:"100%", padding:"7px 32px 7px 64px", border:"none", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:12, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left", boxSizing:"border-box" },
+  sideSubItemActive: { color:T.color.secondary, fontWeight:700, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
   sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderTopWidth:3, borderTopStyle:"solid", borderTopColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
   sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
