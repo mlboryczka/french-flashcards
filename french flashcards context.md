@@ -19,7 +19,7 @@ still open.
 | Frontend | Vite + React 18, no router, no CSS framework — styles are inline objects in a `S` / `T` theme constant |
 | Scheduling | `ts-fsrs` 5.4.2 |
 | Auth + data | Supabase (Postgres, magic-link email, RLS), free tier |
-| AI | Anthropic SDK, model `claude-opus-5`, called only from serverless functions |
+| AI | Anthropic SDK (pinned at 0.27.3), called only from serverless functions. Model is per route — see the table below |
 | Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
 
 **Free-tier gotcha:** Supabase pauses a project after ~7 days idle, and
@@ -156,6 +156,19 @@ The parser prompt also forbids producing these in the first place.
 | `tts.js` / `pronounce.js` | French speech; `src/audio.js` falls back to the browser's own `speechSynthesis` when the backend is unreachable |
 | `admin-users.js`, `parse-corrections.js`, `upload-batches.js`, `cahier-parse.js` | Admin and upload plumbing |
 
+### Which model each route runs
+
+The model is a constant per file, chosen for that file's job — not something a
+router picks per request. The endpoint boundaries already sort the traffic by
+kind, so this needs no classifier.
+
+| Route | Model | Why |
+|---|---|---|
+| `chat.js` | `claude-sonnet-5`, effort `low` | On the latency path; a vocabulary lookup is not hard inference |
+| `review-answer.js` | `claude-opus-4-6` | Rare, and it writes to `card_alternates` and to scheduling. **Should be `claude-opus-5`** — not yet done |
+| `split-senses.js` | `claude-opus-5` | Batch classification against written-out rules. **Overkill; Sonnet would do**, and being offline it could go through the Batch API at half price |
+| `parse-cahier.js`, `cahier-parse.js` | `claude-haiku-4-5` | Structured extraction from a regular format. Correct as-is |
+
 `api/_lib/` is skipped by Vercel's function discovery (underscore prefix), so
 it is import-only.
 
@@ -278,7 +291,7 @@ These look arbitrary and are not:
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Eight suites: two pure-logic, seven driving
+`npm test` — see `tests/README.md`. Nine suites: two pure-logic, seven driving
 the real app in headless Chromium against a mock Supabase, asserting on
 **measured** values (geometry, computed styles, request payloads) rather than
 on intent.
@@ -532,6 +545,25 @@ touch all five API routes.
   is a layout property and the card's `cqh` text re-resolves each time. Measured
   under CPU throttling. Animating `transform` instead would fix it, and would
   change what the layout and motion suites assert.
+- **The tutor's model change is unmeasured.** `chat.js` moved from Opus 5 to
+  Sonnet 5 on reasoning about the task, not on evidence that quality holds for
+  French specifically — nuance questions are exactly where a lighter model
+  gives a confident wrong answer. The mitigation is that proposed cards are now
+  editable, so a bad card costs a keystroke rather than months of reviews. A
+  real answer needs ~30-40 real questions with checked answers, run against both
+  at a couple of effort levels. Until then: use it, and switch back if it is
+  visibly worse.
+- **`@anthropic-ai/sdk` is pinned at 0.27.3** (mid-2024), which predates
+  `output_config`, adaptive thinking and GA prompt caching. `chat.js` works
+  because that SDK forwards unknown body keys verbatim — verified by capturing
+  the request it builds — not because it supports them. A bump is overdue and
+  touches all five routes.
+- **The tutor's cache breakpoint may be a no-op.** The system prompt plus tool
+  schema is roughly 900 tokens and the minimum cacheable prefix is
+  model-dependent; below it, `cache_control` silently does nothing. One
+  `count_tokens` call against the real prompt would settle it.
+- **The other three routes still have their old model choices** — see the table
+  under Serverless functions. Only `chat.js` was changed.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
   exercise sheet ships no answer key, and her lesson PDF has at least one error
   (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
