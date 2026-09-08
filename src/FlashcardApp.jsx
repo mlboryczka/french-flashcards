@@ -41,8 +41,32 @@ import {
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
+import { localISODate } from "./lib/studyDay";
 import { buildSession, applyAnswer } from "./lib/sessionQueue";
-import { RE_QUEUE_OFFSET } from "./lib/spacedRepetition";
+import {
+  RE_QUEUE_OFFSET,
+  State,
+  MASTERED_STABILITY_DAYS,
+} from "./lib/spacedRepetition";
+
+// How the Stats page reads a card's progress.
+//
+// It used to read card_progress.score — a 0-to-5 ladder from the Leitner era
+// that migration_006 replaced with FSRS. Nothing updated the page, so it kept
+// answering a question the app had stopped asking: a card FSRS considered
+// solid for months could still appear under "new", because nothing had
+// touched its old score.
+//
+// These read the same fields the scheduler actually schedules on, so the page
+// and the queue can no longer disagree.
+//   new       — never answered
+//   mastered  — FSRS expects recall two months out (the spot-check threshold)
+//   learning  — answered, not there yet
+function cardStage(card) {
+  if ((card.fsrs_state ?? State.New) === State.New) return "new";
+  if ((card.stability ?? 0) >= MASTERED_STABILITY_DAYS) return "mastered";
+  return "learning";
+}
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -197,7 +221,16 @@ function matchAnswer(typed, correct, extraAlts = []) {
 // got it wrong. Shared by the Continue button and by tapping the card, which
 // does the same thing.
 function typedGotIt(typeResult) {
-  return typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle";
+  // "wrongArticle" is NOT recall.
+  //
+  // It used to be, which meant the banner said "✗ Wrong article" and the
+  // scheduler was then told you knew the card and pushed it further out. The
+  // matcher is deliberately strict about French gender — `articlesCompatible`
+  // refuses le/la and un/une outright — and grading it as a hit threw away the
+  // one distinction it was being strict about, quietly teaching the wrong
+  // gender. If you disagree on a given card, the "should have been accepted"
+  // link is still right there.
+  return typeResult === "correct" || typeResult === "close";
 }
 
 export default function FlashcardApp({ user, onSignOut }) {
@@ -242,8 +275,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Like typeFilter this narrows the candidate pool the session is built
   // from, so the lesson still schedules through FSRS normally.
   const [lessonFilter, setLessonFilter] = useState("all");
-  const [addingLesson, setAddingLesson] = useState(null); // lesson id being added
-  const [lessonError, setLessonError] = useState("");
   const [dir, setDir] = useState("mix"); // fr | en | mix
   const [typeMode, setTypeMode] = useState(false);
   const [typedAnswer, setTypedAnswer] = useState("");
@@ -292,6 +323,19 @@ export default function FlashcardApp({ user, onSignOut }) {
     });
   }, []);
   const [showLessonPanel, setShowLessonPanel] = useState(false);
+
+  // Leaving a lesson closes its notes.
+  //
+  // These are two pieces of state and only the first was ever cleared, by both
+  // the chip's × and the Cards nav item. The panel then vanished — it renders
+  // nothing without a lesson — while the page went on reserving the 460px it
+  // had made for it: a dead strip down the right side with nothing in it, and
+  // no way back, because the "Lesson notes" toggle only exists while a lesson
+  // is selected. One function so a third caller can't reintroduce it.
+  const leaveLesson = useCallback(() => {
+    setLessonFilter("all");
+    setShowLessonPanel(false);
+  }, []);
   // "Connect your Claude account". Everything that calls Claude bills the
   // caller's own Anthropic key now, so there has to be somewhere to put one.
   const [showKeyModal, setShowKeyModal] = useState(false);
@@ -336,13 +380,24 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [winWidth, setWinWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1400
   );
+  // Coalesced to one update per frame. A drag fires resize dozens of times a
+  // second and each one re-rendered this entire component; rAF collapses a
+  // burst into the single measurement that matters, which is the last one.
   useEffect(() => {
+    let frame = null;
     const onResize = () => {
-      setIsNarrow(window.innerWidth < 768);
-      setWinWidth(window.innerWidth);
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        setIsNarrow(window.innerWidth < 768);
+        setWinWidth(window.innerWidth);
+      });
     };
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, []);
 
   // Review dates for streak tracking, loaded from Supabase.
@@ -672,7 +727,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Record today's review date for streak tracking.
     // Write to Supabase (persists across devices) and update local state so
     // the streak UI reflects it immediately without a refetch.
-    const todayISO = new Date().toISOString().slice(0,10);
+    const todayISO = localISODate();
     if (!reviewDates.has(todayISO)) {
       setReviewDates(prev => {
         const next = new Set(prev);
@@ -842,7 +897,9 @@ export default function FlashcardApp({ user, onSignOut }) {
   // The matcher's verdict is the progress update — no self-report needed.
   useEffect(() => {
     if (mode !== "study" || !typeMode || !typeResult || overlayOpen || sessionDone) return;
-    const gotIt = typeResult === "correct" || typeResult === "close" || typeResult === "wrongArticle";
+    // One rule, one place. This was a second copy of typedGotIt's logic, so
+    // the two could — and did — disagree about what counts as recall.
+    const gotIt = typedGotIt(typeResult);
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.key === "Enter" || e.key === " " || e.key === "ArrowRight") {
@@ -1029,40 +1086,9 @@ export default function FlashcardApp({ user, onSignOut }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, deckLoaded]);
 
-  // Copy a lesson's cards into this user's deck.
-  //
-  // The lesson itself is static and shared; the copy is what makes the
-  // scheduling personal, because FSRS state lives on the row. Upserting on
-  // (user_id, front) means adding a lesson twice is a no-op rather than a
-  // duplicate, and re-adding after the lesson text is corrected updates the
-  // wording while leaving the scheduling history in place.
-  const addLesson = async (lesson) => {
-    if (!user || !lesson) return;
-    setAddingLesson(lesson.id);
-    setLessonError("");
-    try {
-      const rows = lesson.cards.map(([front, back, cat]) => ({
-        user_id: user.id,
-        front,
-        back,
-        category: cat,
-        dates: [],
-        source: lessonSource(lesson.id),
-      }));
-      const { error } = await supabase
-        .from("user_cards")
-        .upsert(rows, { onConflict: "user_id,front" });
-      if (error) throw error;
-      reloadDeck();
-      setLessonFilter(lesson.id);
-      setMode("study");
-    } catch (e) {
-      console.error("Add lesson failed:", e);
-      setLessonError(e.message || "Couldn't add the lesson.");
-    } finally {
-      setAddingLesson(null);
-    }
-  };
+  // addLesson() lived here: it copied a lesson's cards into the deck for an
+  // "Add" button that no longer exists, because the sync above puts every
+  // lesson in every deck on load. Nothing had called it since.
 
   const seedDemoDeck = async () => {
     if (!user) return;
@@ -1358,7 +1384,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   const NAV_ICONS = {
     study: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>,
     stats: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>,
-    feedback: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>,
     lessons: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
     tutor: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9.1 9a2.5 2.5 0 0 1 4.9.6c0 1.7-2.5 2.5-2.5 2.5"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
   };
@@ -1421,7 +1446,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   // Cards means the whole deck, so it clears any lesson you
                   // were inside — otherwise it selects itself while the lesson
                   // beneath it stays filtered and marked.
-                  if (m === "study") setLessonFilter("all");
+                  if (m === "study") leaveLesson();
                   setMode(m);
                 }}
               >
@@ -1689,11 +1714,9 @@ export default function FlashcardApp({ user, onSignOut }) {
               Card sets built from a teacher's lesson materials. Adding one copies its
               cards into your deck, where they schedule alongside everything else.
             </p>
-            {lessonError && <div style={S.lessonError}>{lessonError}</div>}
             {LESSONS.map((lesson) => {
               const owned = userCards.filter((c) => lessonIdOf(c) === lesson.id);
               const added = owned.length > 0;
-              const busy = addingLesson === lesson.id;
               return (
                 <div key={lesson.id} style={S.lessonCard}>
                   <div style={S.lessonHead}>
@@ -1706,7 +1729,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         find L'impératif already there. */}
                     <button
                       style={S.lessonStudyBtn}
-                      disabled={busy || !added}
+                      disabled={!added}
                       onClick={() => { setLessonFilter(lesson.id); setMode("study"); }}
                     >
                       {added ? "Study" : "Adding…"}
@@ -1731,36 +1754,40 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   if (mode === "stats") {
     const total = userCards.length;
-    const learned = userCards.filter(c => (progress[c.id]?.score??0) >= 3).length;
-    const inProg = userCards.filter(c => { const s=progress[c.id]?.score??0; return s>0&&s<3; }).length;
-    const newCount = total - learned - inProg;
+    let learned = 0, inProg = 0, newCount = 0;
+    for (const c of userCards) {
+      const stage = cardStage(c);
+      if (stage === "mastered") learned++;
+      else if (stage === "learning") inProg++;
+      else newCount++;
+    }
 
     // Streak: based on actual review days stored in Supabase
     // (loaded into reviewDates state on mount, appended to by answer()).
-    const todayISO = new Date().toISOString().slice(0,10);
+    const todayISO = localISODate();
     let streak = 0;
     for (let i = 0; i < 365; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const iso = d.toISOString().slice(0,10);
+      const iso = localISODate(d);
       if (reviewDates.has(iso)) streak++;
+      // Not having studied yet TODAY doesn't end a streak — the day isn't over.
       else if (iso !== todayISO) break;
     }
 
     // Session accuracy
     const sessionAcc = stats.seen > 0 ? Math.round((stats.got / stats.seen) * 100) : 0;
 
-    // Due for review: cards you've started (score 1-2) but haven't mastered
-    const dueForReview = userCards.filter(c => {
-      const s = progress[c.id]?.score ?? 0;
-      return s > 0 && s < 3;
-    }).length;
-
-    // Hardest cards
+    // Hardest cards: the ones you have actually forgotten, most often.
+    //
+    // `lapses` is FSRS's own count of times a card went from known back to
+    // unknown, which is the definition of a hard card. The old version looked
+    // for a low score on the retired ladder, so it surfaced cards nobody had
+    // answered since the migration and missed ones being missed today.
     const hardest = userCards
-      .map(c => ({ ...c, _score: progress[c.id]?.score ?? 0, _seen: progress[c.id]?.seen ?? 0 }))
-      .filter(c => c._seen >= 2 && c._score <= 1)
-      .sort((a, b) => b._seen - a._seen || a._score - b._score)
+      .map(c => ({ ...c, _lapses: c.lapses ?? 0, _seen: progress[c.id]?.seen ?? 0 }))
+      .filter(c => c._lapses >= 1)
+      .sort((a, b) => b._lapses - a._lapses || (b.difficulty ?? 0) - (a.difficulty ?? 0))
       .slice(0, 4);
 
     // Pipeline bar proportions
@@ -1773,12 +1800,15 @@ export default function FlashcardApp({ user, onSignOut }) {
       const cards = userCards.filter((c) => classifyCard(c) === type);
       let seen = 0, got = 0, mastered = 0, started = 0;
       for (const c of cards) {
+        // Mastery comes from the scheduler. Accuracy still comes from
+        // card_progress, because the running right/wrong tally is the one
+        // thing FSRS doesn't keep — it models memory, not history.
+        if (cardStage(c) === "mastered") mastered++;
         const pr = progress[c.id];
         if (!pr || !pr.seen) continue;
         started++;
         seen += pr.seen;
         got += pr.got ?? 0;
-        if ((pr.score ?? 0) >= 3) mastered++;
       }
       return {
         type,
@@ -1884,7 +1914,9 @@ export default function FlashcardApp({ user, onSignOut }) {
                         </span>
                       </div>
                       <h4 style={S.hardWord}>{c.f}</h4>
-                      <p style={S.hardMeta}>Score {c._score}/5 · seen {c._seen}×</p>
+                      <p style={S.hardMeta}>
+                        forgotten {c._lapses}×{c._seen ? ` · seen ${c._seen}×` : ""}
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -1981,7 +2013,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           {lessonFilter !== "all" && (
             <button
               style={S.lessonChip}
-              onClick={() => setLessonFilter("all")}
+              onClick={leaveLesson}
               title="Back to the whole deck"
             >
               {LESSONS.find((l) => l.id === lessonFilter)?.title || lessonFilter}
@@ -2048,7 +2080,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                   <span style={S.counter}>
                     {inOriginal
                       ? `Card ${idx+1} of ${initialDeckSize}`
-                      : `Retry ${idx + 1 - initialDeckSize} of ${retriesPending + (idx + 1 - initialDeckSize)}`}
+                      // retriesPending IS the total number of re-queued cards.
+                      // Adding your position within the tail to it counted the
+                      // card in front of you twice, so missing one card read
+                      // "Retry 1 of 2".
+                      : `Retry ${idx + 1 - initialDeckSize} of ${retriesPending}`}
                     {inOriginal && hasBreakdown && (
                       <span style={S.counterBreakdown}>
                         {" · "}
@@ -2060,7 +2096,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         ].filter(Boolean).join(" · ")}
                       </span>
                     )}
-                    {retriesPending > 0 && (
+                    {inOriginal && retriesPending > 0 && (
                       <span style={S.counterBreakdown}>
                         {` · ${retriesPending} retry pending`}
                       </span>
@@ -3154,7 +3190,6 @@ const S = {
   lessonChip: { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px 6px 12px", borderRadius:999, border:"none", background:T.color.primary, color:"#fff", fontSize:11, fontWeight:700, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", textTransform:"uppercase", letterSpacing:"0.05em" },
   lessonChipX: { fontSize:14, lineHeight:1, opacity:0.75 },
   lessonIntro: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, maxWidth:560, lineHeight:1.55, marginBottom:24 },
-  lessonError: { fontSize:13, color:"#9c4234", fontFamily:T.font.sans, marginBottom:16 },
   lessonCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card, maxWidth:720 },
   lessonHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16 },
   lessonTitle: { fontSize:18, fontFamily:T.font.serif, color:T.color.onSurface, marginBottom:4 },
