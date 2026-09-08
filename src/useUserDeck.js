@@ -64,16 +64,20 @@ function writeCache(userId, cards) {
     try { localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
     return;
   }
-  // eslint-disable-next-line no-unreachable
+}
+
+// The deck is one person's whole vocabulary. It has no business surviving in
+// a browser after they sign out of it.
+export function clearDeckCache(userId) {
   try {
-    localStorage.setItem(
-      CACHE_PREFIX + userId,
-      JSON.stringify({ v: CACHE_VERSION, cards })
-    );
+    if (userId) localStorage.removeItem(CACHE_PREFIX + userId);
+    else {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k);
+      }
+    }
   } catch {
-    // Over quota or storage unavailable. The cache is an optimisation; losing
-    // it costs a loading state, not correctness.
-    try { localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
+    // Storage unavailable. Nothing to clear that we can reach.
   }
 }
 
@@ -128,7 +132,11 @@ export function useUserDeck(user) {
         if (cancelled) return;
         if (error) {
           console.error("Failed to load user deck:", error);
-          setCards([]);
+          // Keep whatever is already on screen. Blanking a cached deck over a
+          // transient error emptied the study view AND convinced the lesson
+          // sync the user owned none of their lesson cards, so it re-inserted
+          // all of them. An empty deck is only the truth on a first load.
+          setCards((prev) => (prev.length ? prev : []));
           setLoaded(true);
           loadedForUser.current = user.id;
           return;

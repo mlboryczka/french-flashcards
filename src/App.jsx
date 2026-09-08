@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase";
 import Auth from "./Auth";
 import FlashcardApp from "./FlashcardApp";
+import { clearDeckCache } from "./useUserDeck";
+import { clearProgressCache } from "./useProgress";
 
 // How long to wait for getSession() before giving up on it.
 //
@@ -108,6 +110,11 @@ export default function App() {
   }, [retry]);
 
   const handleSignOut = async () => {
+    // Drop the local copies FIRST. Both caches key on the user id, so they
+    // survive a sign-out otherwise — leaving one person's whole deck and their
+    // score history in localStorage for whoever uses the browser next.
+    clearDeckCache(session?.user?.id);
+    clearProgressCache(session?.user?.id);
     await supabase.auth.signOut();
   };
 

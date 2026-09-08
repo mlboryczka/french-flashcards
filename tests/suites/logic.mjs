@@ -4,6 +4,8 @@ import { classifyCard } from "../../src/lib/cardTypes.js";
 import { looksMultiSense } from "../../src/lib/multiSense.js";
 import { cleanFrenchPrompt } from "../../src/lib/cardText.js";
 import { findRelatedCards, recentMisses } from "../../src/lib/deckContext.js";
+import { reconcileLessons } from "../../src/lib/lessonSync.js";
+import { lessonSource, lessonCardKey } from "../../src/lib/lessonSource.js";
 import { checker } from "../check.mjs";
 
 const ck = checker();
@@ -168,6 +170,73 @@ console.log("\n  recentMisses — what they are actually getting wrong");
   );
   ck("only the missed cards come back", missed.length === 2, missed.join(", "));
   ck("most recently missed first", missed[0] === "la colline", missed.join(", "));
+}
+
+// Keeping a deck in step with a lesson. The requirement that costs real data:
+// the lesson may withdraw a card, and the user may correct one, and those two
+// must not look the same — retiring a corrected card destroys its FSRS history.
+console.log("\n  reconcileLessons — the lesson is the authority, the edit is the user's");
+{
+  const LESSON = {
+    id: "test",
+    cards: [
+      ["parler → tu", "parle", "G"],
+      ["finir → tu", "finis", "G"],
+    ],
+  };
+  const stored = (front, key, row_id) => ({
+    f: front,
+    b: "x",
+    row_id,
+    source: key === null ? lessonSource("test") : lessonSource("test", key),
+  });
+
+  const empty = reconcileLessons([LESSON], []);
+  ck("a deck without the lesson is given all of it", empty.missing.length === 2, String(empty.missing.length));
+  ck("inserted cards carry their key", empty.missing.every((c) => /#/.test(c.source)));
+
+  const full = [
+    stored("parler → tu", lessonCardKey("parler → tu"), 1),
+    stored("finir → tu", lessonCardKey("finir → tu"), 2),
+  ];
+  const same = reconcileLessons([LESSON], full);
+  ck(
+    "a deck already in step is left completely alone",
+    !same.missing.length && !same.stale.length && !same.rekey.length,
+    `+${same.missing.length} -${same.stale.length} ~${same.rekey.length}`
+  );
+
+  // The bug this exists for: correcting a typo used to make the row
+  // unrecognisable, so it was retired and re-inserted uncorrected — losing the
+  // scheduling history built up on it.
+  const edited = [
+    stored("parler → tu (corrected)", lessonCardKey("parler → tu"), 1),
+    stored("finir → tu", lessonCardKey("finir → tu"), 2),
+  ];
+  const afterEdit = reconcileLessons([LESSON], edited);
+  ck("an edited front is not retired", afterEdit.stale.length === 0, afterEdit.stale.join(","));
+  ck("an edited card is not re-inserted from the lesson", afterEdit.missing.length === 0,
+     afterEdit.missing.map((c) => c.front).join(", "));
+
+  // Still has to work: this is how eight unanswerable cards were withdrawn
+  // from decks that had already added them.
+  const withdrawn = [
+    ...full,
+    stored("state the rule", lessonCardKey("state the rule"), 9),
+  ];
+  const afterWithdraw = reconcileLessons([LESSON], withdrawn);
+  ck("a card the lesson dropped is retired", afterWithdraw.stale.length === 1 && afterWithdraw.stale[0] === 9,
+     afterWithdraw.stale.join(","));
+
+  // Rows written before keys existed.
+  const legacy = [stored("parler → tu", null, 1), stored("who knows", null, 7)];
+  const afterLegacy = reconcileLessons([LESSON], legacy);
+  ck("a legacy row matching the lesson is re-keyed, not duplicated",
+     afterLegacy.rekey.length === 1 && afterLegacy.missing.length === 1,
+     `rekey ${afterLegacy.rekey.length}, missing ${afterLegacy.missing.map((c) => c.front).join(", ")}`);
+  ck("a legacy row matching nothing is never deleted",
+     afterLegacy.stale.length === 0 && afterLegacy.unkeyed.length === 1,
+     `stale ${afterLegacy.stale.join(",")}`);
 }
 
 const n = ck.fails();

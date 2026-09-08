@@ -357,9 +357,15 @@ The shape of it:
 - **Static in the app, copied into the deck.** The lesson is shared; adding it
   copies its cards into `user_cards`, and that copy is what makes the
   scheduling personal, since FSRS state lives on the row.
-- **Tagged `source = "lesson:<id>"`.** That column already existed — the cahier
-  parser writes `cahier-upload`, the tutor writes `tutor-chat` — so lessons
-  needed no migration.
+- **Tagged `source = "lesson:<id>#<cardKey>"`.** That column already existed —
+  the cahier parser writes `cahier-upload`, the tutor writes `tutor-chat` — so
+  lessons needed no migration. The key hashes the front the LESSON ships
+  (`src/lib/lessonSource.js`) and is the card's identity. Identity used to be
+  the stored front, which meant correcting a typo on a lesson card made the
+  sync unable to recognise it: the row was retired as "no longer in the
+  lesson", taking its FSRS history, and the uncorrected original was inserted
+  in its place. Rows written before keys existed are matched by front and
+  re-keyed on the next sync.
 - **Synced on load, once per mount.** A student finds L'impératif in their deck
   without pressing anything. The lesson is the authority, so the sync also
   *retires* cards it no longer contains: that is how the eight abandoned "state
@@ -512,6 +518,39 @@ model it was trying to avoid calling.
 SDK passes unknown body keys through verbatim — verified by capturing the
 request it builds — not because it supports them. A bump is overdue and would
 touch all five API routes.
+
+## Recent work: bugs around the tutor branch
+
+Found by a review pass over the whole branch, not by the tutor work itself.
+
+- **Editing a lesson card destroyed it and its scheduling.** The sync
+  reconciled by front text, so a corrected front read as "the lesson dropped
+  this" — delete the row, re-insert the original, start from New. Identity is
+  now a key hashed from the lesson's own front; see the Lessons section.
+  `reconcileLessons` (`src/lib/lessonSync.js`) is pure and tested, including
+  the case that motivated it. Legacy un-keyed rows matching nothing are now
+  **left alone rather than deleted**: they are either a card the lesson retired
+  or one the user corrected, and there is no way to tell, so the safe side wins
+  and the sync logs them.
+- **The keyboard graded the card behind the lesson panel.** `showLessonPanel`
+  was missing from `overlayOpen`, so Space flipped and Enter graded a hidden
+  card — a real FSRS review for something never seen. Exactly the failure the
+  comment above that line documents; the lesson panel was added afterwards and
+  never joined the list.
+- **The score jumped backwards.** A cached copy counts as loaded, so the app is
+  answerable while the real fetch runs. `setProgress(obj)` then overwrote the
+  optimistic update with a snapshot taken before it. Local writes since mount
+  are now merged over the server rows, and `resetAll` clears the cache — without
+  that, a reload undid the reset.
+- **A network blip blanked a painted deck.** The error path did `setCards([])`
+  over a deck already on screen from cache, which then convinced the lesson sync
+  the user owned none of their lesson cards.
+- **Both caches survived sign-out.** `deck-cache:<id>` and `progress-cache:<id>`
+  sat in localStorage with one person's whole vocabulary and score history.
+  Cleared in `handleSignOut`, before the sign-out itself.
+- **Dead code in `useUserDeck`** — an unreachable duplicate of the cache write,
+  lacking the quota guard the live one has, kept quiet with an
+  `eslint-disable no-unreachable`. Deleted.
 
 ## Open items
 

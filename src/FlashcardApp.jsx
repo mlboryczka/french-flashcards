@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
-import { LESSONS, lessonSource, lessonIdOf } from "./data/lessons";
+import { LESSONS, lessonSource, lessonIdOf, lessonCardKey } from "./data/lessons";
+import { reconcileLessons } from "./lib/lessonSync";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt } from "./lib/cardText";
@@ -821,7 +822,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Checking the event target for INPUT/TEXTAREA isn't enough; most of a
   // panel is neither.
   const overlayOpen =
-    showChat || showFeedback || showUpload ||
+    showChat || showFeedback || showUpload || showLessonPanel ||
     showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
 
   useEffect(() => {
@@ -974,34 +975,29 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user || !deckLoaded || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const missing = [];
-      const stale = [];
-      for (const lesson of LESSONS) {
-        const want = new Map(lesson.cards.map(([f, b, c]) => [f, { f, b, c }]));
-        const have = userCards.filter((card) => lessonIdOf(card) === lesson.id);
-        const haveFronts = new Set(have.map((card) => card.f));
-        for (const [front, card] of want) {
-          if (!haveFronts.has(front)) {
-            missing.push({
-              user_id: user.id,
-              front: card.f,
-              back: card.b,
-              category: card.c,
-              dates: [],
-              source: lessonSource(lesson.id),
-            });
-          }
-        }
-        for (const card of have) {
-          if (!want.has(card.f) && card.row_id != null) stale.push(card.row_id);
-        }
+      const { missing, rekey, stale, unkeyed } = reconcileLessons(LESSONS, userCards);
+      if (unkeyed.length) {
+        // Written before lesson cards had a stable key, and matching nothing in
+        // the lesson now. That is either a card the lesson retired or one the
+        // user corrected, and there is no way to tell which — so it stays.
+        console.info(
+          `[lessons] ${unkeyed.length} unkeyed card(s) match no lesson card; left alone:`,
+          unkeyed.map((c) => c.f)
+        );
       }
-      if (!missing.length && !stale.length) return;
+      if (!missing.length && !rekey.length && !stale.length) return;
+      const owned = (rows) => rows.map((r) => ({ ...r, user_id: user.id }));
       try {
         if (missing.length) {
           const { error } = await supabase
             .from("user_cards")
-            .upsert(missing, { onConflict: "user_id,front" });
+            .upsert(owned(missing), { onConflict: "user_id,front" });
+          if (error) throw error;
+        }
+        if (rekey.length) {
+          const { error } = await supabase
+            .from("user_cards")
+            .upsert(owned(rekey), { onConflict: "user_id,front" });
           if (error) throw error;
         }
         if (stale.length) {
@@ -1013,7 +1009,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           if (error) throw error;
         }
         console.info(
-          `[lessons] synced: +${missing.length} card(s), -${stale.length} retired`
+          `[lessons] synced: +${missing.length} card(s), ${rekey.length} re-keyed, ` +
+            `-${stale.length} retired`
         );
         reloadDeck();
       } catch (e) {
@@ -1043,7 +1040,9 @@ export default function FlashcardApp({ user, onSignOut }) {
         back,
         category: cat,
         dates: [],
-        source: lessonSource(lesson.id),
+        // Tagged with the card's key, not just the lesson's, so the sync can
+        // recognise this row later even if its front is edited.
+        source: lessonSource(lesson.id, lessonCardKey(front)),
       }));
       const { error } = await supabase
         .from("user_cards")
