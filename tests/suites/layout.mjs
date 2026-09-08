@@ -270,4 +270,37 @@ for (const width of [1600, 1400, 1200, 1000, 900, 800]) {
 await page.setViewportSize({ width: 1400, height: 900 });
 await page.waitForTimeout(300);
 
+console.log("\n  the nav keeps exactly one marker across a breakpoint");
+// The wide nav marks the active item on its right, the narrow one on its top.
+// React diffs styles per property, so crossing 768px used to leave the other
+// layout's border behind: resize down and back and every item kept a stale
+// top border, drawing a rule between each one. Asserted as "no item carries a
+// border on a side this layout does not use", which is the requirement —
+// counting only the ACTIVE item's marker would have passed the whole time.
+const navBorders = () =>
+  page.evaluate(() =>
+    [...document.querySelectorAll("aside nav button")].map((b) => {
+      const cs = getComputedStyle(b);
+      const px = (v) => Math.round(parseFloat(v) || 0);
+      return {
+        label: b.innerText.trim().split("\n")[0],
+        top: px(cs.borderTopWidth), right: px(cs.borderRightWidth),
+        bottom: px(cs.borderBottomWidth), left: px(cs.borderLeftWidth),
+        marked: cs.borderRightColor !== "rgba(0, 0, 0, 0)" && px(cs.borderRightWidth) > 0,
+      };
+    })
+  );
+
+await page.setViewportSize({ width: 700, height: 900 });
+await page.waitForTimeout(450);
+const narrow = await navBorders();
+ck("narrow: nothing carries a right-hand marker", narrow.every((b) => b.right === 0), narrow.map((b) => b.right).join(","));
+
+await page.setViewportSize({ width: 1400, height: 900 });
+await page.waitForTimeout(450);
+const wide = await navBorders();
+ck("back to wide: no stale top border", wide.every((b) => b.top === 0), wide.map((b) => `${b.label}:${b.top}`).join(" "));
+ck("and none on the bottom or left either", wide.every((b) => b.bottom === 0 && b.left === 0));
+ck("exactly one item is marked", wide.filter((b) => b.marked).length === 1, `${wide.filter((b) => b.marked).length} marked`);
+
 await finish(browser, ck);

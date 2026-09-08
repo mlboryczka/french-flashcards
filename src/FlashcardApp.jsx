@@ -2830,6 +2830,14 @@ const S = {
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
   // Indented to sit under its parent nav item, and quieter than one: a lesson
   // is a place inside Lessons, not a peer of Cards and Stats.
+  // Every nav style declares all FOUR border sides, even the three it does not
+  // use. The wide nav marks the active item on its right, the narrow one on
+  // its top; React diffs style objects per property, so crossing the 768px
+  // breakpoint used to leave the other layout's border behind — resize a wide
+  // window down and back and every item kept a stale top border, drawing a
+  // rule between each one. Declaring all four means switching always
+  // overwrites instead of relying on a property being absent.
+  //
   // A lesson sitting under Lessons. Its text starts at 64px, which is exactly
   // where a nav item's LABEL starts — sideItem is padded 32 and its 18px icon
   // is followed by a 14px gap. That makes one clean vertical line down the
@@ -2847,12 +2855,12 @@ const S = {
   // Longhands, not the borderRight shorthand: React diffs per property, so a
   // shorthand base plus a longhand override strands the old value when the
   // item deactivates.
-  sideSubItem: { display:"block", width:"100%", padding:"7px 32px 7px 64px", border:"none", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left", boxSizing:"border-box" },
+  sideSubItem: { display:"block", width:"100%", padding:"7px 32px 7px 64px", border:"none", borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left", boxSizing:"border-box" },
   sideSubItemActive: { color:T.color.secondary, fontWeight:700, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
-  sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderTopWidth:3, borderTopStyle:"solid", borderTopColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
+  sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderRightWidth:0, borderRightStyle:"solid", borderRightColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderTopWidth:3, borderTopStyle:"solid", borderTopColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
   sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
-  sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
+  sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
   sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideIcon: { display:"flex", alignItems:"center", flexShrink:0 },
   // ── Sidebar bottom: avatar + email + feedback in one row ────────────

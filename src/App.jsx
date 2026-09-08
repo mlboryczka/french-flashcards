@@ -62,9 +62,23 @@ export default function App() {
     // reload.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      // Only an actual sign-out clears the session.
+      //
+      // Coming back to a backgrounded tab makes supabase-js re-check the
+      // token, and that can report a null session for a moment before the
+      // refreshed one lands. Taking it at face value swapped the app for the
+      // sign-in screen and back, and because that UNMOUNTS FlashcardApp it
+      // came back with its deck unloaded — which is the "Loading…" flash you
+      // get on returning to the tab. The app is already on screen; a token
+      // refresh is not a reason to tear it down.
+      if (event === "SIGNED_OUT") {
+        setSession(null);
+        return;
+      }
+      if (!session) return;
       setSession(session);
-      if (session) setAuthError("");
+      setAuthError("");
     });
     return () => {
       clearTimeout(timer);
