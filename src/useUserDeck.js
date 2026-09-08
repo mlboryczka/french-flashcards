@@ -43,7 +43,7 @@ export function useUserDeck(user) {
         const { data, error } = await supabase
           .from("user_cards")
           .select(
-            "id, front, back, category, dates, flagged_for_review, batch_id, " +
+            "id, front, back, category, dates, flagged_for_review, batch_id, source, " +
               "next_due_at, lapses, stability, difficulty, fsrs_state, reps, " +
               "last_review, last_answer_correct"
           )
@@ -76,6 +76,9 @@ export function useUserDeck(user) {
           flagged: row.flagged_for_review === true,
           // Null for legacy cards that predate the upload-batches migration.
           batch_id: row.batch_id || null,
+          // Where the card came from: "cahier-upload", "tutor-chat", or
+          // "lesson:<id>" for a card added from the Lessons catalogue.
+          source: row.source || null,
           // FSRS scheduling state (migration_006). Nulls are legitimate:
           // a never-reviewed card has no stability and no last review.
           next_due_at: row.next_due_at || null,

@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
+import { LESSONS, lessonSource, lessonIdOf } from "./data/lessons";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt } from "./lib/cardText";
 import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
@@ -226,6 +227,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   // But when you know your conjugations are the weak spot, being able to sit
   // on them for a session is worth more than the interleaving penalty.
   const [typeFilter, setTypeFilter] = useState("all");
+  // Study one lesson's cards instead of the whole deck. "all" is everything.
+  // Like typeFilter this narrows the candidate pool the session is built
+  // from, so the lesson still schedules through FSRS normally.
+  const [lessonFilter, setLessonFilter] = useState("all");
+  const [addingLesson, setAddingLesson] = useState(null); // lesson id being added
+  const [lessonError, setLessonError] = useState("");
   const [dir, setDir] = useState("mix"); // fr | en | mix
   const [typeMode, setTypeMode] = useState(false);
   const [typedAnswer, setTypedAnswer] = useState("");
@@ -385,13 +392,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   // filter here could only make sessions worse.
   useEffect(() => {
     if (!loaded) return;
-    const filterSig = `${freqOnly}|${dir}|${typeFilter}`;
+    const filterSig = `${freqOnly}|${dir}|${typeFilter}|${lessonFilter}`;
     const filterChanged = filterSigRef.current !== filterSig;
     filterSigRef.current = filterSig;
 
     let candidates = userCards;
     if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
     if (typeFilter !== "all") candidates = candidates.filter(c => classifyCard(c) === typeFilter);
+    if (lessonFilter !== "all") candidates = candidates.filter(c => lessonIdOf(c) === lessonFilter);
 
     // Mid-session userCards refetch (card edit/delete, background reload,
     // Supabase token refresh). Rebuilding here would reshuffle the queue,
@@ -450,7 +458,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       setFlipped(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freqOnly, loaded, dir, typeFilter, userCards]);
+  }, [freqOnly, loaded, dir, typeFilter, lessonFilter, userCards]);
 
   const card = deck[idx];
   // Keep the ref in sync so deck rebuilds can find the current card.
@@ -913,6 +921,41 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Bulk-inserts RAW into user_cards for the current user. Preserves
   // categories (vocab/expr/gram/pron → V/E/G/P) and dates so Matt's existing
   // card_progress rows continue to match via the lowercased-front id.
+  // Copy a lesson's cards into this user's deck.
+  //
+  // The lesson itself is static and shared; the copy is what makes the
+  // scheduling personal, because FSRS state lives on the row. Upserting on
+  // (user_id, front) means adding a lesson twice is a no-op rather than a
+  // duplicate, and re-adding after the lesson text is corrected updates the
+  // wording while leaving the scheduling history in place.
+  const addLesson = async (lesson) => {
+    if (!user || !lesson) return;
+    setAddingLesson(lesson.id);
+    setLessonError("");
+    try {
+      const rows = lesson.cards.map(([front, back, cat]) => ({
+        user_id: user.id,
+        front,
+        back,
+        category: cat,
+        dates: [],
+        source: lessonSource(lesson.id),
+      }));
+      const { error } = await supabase
+        .from("user_cards")
+        .upsert(rows, { onConflict: "user_id,front" });
+      if (error) throw error;
+      reloadDeck();
+      setLessonFilter(lesson.id);
+      setMode("study");
+    } catch (e) {
+      console.error("Add lesson failed:", e);
+      setLessonError(e.message || "Couldn't add the lesson.");
+    } finally {
+      setAddingLesson(null);
+    }
+  };
+
   const seedDemoDeck = async () => {
     if (!user) return;
     setSeeding(true);
@@ -1200,10 +1243,11 @@ export default function FlashcardApp({ user, onSignOut }) {
     study: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>,
     stats: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>,
     feedback: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>,
+    lessons: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
     tutor: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9.1 9a2.5 2.5 0 0 1 4.9.6c0 1.7-2.5 2.5-2.5 2.5"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
   };
 
-  const navItems = [["study", "Cards"], ["stats", "Stats"]];
+  const navItems = [["study", "Cards"], ["lessons", "Lessons"], ["stats", "Stats"]];
 
   // Open the tutor panel and the app reflows to sit beside it rather than
   // being covered — you can still read the card you're asking about. Below
@@ -1232,14 +1276,33 @@ export default function FlashcardApp({ user, onSignOut }) {
           const baseStyle = isNarrow ? S.sideItemBottom : S.sideItem;
           const activeStyle = isNarrow ? S.sideItemBottomActive : S.sideItemActive;
           return (
-            <button
-              key={m}
-              style={mode === m ? {...baseStyle, ...activeStyle} : baseStyle}
-              onClick={() => { setMode(m); }}
-            >
-              <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
-              {label}
-            </button>
+            <Fragment key={m}>
+              <button
+                style={mode === m ? {...baseStyle, ...activeStyle} : baseStyle}
+                onClick={() => { setMode(m); }}
+              >
+                <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
+                {label}
+              </button>
+              {/* Lessons are the one nav item with children: each lesson sits
+                  under it as a sub-item, so picking one is a single click
+                  rather than a trip through the catalogue. Only on desktop —
+                  the narrow layout's nav is a row of icons with no room to
+                  nest anything. */}
+              {m === "lessons" && !isNarrow && LESSONS.map((lesson) => {
+                const on = mode === "study" && lessonFilter === lesson.id;
+                return (
+                  <button
+                    key={lesson.id}
+                    style={on ? {...S.sideSubItem, ...S.sideSubItemActive} : S.sideSubItem}
+                    onClick={() => { setLessonFilter(lesson.id); setMode("study"); }}
+                    title={`Study ${lesson.title}`}
+                  >
+                    {lesson.title}
+                  </button>
+                );
+              })}
+            </Fragment>
           );
         })}
 
@@ -1462,6 +1525,61 @@ export default function FlashcardApp({ user, onSignOut }) {
   );
 
   // ── STATS VIEW ──────────────────────────────────────────────────────
+  // ── LESSONS ──────────────────────────────────────────────────────────
+  // The catalogue. A lesson you have added is studied from here or from the
+  // sidebar; one you haven't is added, which copies its cards into your deck.
+  if (mode === "lessons") {
+    return (
+      <div style={shellStyle}>
+        {sidebar}
+        <main style={mainStyle}>
+          <div style={S.mainInnerScroll}>
+            <h1 style={S.statsHeading}>Lessons</h1>
+            <p style={S.lessonIntro}>
+              Card sets built from a teacher's lesson materials. Adding one copies its
+              cards into your deck, where they schedule alongside everything else.
+            </p>
+            {lessonError && <div style={S.lessonError}>{lessonError}</div>}
+            {LESSONS.map((lesson) => {
+              const owned = userCards.filter((c) => lessonIdOf(c) === lesson.id);
+              const added = owned.length > 0;
+              const busy = addingLesson === lesson.id;
+              return (
+                <div key={lesson.id} style={S.lessonCard}>
+                  <div style={S.lessonHead}>
+                    <div>
+                      <div style={S.lessonTitle}>{lesson.title}</div>
+                      <div style={S.lessonSub}>{lesson.subtitle}</div>
+                    </div>
+                    <button
+                      style={added ? S.lessonStudyBtn : S.lessonAddBtn}
+                      disabled={busy}
+                      onClick={() =>
+                        added
+                          ? (setLessonFilter(lesson.id), setMode("study"))
+                          : addLesson(lesson)
+                      }
+                    >
+                      {busy ? "Adding…" : added ? "Study" : `Add ${lesson.cards.length} cards`}
+                    </button>
+                  </div>
+                  <div style={S.lessonMeta}>
+                    {added
+                      ? `${owned.length} of ${lesson.cards.length} cards in your deck`
+                      : `${lesson.cards.length} cards`}
+                    {" · "}
+                    {lesson.source}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+        {modals}
+      </div>
+    );
+  }
+
   if (mode === "stats") {
     const total = userCards.length;
     const learned = userCards.filter(c => (progress[c.id]?.score??0) >= 3).length;
@@ -1690,6 +1808,19 @@ export default function FlashcardApp({ user, onSignOut }) {
                 );
               })}
           </div>
+          {/* Studying one lesson is a narrowed deck, and the only clue would
+              otherwise be a smaller session count. Name it, and make leaving
+              it one click. */}
+          {lessonFilter !== "all" && (
+            <button
+              style={S.lessonChip}
+              onClick={() => setLessonFilter("all")}
+              title="Back to the whole deck"
+            >
+              {LESSONS.find((l) => l.id === lessonFilter)?.title || lessonFilter}
+              <span style={S.lessonChipX}>×</span>
+            </button>
+          )}
           <div style={S.dirGroup}>
             {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
               <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
@@ -2621,6 +2752,10 @@ const S = {
   sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
   sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
+  // Indented to sit under its parent nav item, and quieter than one: a lesson
+  // is a place inside Lessons, not a peer of Cards and Stats.
+  sideSubItem: { display:"block", width:"100%", padding:"7px 24px 7px 52px", border:"none", borderLeftWidth:2, borderLeftStyle:"solid", borderLeftColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:12, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left" },
+  sideSubItemActive: { color:T.color.primary, fontWeight:700, borderLeftColor:T.color.primary },
   sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
   sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderTopWidth:3, borderTopStyle:"solid", borderTopColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
   sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
@@ -2800,6 +2935,17 @@ const S = {
   btnWrong: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.color.secondary, color:T.color.onSecondary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   btnRight: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   shortcuts: { textAlign:"center", fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7, letterSpacing:"0.03em" },
+  lessonChip: { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px 6px 12px", borderRadius:999, border:"none", background:T.color.primary, color:"#fff", fontSize:11, fontWeight:700, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", textTransform:"uppercase", letterSpacing:"0.05em" },
+  lessonChipX: { fontSize:14, lineHeight:1, opacity:0.75 },
+  lessonIntro: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, maxWidth:560, lineHeight:1.55, marginBottom:24 },
+  lessonError: { fontSize:13, color:"#9c4234", fontFamily:T.font.sans, marginBottom:16 },
+  lessonCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card, maxWidth:720 },
+  lessonHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16 },
+  lessonTitle: { fontSize:18, fontFamily:T.font.serif, color:T.color.onSurface, marginBottom:4 },
+  lessonSub: { fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
+  lessonMeta: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, marginTop:14, textTransform:"uppercase", letterSpacing:"0.06em" },
+  lessonAddBtn: { padding:"9px 18px", border:"none", borderRadius:T.radius.md, background:T.color.primary, color:"#fff", fontSize:12, fontWeight:600, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 },
+  lessonStudyBtn: { padding:"9px 18px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceLow, color:T.color.primary, fontSize:12, fontWeight:600, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0, boxShadow:T.shadow.focus },
   empty: { textAlign:"center", padding:60, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
   sessionDone: { textAlign:"center", padding:24, background:T.color.surfaceLow, borderRadius:T.radius.xl, marginTop:12 },
   doneText: { fontSize:14, color:T.color.primary, fontFamily:T.font.sans, marginBottom:14, fontWeight:500 },
