@@ -1,9 +1,9 @@
 // Vercel serverless function: POST /api/chat
 //
 // A French tutor chat. The user asks about a word, phrase, or grammar
-// point; Claude explains it and — when there's something worth drilling —
+// point; Claude answers and — when there's something worth drilling —
 // proposes flashcards via a tool call. The client renders those proposals
-// as "Add to deck" chips; nothing is written to user_cards here.
+// as editable "Add to deck" chips; nothing is written to user_cards here.
 //
 // Keeping the write on the client matters: user_cards is RLS-protected
 // (migration_003), so the insert runs as the signed-in user with their own
@@ -13,12 +13,20 @@
 // Request body (JSON):
 //   {
 //     messages: [{ role: "user" | "assistant", content: "..." }, ...],
-//     recentFronts?: ["la moitié", ...]   // for duplicate awareness
+//     context?: {
+//       currentCard?:  { front, back, missed },   // the card on screen
+//       relatedCards?: [{ front, back }],         // deck matches for the question
+//       recentMisses?: [{ front, back }],         // what they keep getting wrong
+//     }
 //   }
 //
-// Response:
-//   { reply: "<prose explanation>", cards: [{ front, back, category, note }] }
-//   or { error: "..." } on 4xx/5xx
+// Response: an SSE stream of JSON events, one per `data:` line —
+//   { type: "text",  delta: "..." }        prose, as it is generated
+//   { type: "cards", cards: [...] }        card proposals, once complete
+//   { type: "done" }
+//   { type: "error", error: "..." }
+// Failures BEFORE the stream opens (auth, config, bad body) are plain JSON
+// with a 4xx/5xx status instead, so the client's error path still works.
 //
 // Environment variables:
 //   ANTHROPIC_API_KEY — server-side only, never VITE_-prefixed
@@ -26,36 +34,65 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { extractUserIdFromJwt } from "./_lib/auth.js";
 
-const MODEL = "claude-opus-5";
+// Sonnet rather than Opus. Answering "what's the difference between amener
+// and apporter" is not a hard inference problem, and the endpoint is on the
+// latency path — you are waiting at the panel for it.
+const MODEL = "claude-sonnet-5";
+
+// Effort is a CEILING on how much reasoning the model may spend; adaptive
+// thinking then varies underneath it, per question. So a lookup costs almost
+// nothing while a nuance question still gets more thought than the lookup did
+// — which is the "match the compute to the question" behaviour, decided by
+// something that has read the question rather than by a router guessing from
+// its surface form.
+//
+// This used to be absent, which is not the same as off: on Opus 5 an omitted
+// `thinking` runs adaptive and an omitted effort defaults to HIGH, so every
+// vocabulary lookup was getting a maximum-depth reasoning pass. That was the
+// bulk of the latency, and it read as "the tutor is slow".
+const EFFORT = "low";
+
+// Streaming means the wall-clock limit is no longer a cliff, but the function
+// still needs room for a long answer. Vercel's default is 10s.
+export const config = { maxDuration: 60 };
 
 // Cost guardrails. The client sends the whole visible thread on every turn,
 // so without a cap a long session grows the bill quadratically.
 const MAX_TURNS = 20;
 const MAX_CHARS_PER_MESSAGE = 4000;
-const MAX_RECENT_FRONTS = 60;
+const MAX_CONTEXT_CARDS = 12;
 
-const SYSTEM_PROMPT = `You are a French tutor helping an English-speaking learner who keeps a spaced-repetition flashcard deck.
+// Kept deliberately short and free of a per-answer checklist. The previous
+// version demanded register, gender, an example sentence and a false-friend
+// warning on EVERY answer, which is why a two-word lookup came back as five
+// bullets: a checklist cannot be proportional to the question.
+//
+// This text is the cached prefix — it must not carry anything that varies per
+// request. Deck context goes in the user turn, below.
+const SYSTEM_PROMPT = `You are helping an English-speaking learner of French. They keep a spaced-repetition flashcard deck and are asking you about something they've hit.
 
-When the learner asks about a word, phrase, or grammar point, explain it the way a good tutor would:
-- What it means, and the register (formal / everyday / slang / dated).
-- Grammatical gender for nouns, and the article that goes with it.
-- One natural example sentence in French with its English translation.
-- Any false-friend or common-mistake warning that actually applies.
-- If they give you an English word with several distinct French equivalents, distinguish them rather than picking one arbitrarily.
+Answer the question that was asked, at the length it deserves. A word lookup is a line. A question about a distinction between two words is a short paragraph. Nobody wants a lesson they didn't ask for.
 
-Keep it tight — a short paragraph or a few bullets, not an essay. Answer in English; French for the French.
+Add register, gender, an example sentence, or a false-friend warning ONLY when it changes the answer — not as a matter of routine. If the learner's question rests on a wrong assumption, say so first.
+
+Write plain prose. No markdown, no bullet lists, no bold — it is rendered as raw text and the asterisks show. French in French, everything else in English.
+
+## Context you may be given
+
+The user turn may carry a "[Context]" block: the card they are looking at, cards already in their deck that relate to the question, and cards they have recently got wrong. Use it — refer to their actual cards, tell them when they already have something, point out when your answer contradicts a card they own. Never mention the block itself or that you were given it.
 
 ## Proposing flashcards
 
-When the exchange contains something worth drilling, call the propose_flashcards tool. Guidelines:
-- Write the explanation as text FIRST, then call the tool. Never call the tool without explaining.
-- The front is French, the back is English. Match the deck's existing style: bare vocabulary items carry a gendered article ("une colline"), adjectives are tagged ("ennuyeux (adj)"), verbs stay in the infinitive ("décharger").
-- The back is a short gloss, not a sentence — "a hill", "to unload / to discharge". Use " / " to separate near-synonyms.
-- Propose 1-4 cards. One good card beats four redundant ones. A phrase the learner asked about is one card; don't also split out each word in it.
-- category: "vocab" for single words, "expr" for multi-word expressions and idioms, "gram" for grammar patterns, "pron" for pronunciation points.
-- The note field is a one-line reason this card is worth having. It is shown to the learner and is not stored.
-- If the learner is just chatting, asking a follow-up, or the answer has nothing drillable in it, don't call the tool at all.
-- You may be shown some fronts already in their deck. Don't propose a card that duplicates one of those; say it's already in the deck instead.`;
+Call propose_flashcards when the exchange contains something worth drilling.
+- Explain in text FIRST, then call the tool. Never call it without explaining.
+- The front is French, the back is English. Bare vocabulary carries a gendered article ("une colline"), adjectives are tagged ("ennuyeux (adj)"), verbs stay in the infinitive ("décharger").
+- The back is a short gloss, not a sentence — "a hill", "to unload / to discharge". Use " / " between near-synonyms.
+- One card per thing to learn. Propose 1-4; one good card beats four redundant ones. A phrase they asked about is one card — don't also split out its words.
+- Never propose a card whose front teaches two different words (les frais "costs" and frais "fresh" are two cards, not one) — there'd be no single right answer to type.
+- category: "vocab" single words, "expr" multi-word expressions and idioms, "gram" grammar patterns, "pron" pronunciation points.
+- note: one line on why this card earns its place. Shown to the learner, not stored.
+- If a card in their deck already covers it, say so instead of proposing a duplicate.
+- If they're just chatting, or nothing in the answer is drillable, don't call the tool at all.`;
 
 const PROPOSE_TOOL = {
   name: "propose_flashcards",
@@ -117,6 +154,86 @@ function sanitizeMessages(raw) {
   return trimmed;
 }
 
+function cardLine(c) {
+  const front = String(c?.front ?? "").trim().slice(0, 200);
+  const back = String(c?.back ?? "").trim().slice(0, 200);
+  if (!front) return "";
+  return back ? `${front} — ${back}` : front;
+}
+
+function cardList(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(cardLine).filter(Boolean).slice(0, MAX_CONTEXT_CARDS);
+}
+
+// Render the deck context as a block prefixed to the user's own question.
+//
+// It goes in the USER TURN, not appended to the system prompt. Two reasons:
+// caching is a prefix match, so per-request text in the system prompt would
+// invalidate the cached prefix on every single turn (the previous version
+// concatenated the deck onto SYSTEM_PROMPT and would have done exactly that);
+// and Sonnet does not accept mid-conversation system messages, so the user
+// turn is the correct channel for it.
+//
+// Only the LAST user message is augmented, and the client never sees the
+// augmented copy — so context is rebuilt fresh each turn and never piles up
+// in the history.
+function buildContextBlock(ctx) {
+  if (!ctx || typeof ctx !== "object") return "";
+  const parts = [];
+
+  const cur = ctx.currentCard;
+  if (cur && typeof cur === "object" && cardLine(cur)) {
+    parts.push(
+      `Card on screen: ${cardLine(cur)}${cur.missed ? " (they just got this wrong)" : ""}`
+    );
+  }
+
+  const related = cardList(ctx.relatedCards);
+  if (related.length) {
+    parts.push(`Cards already in their deck related to this:\n${related.join("\n")}`);
+  }
+
+  const misses = cardList(ctx.recentMisses);
+  if (misses.length) {
+    parts.push(`Cards they have recently got wrong:\n${misses.join("\n")}`);
+  }
+
+  if (!parts.length) return "";
+  return `[Context]\n${parts.join("\n\n")}\n[/Context]`;
+}
+
+// Attach the context to the final user turn. Returns a new array; the caller's
+// sanitized messages are left alone.
+function withContext(messages, contextBlock) {
+  if (!contextBlock || !messages.length) return messages;
+  const last = messages[messages.length - 1];
+  if (last.role !== "user") return messages;
+  return [
+    ...messages.slice(0, -1),
+    { role: "user", content: `${contextBlock}\n\n${last.content}` },
+  ];
+}
+
+// Validate the model's tool input rather than trusting it toward the DB. The
+// client lets the user edit a proposal before adding, so this is the floor on
+// shape, not on quality.
+function normalizeCards(input) {
+  const proposed = Array.isArray(input?.cards) ? input.cards : [];
+  return proposed
+    .filter((c) => c && typeof c.front === "string" && typeof c.back === "string")
+    .slice(0, 4)
+    .map((c) => ({
+      front: c.front.trim(),
+      back: c.back.trim(),
+      category: ["vocab", "expr", "gram", "pron"].includes(c.category)
+        ? c.category
+        : "vocab",
+      note: typeof c.note === "string" ? c.note.trim() : "",
+    }))
+    .filter((c) => c.front && c.back);
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -141,68 +258,66 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "No message to answer." });
   }
 
-  // Fronts already in the deck, so Claude can say "you already have that"
-  // instead of proposing a duplicate the upsert would silently merge.
-  const recentFronts = Array.isArray(req.body?.recentFronts)
-    ? req.body.recentFronts
-        .filter((f) => typeof f === "string" && f.trim())
-        .slice(0, MAX_RECENT_FRONTS)
-    : [];
-
-  const system = recentFronts.length
-    ? `${SYSTEM_PROMPT}\n\n## Already in their deck\n\n${recentFronts.join(", ")}`
-    : SYSTEM_PROMPT;
+  // Everything above can still answer with a JSON error. From here the stream
+  // is open, so failures have to travel as SSE events instead.
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // Vercel's edge buffers proxied responses by default, which would hold the
+    // whole stream until it completed and undo the point of streaming.
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
 
   try {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const response = await anthropic.messages.create({
+    const stream = anthropic.messages.stream({
       model: MODEL,
       max_tokens: 2000,
-      system,
+      // Explicit rather than implied. An absent `thinking` is not "off" — it
+      // is the model's default, and that default has already changed once
+      // underneath this file.
+      thinking: { type: "adaptive" },
+      output_config: { effort: EFFORT },
+      // The system prompt and the tool schema are the only stable prefix here,
+      // so the breakpoint goes at the end of it.
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       tools: [PROPOSE_TOOL],
-      messages,
+      messages: withContext(messages, buildContextBlock(req.body?.context)),
     });
 
-    let reply = "";
+    stream.on("text", (delta) => send({ type: "text", delta }));
+
+    const final = await stream.finalMessage();
+
     let cards = [];
-    for (const block of response.content || []) {
-      if (block.type === "text") {
-        reply += block.text;
-      } else if (block.type === "tool_use" && block.name === "propose_flashcards") {
-        // Tool inputs are already parsed objects from the SDK, but the model
-        // decides the shape — validate rather than trusting it into the DB.
-        const proposed = Array.isArray(block.input?.cards) ? block.input.cards : [];
-        cards = proposed
-          .filter((c) => c && typeof c.front === "string" && typeof c.back === "string")
-          .slice(0, 4)
-          .map((c) => ({
-            front: c.front.trim(),
-            back: c.back.trim(),
-            category: ["vocab", "expr", "gram", "pron"].includes(c.category)
-              ? c.category
-              : "vocab",
-            note: typeof c.note === "string" ? c.note.trim() : "",
-          }))
-          .filter((c) => c.front && c.back);
+    for (const block of final.content || []) {
+      if (block.type === "tool_use" && block.name === "propose_flashcards") {
+        cards = normalizeCards(block.input);
       }
     }
+    if (cards.length) send({ type: "cards", cards });
 
-    if (!reply.trim() && !cards.length) {
-      return res.status(502).json({ error: "The tutor returned an empty response. Try rephrasing." });
-    }
-
-    return res.status(200).json({ ok: true, reply: reply.trim(), cards });
+    send({ type: "done" });
+    res.end();
   } catch (err) {
     console.error("chat failed:", err);
+    let message = err?.message || "Chat failed";
     if (err instanceof Anthropic.RateLimitError) {
-      return res.status(429).json({ error: "Rate limited — give it a moment and try again." });
+      message = "Rate limited — give it a moment and try again.";
+    } else if (err instanceof Anthropic.AuthenticationError) {
+      message = "Anthropic API key is invalid.";
+    } else if (err instanceof Anthropic.APIError) {
+      message = `Anthropic API: ${err.message}`;
     }
-    if (err instanceof Anthropic.AuthenticationError) {
-      return res.status(500).json({ error: "Anthropic API key is invalid." });
-    }
-    if (err instanceof Anthropic.APIError) {
-      return res.status(502).json({ error: `Anthropic API: ${err.message}` });
-    }
-    return res.status(500).json({ error: err.message || "Chat failed" });
+    send({ type: "error", error: message });
+    res.end();
   }
 }

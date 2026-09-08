@@ -4,27 +4,35 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
+import { cleanFrenchPrompt } from "./lib/cardText";
+import { buildTutorContext } from "./lib/deckContext";
 
-// "Ask the tutor" slide-over. Look a word or phrase up, get an explanation,
-// and add the cards Claude proposes straight into the deck.
+// "Ask the tutor" slide-over. Look a word or phrase up, get an answer, and add
+// the cards Claude proposes straight into the deck.
 //
 // Design notes:
 //   • Right-hand slide-over rather than a centered modal — the card behind
 //     stays visible, so you can look something up mid-session without
 //     losing your place.
-//   • Proposed cards are never auto-added. Claude suggests, you click. A
-//     wrong card in a spaced-repetition deck costs you months of reviews,
-//     so the confirmation step earns itself.
+//   • The answer STREAMS. It used to arrive as one blocking JSON response,
+//     which meant staring at "Thinking…" for the whole generation and, past
+//     Vercel's default 10s function budget, a timeout instead of an answer.
+//   • Proposed cards are never auto-added, and they are EDITABLE before you
+//     add them. A wrong card in a spaced-repetition deck costs you months of
+//     reviews; making the front a text input turns that from a bad review
+//     stream into a keystroke.
 //   • Adds go straight to Supabase from the client, not through /api/chat.
 //     user_cards is RLS-protected (migration_003), so the insert runs as
 //     the signed-in user and can only touch their own rows.
 //   • Upsert on (user_id, front) means re-adding an existing card updates
-//     it rather than erroring — which is also why the endpoint is told
-//     which fronts already exist, so it can say "you have that" instead.
+//     it rather than erroring. `dates` is deliberately NOT written: those are
+//     the LESSON dates a word appeared on, and a card invented in a chat
+//     appeared on none. The column defaults to '[]', and omitting it also
+//     leaves an existing card's real dates alone on conflict.
 //
 // Usage:
 //   <ChatPanel open={showChat} onClose={...} user={user}
-//              deckFronts={userCards.map(c => c.f)} onCardsAdded={reloadDeck} />
+//              cards={userCards} currentCard={card} onCardsAdded={reloadDeck} />
 
 // Panel width. Exported because FlashcardApp reflows the app by exactly this
 // much when the panel is open on a wide screen, so the two must agree.
@@ -50,11 +58,85 @@ const SUGGESTIONS = [
   "When do I use the subjunctive after bien que?",
 ];
 
+// One proposed card. Its own component so each chip owns its edit state —
+// hoisting that into ChatPanel would mean a keystroke in one chip re-rendering
+// the whole thread.
+function ProposedCard({ card, added, onAdd }) {
+  // The front is cleaned the same way the study view cleans it, so what you
+  // see in the chip is what the card will look like when you meet it.
+  const [front, setFront] = useState(() => cleanFrenchPrompt(card.front, card.back));
+  const [back, setBack] = useState(card.back);
+  const [editing, setEditing] = useState(false);
+
+  const dirty = front !== cleanFrenchPrompt(card.front, card.back) || back !== card.back;
+  // Keyed on the front as it stands NOW, not on the proposal. Checking the
+  // original meant that editing a card before adding it wrote one key and
+  // looked up another, so the chip never showed it had been added and you
+  // could add the same card again and again.
+  const isAdded = added.has(front.toLowerCase().trim());
+
+  return (
+    <div style={S.cardChip} data-proposed-card>
+      <div style={S.chipMain}>
+        {editing ? (
+          <>
+            <input
+              style={S.chipEditFront}
+              value={front}
+              onChange={(e) => setFront(e.target.value)}
+              aria-label="Card front (French)"
+            />
+            <input
+              style={S.chipEditBack}
+              value={back}
+              onChange={(e) => setBack(e.target.value)}
+              aria-label="Card back (English)"
+            />
+          </>
+        ) : (
+          <>
+            <div style={S.chipFront}>{front}</div>
+            <div style={S.chipBack}>{back}</div>
+          </>
+        )}
+        <div style={S.chipMeta}>
+          {CATEGORY_LABEL[card.category] || "Vocabulary"}
+          {card.note ? ` · ${card.note}` : ""}
+          {dirty ? " · edited" : ""}
+        </div>
+      </div>
+      <div style={S.chipActions}>
+        <button
+          style={isAdded ? S.chipAdded : S.chipAdd}
+          onClick={() => onAdd({ ...card, front: front.trim(), back: back.trim() })}
+          disabled={isAdded || !front.trim() || !back.trim()}
+        >
+          {isAdded ? "Added" : "Add"}
+        </button>
+        {!isAdded && (
+          <button
+            style={S.chipEditToggle}
+            onClick={() => setEditing((v) => !v)}
+            aria-label={editing ? "Done editing" : "Edit this card"}
+          >
+            {editing ? "Done" : "Edit"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ChatPanel({
   open,
   onClose,
   user,
-  deckFronts = [],
+  // The whole shaped deck, not a list of fronts. `deckContext` reads backs and
+  // review history off these rows to tell the tutor what you already have and
+  // what you keep missing.
+  cards = [],
+  // The card on screen, if the tutor was opened from a study session.
+  currentCard = null,
   onCardsAdded,
   // Wide screens push the app aside to make room for the panel rather than
   // covering it, so you can read the card you're asking about while you type.
@@ -72,6 +154,10 @@ export default function ChatPanel({
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const panelRef = useRef(null);
+  // Lets a close abort an answer in flight. Without it, closing the panel
+  // mid-request left the fetch running and its answer landing in a panel
+  // nobody was looking at.
+  const abortRef = useRef(null);
 
   // Two flags rather than one so the panel can animate on the way OUT as well
   // as in: `mounted` keeps it in the DOM until the slide finishes, `entered`
@@ -94,6 +180,8 @@ export default function ChatPanel({
       return;
     }
     setEntered(false);
+    // Whatever was being generated is no longer wanted.
+    abortRef.current?.abort();
     const t = setTimeout(() => setMounted(false), CHAT_ANIM_MS);
     return () => clearTimeout(t);
   }, [open]);
@@ -115,7 +203,8 @@ export default function ChatPanel({
     };
   }, [mounted, open]);
 
-  // Keep the newest message in view as the thread grows.
+  // Keep the newest message in view as the thread grows — and as it streams,
+  // since the last bubble gets taller a token at a time.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -171,6 +260,17 @@ export default function ChatPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Rewrite the last message in place. Streaming touches only the tail of the
+  // thread, so the rest is left identically referenced and doesn't re-render.
+  const updateLast = useCallback((fn) => {
+    setMessages((prev) => {
+      if (!prev.length) return prev;
+      const copy = prev.slice();
+      copy[copy.length - 1] = fn(copy[copy.length - 1]);
+      return copy;
+    });
+  }, []);
+
   const send = useCallback(
     async (text) => {
       const trimmed = (text ?? input).trim();
@@ -179,8 +279,17 @@ export default function ChatPanel({
       setError("");
       setInput("");
       const nextMessages = [...messages, { role: "user", content: trimmed }];
-      setMessages(nextMessages);
+      // The empty assistant bubble is the thing that fills in as tokens
+      // arrive, so it goes in before the request rather than after it.
+      setMessages([
+        ...nextMessages,
+        { role: "assistant", content: "", cards: [], streaming: true },
+      ]);
       setSending(true);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      let gotText = false;
 
       try {
         const {
@@ -194,44 +303,90 @@ export default function ChatPanel({
             "Content-Type": "application/json",
             Authorization: `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
           body: JSON.stringify({
             // Only the prose goes back to the model — card proposals are
             // rendered client-side and would just be noise in the history.
             messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
-            recentFronts: deckFronts.slice(0, 60),
+            // Rebuilt from scratch every turn against the question just asked,
+            // so it never accumulates in the thread.
+            context: buildTutorContext({ question: trimmed, cards, currentCard }),
           }),
         });
 
-        // The API returns JSON on every path, but a platform-level failure
-        // (504, cold-start crash) returns an HTML error page — read as text
-        // first so JSON.parse doesn't throw over the real error.
-        const raw = await res.text();
-        let data;
-        try {
-          data = JSON.parse(raw);
-        } catch {
-          throw new Error(
-            res.status === 504
-              ? "The tutor timed out. Try a shorter question."
-              : `Server error (${res.status}).`
-          );
+        // A failure before the stream opens still answers in JSON — auth,
+        // config, a malformed body, or a platform-level HTML error page.
+        if (!res.ok || !res.body) {
+          const raw = await res.text();
+          let message;
+          try {
+            message = JSON.parse(raw).error;
+          } catch {
+            message =
+              res.status === 504
+                ? "The tutor timed out. Try a shorter question."
+                : `Server error (${res.status}).`;
+          }
+          throw new Error(message || `Request failed (${res.status})`);
         }
-        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
 
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: data.reply || "", cards: data.cards || [] },
-        ]);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let streamError = "";
+
+        // SSE frames are separated by a blank line and can be split across
+        // network chunks, so hold the tail back until its terminator arrives.
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+
+          for (const frame of frames) {
+            const line = frame.split("\n").find((l) => l.startsWith("data:"));
+            if (!line) continue;
+            let event;
+            try {
+              event = JSON.parse(line.slice(5).trim());
+            } catch {
+              continue;
+            }
+            if (event.type === "text") {
+              gotText = true;
+              updateLast((m) => ({ ...m, content: m.content + event.delta }));
+            } else if (event.type === "cards") {
+              updateLast((m) => ({ ...m, cards: event.cards || [] }));
+            } else if (event.type === "error") {
+              streamError = event.error;
+            }
+          }
+        }
+
+        updateLast((m) => ({ ...m, streaming: false }));
+        if (streamError) throw new Error(streamError);
+        if (!gotText) throw new Error("The tutor returned nothing. Try rephrasing.");
       } catch (e) {
+        // Closing the panel aborts on purpose — not something to report.
+        if (e.name === "AbortError") return;
         setError(e.message || "Something went wrong.");
-        // Put the question back so it isn't lost to a network blip.
-        setInput(trimmed);
-        setMessages(messages);
+        if (gotText) {
+          // Part of an answer arrived before it broke. Keep it — it is usually
+          // the useful part — and let the error banner explain the rest.
+          updateLast((m) => ({ ...m, streaming: false }));
+        } else {
+          // Nothing arrived: drop the empty bubble and put the question back
+          // in the box so it isn't lost to a network blip.
+          setInput(trimmed);
+          setMessages(messages);
+        }
       } finally {
         setSending(false);
+        abortRef.current = null;
       }
     },
-    [input, sending, messages, deckFronts]
+    [input, sending, messages, cards, currentCard, updateLast]
   );
 
   const addCard = useCallback(
@@ -246,9 +401,6 @@ export default function ChatPanel({
             front: card.front,
             back: card.back,
             category: CAT_UI_TO_DB[card.category] || "V",
-            // Today's date, matching the shape useUserDeck expects (an array
-            // of ISO dates) so frequency sorting keeps working.
-            dates: [new Date().toISOString().slice(0, 10)],
             source: "tutor-chat",
           },
           { onConflict: "user_id,front" }
@@ -292,7 +444,11 @@ export default function ChatPanel({
         <header style={S.head}>
           <div>
             <div style={S.title}>Ask the tutor</div>
-            <div style={S.sub}>Look something up, then add it to your deck.</div>
+            <div style={S.sub}>
+              {currentCard?.f
+                ? `Looking at: ${cleanFrenchPrompt(currentCard.f, currentCard.b)}`
+                : "Look something up, then add it to your deck."}
+            </div>
           </div>
           <button style={S.close} onClick={onClose} aria-label="Close">
             ✕
@@ -304,7 +460,7 @@ export default function ChatPanel({
             <div style={S.empty}>
               <p style={S.emptyText}>
                 Ask about a word, a phrase, or a grammar point. If there's something
-                worth drilling, you'll get cards you can add in one click.
+                worth drilling, you'll get cards you can edit and add.
               </p>
               {SUGGESTIONS.map((s) => (
                 <button key={s} style={S.suggestion} onClick={() => send(s)}>
@@ -318,41 +474,19 @@ export default function ChatPanel({
             <div key={i} style={m.role === "user" ? S.userRow : S.botRow}>
               <div style={m.role === "user" ? S.userBubble : S.botBubble}>
                 {m.content}
+                {/* A caret while the text is still arriving, so an answer
+                    mid-generation doesn't read as one that has finished. */}
+                {m.streaming && <span style={S.caret}>▌</span>}
               </div>
               {m.cards?.length > 0 && (
                 <div style={S.cardList}>
-                  {m.cards.map((c, j) => {
-                    const isAdded = added.has(c.front.toLowerCase().trim());
-                    return (
-                      <div key={j} style={S.cardChip}>
-                        <div style={S.chipMain}>
-                          <div style={S.chipFront}>{c.front}</div>
-                          <div style={S.chipBack}>{c.back}</div>
-                          <div style={S.chipMeta}>
-                            {CATEGORY_LABEL[c.category] || "Vocabulary"}
-                            {c.note ? ` · ${c.note}` : ""}
-                          </div>
-                        </div>
-                        <button
-                          style={isAdded ? S.chipAdded : S.chipAdd}
-                          onClick={() => addCard(c)}
-                          disabled={isAdded}
-                        >
-                          {isAdded ? "Added" : "Add"}
-                        </button>
-                      </div>
-                    );
-                  })}
+                  {m.cards.map((c, j) => (
+                    <ProposedCard key={j} card={c} added={added} onAdd={addCard} />
+                  ))}
                 </div>
               )}
             </div>
           ))}
-
-          {sending && (
-            <div style={S.botRow}>
-              <div style={{ ...S.botBubble, color: T.color.onSurfaceVariant }}>Thinking…</div>
-            </div>
-          )}
         </div>
 
         {error && <div style={S.error}>{error}</div>}
@@ -455,6 +589,7 @@ const S = {
   },
   botBubble: {
     maxWidth: "92%",
+    minHeight: 20,
     padding: "10px 14px",
     background: T.color.surfaceLowest,
     color: T.color.onSurface,
@@ -464,6 +599,7 @@ const S = {
     whiteSpace: "pre-wrap",
     boxShadow: T.shadow.card,
   },
+  caret: { opacity: 0.45, marginLeft: 1 },
   cardList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 10, width: "92%" },
   cardChip: {
     display: "flex",
@@ -478,8 +614,36 @@ const S = {
   chipFront: { fontFamily: T.font.serif, fontSize: 14, fontWeight: 600, color: T.color.onSurface },
   chipBack: { fontSize: 12.5, color: T.color.onSurface, marginTop: 2 },
   chipMeta: { fontSize: 11, color: T.color.onSurfaceVariant, marginTop: 4, lineHeight: 1.4 },
+  // The edit inputs sit at the same size and weight as the text they replace,
+  // so turning editing on doesn't reflow the chip.
+  chipEditFront: {
+    width: "100%",
+    boxSizing: "border-box",
+    fontFamily: T.font.serif,
+    fontSize: 14,
+    fontWeight: 600,
+    color: T.color.onSurface,
+    padding: "3px 6px",
+    background: T.color.surfaceHigh,
+    border: "1px solid rgba(3,22,50,0.14)",
+    borderRadius: T.radius.sm,
+    outline: "none",
+  },
+  chipEditBack: {
+    width: "100%",
+    boxSizing: "border-box",
+    fontFamily: T.font.sans,
+    fontSize: 12.5,
+    color: T.color.onSurface,
+    padding: "3px 6px",
+    marginTop: 3,
+    background: T.color.surfaceHigh,
+    border: "1px solid rgba(3,22,50,0.14)",
+    borderRadius: T.radius.sm,
+    outline: "none",
+  },
+  chipActions: { flexShrink: 0, display: "flex", flexDirection: "column", gap: 5, alignItems: "stretch" },
   chipAdd: {
-    flexShrink: 0,
     padding: "7px 14px",
     background: T.gradient.ink,
     color: T.color.onPrimary,
@@ -491,7 +655,6 @@ const S = {
     cursor: "pointer",
   },
   chipAdded: {
-    flexShrink: 0,
     padding: "7px 14px",
     background: "transparent",
     color: T.color.onSurfaceVariant,
@@ -501,6 +664,17 @@ const S = {
     fontWeight: 500,
     fontFamily: T.font.sans,
     cursor: "default",
+  },
+  chipEditToggle: {
+    padding: "4px 14px",
+    background: "transparent",
+    color: T.color.onSurfaceVariant,
+    border: "none",
+    borderRadius: T.radius.md,
+    fontSize: 11,
+    fontWeight: 500,
+    fontFamily: T.font.sans,
+    cursor: "pointer",
   },
   error: {
     margin: "0 20px 8px",

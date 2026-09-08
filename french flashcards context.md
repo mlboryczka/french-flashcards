@@ -148,7 +148,7 @@ The parser prompt also forbids producing these in the first place.
 | Route | Does |
 |---|---|
 | `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, polysemy-aware dedupe |
-| `chat.js` | Tutor chat. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
+| `chat.js` | Tutor chat. Streams (SSE), Sonnet 5 at effort `low`, sent a slice of the deck as context. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
 | `split-senses.js` | Audits candidate multi-sense cards. Read-only |
 | `apply-splits.js` | Applies approved splits. Service role + manual ownership checks |
 | `admin-update-card.js` | Single-card edit. Service role, because RLS was silently returning success with zero rows affected from the client |
@@ -424,6 +424,81 @@ localStorage so a fresh boot has something to paint; the deck cache opts out
 above 2.5MB, since a deck in the thousands does not fit the quota.
 
 ---
+
+## Recent work (branch `claude/tutor-functionality-improvements-wa5wa8`)
+
+The tutor, which was slow, generic, and hard to get a good card out of.
+
+### The latency was a default that changed underneath the file
+
+`api/chat.js` passed no `thinking` and no `output_config`. That was written
+when omitting `thinking` meant *no thinking*. On Opus 5 an omitted `thinking`
+runs **adaptive**, and an omitted effort defaults to **`high`** — so every
+two-word lookup was getting a maximum-depth reasoning pass from the most
+expensive model, non-streamed, inside Vercel's default 10s function budget.
+That is the whole of "the tutor is slow", and none of it was visible in the
+code, only in what the code didn't say.
+
+Now: `claude-sonnet-5`, `thinking: {type: "adaptive"}` stated explicitly, and
+`output_config: {effort: "low"}`.
+
+**Effort is a ceiling; adaptive thinking is the allocation underneath it.** At
+effort `low` a lookup costs almost nothing and a nuance question still gets
+more thought than the lookup did. That is per-question compute allocation
+decided by something that has read the question — which is the reason there is
+no model router here. Routing by question type has to decide before the answer
+exists, and in French the difficulty isn't in the surface form: *si* is five
+characters and one of the hardest words in the language, and "how do I say I
+miss you" looks like translation right up until the inversion. A classifier
+good enough to route those correctly would have to know French as well as the
+model it was trying to avoid calling.
+
+### Everything else it needed
+
+- **It streams.** SSE, one JSON event per `data:` line (`text` / `cards` /
+  `done` / `error`). Failures *before* the stream opens still answer in JSON,
+  so the client's existing error path survives. `maxDuration` is 60.
+- **It knows what you're studying.** It used to be sent `deckFronts.slice(0, 60)`
+  — sixty fronts by array position, no backs, no history. `src/lib/deckContext.js`
+  now picks the cards that bear on the question (scored on shared content words,
+  French side weighted double), the cards you recently got wrong, and the card
+  on screen. All of it is a filter over an array already in browser memory.
+- **`openChat(card)` takes an argument**, and a wrong typed answer offers "Ask
+  the tutor" beside the dispute link — in the *same row*, because `belowCard` is
+  a measured 170px well and a new line would move the card off its one position.
+- **Proposed cards are editable before they are added.** This is what makes the
+  cheaper model safe: card quality stops being load-bearing when correcting a
+  front costs a keystroke. Fronts are also run through `cleanFrenchPrompt`.
+- **A tutor card no longer stamps `dates: [today]`.** Those are the *lesson*
+  dates a word appeared on; a card invented in a chat appeared on none, and the
+  stamp made tutor cards outrank real ones in the frequency sort.
+- **The system prompt stopped lecturing.** It used to require register, gender,
+  an example sentence and a false-friend warning on *every* answer. A checklist
+  cannot be proportional to the question, which is why a two-word lookup came
+  back as five bullets. It is now cached (`cache_control` on the system block),
+  which is also why per-request deck context goes in the **user turn**: caching
+  is a prefix match, and the old code concatenated the deck onto the end of
+  `SYSTEM_PROMPT`, which would have invalidated the cache on every turn.
+- **Closing the panel aborts the request** instead of letting the answer land in
+  a panel nobody is looking at.
+
+### Two bugs found by driving it, not by running the suite
+
+- **Editing a card before adding it never showed as added.** `addCard` keyed the
+  added-set on the *edited* front while the chip checked the *original*
+  proposal, so the two never matched and you could add the same card
+  repeatedly. The check now lives inside `ProposedCard`, against its own state.
+- Writing the suite: `button:has-text("Send")` also matches **"Send feedback"**,
+  which closed the tutor and opened the feedback sheet. `:text-is()` for both
+  that and Add, since "Added" contains "Add" too.
+
+### Still true, and worth knowing
+
+`@anthropic-ai/sdk` is pinned at **0.27.3** (mid-2024), which predates
+`output_config`, adaptive thinking and GA prompt caching. It works because that
+SDK passes unknown body keys through verbatim — verified by capturing the
+request it builds — not because it supports them. A bump is overdue and would
+touch all five API routes.
 
 ## Open items
 

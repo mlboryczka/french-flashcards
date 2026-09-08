@@ -3,6 +3,7 @@
 import { classifyCard } from "../../src/lib/cardTypes.js";
 import { looksMultiSense } from "../../src/lib/multiSense.js";
 import { cleanFrenchPrompt } from "../../src/lib/cardText.js";
+import { findRelatedCards, recentMisses } from "../../src/lib/deckContext.js";
 import { checker } from "../check.mjs";
 
 const ck = checker();
@@ -114,6 +115,59 @@ for (const [fr, en, want] of [
 ]) {
   const got = cleanFrenchPrompt(fr, en);
   ck(`${JSON.stringify(fr)} → ${JSON.stringify(want)}`, got === want, got === want ? "" : `got ${JSON.stringify(got)}`);
+}
+
+// What the tutor gets told about the deck. The requirement is "the cards that
+// bear on THIS question", so the cases are questions with a known right answer
+// — not a restatement of how the scorer works.
+const DECK = [
+  { f: "apporter", b: "to bring (an object)", freq: 3, last_answer_correct: true, last_review: "2026-09-01" },
+  { f: "amener", b: "to bring (a person)", freq: 2, last_answer_correct: false, last_review: "2026-09-06" },
+  { f: "la colline", b: "the hill", freq: 5, last_answer_correct: false, last_review: "2026-09-07" },
+  { f: "le chemin de fer", b: "the railway", freq: 1, last_answer_correct: null, last_review: null },
+  { f: "décharger", b: "to unload / to discharge", freq: 1, last_answer_correct: true, last_review: "2026-08-30" },
+];
+
+console.log("\n  findRelatedCards — the cards this question is about");
+{
+  const fronts = (q) => findRelatedCards(q, DECK).map((c) => c.front);
+
+  const pair = fronts("What's the difference between amener and apporter?");
+  ck(
+    "a question naming two cards returns both",
+    pair.includes("amener") && pair.includes("apporter"),
+    pair.join(", ") || "nothing"
+  );
+
+  const hill = fronts("is colline feminine?");
+  ck("a question naming one French word finds its card", hill[0] === "la colline", hill.join(", ") || "nothing");
+
+  // The trap: every question is mostly function words. If those match, the
+  // tutor is handed twelve arbitrary cards on every turn and the context is
+  // worse than none.
+  ck(
+    "a question of only function words matches nothing",
+    fronts("what is the difference between these?").length === 0,
+    fronts("what is the difference between these?").join(", ")
+  );
+
+  // "to unload" shares "to" with three backs; only the real match should win.
+  const unload = fronts("how do I say to unload?");
+  ck("a shared function word in the gloss is not a match", unload.length === 1 && unload[0] === "décharger", unload.join(", ") || "nothing");
+}
+
+console.log("\n  recentMisses — what they are actually getting wrong");
+{
+  const missed = recentMisses(DECK).map((c) => c.front);
+  // The migration_006 shape of bug: null means "never reviewed", not "missed".
+  // Treating it as falsy sweeps the entire unreviewed deck in.
+  ck(
+    "an unreviewed card is not a miss",
+    !missed.includes("le chemin de fer"),
+    missed.join(", ") || "nothing"
+  );
+  ck("only the missed cards come back", missed.length === 2, missed.join(", "));
+  ck("most recently missed first", missed[0] === "la colline", missed.join(", "));
 }
 
 const n = ck.fails();

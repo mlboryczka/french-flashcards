@@ -270,15 +270,25 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!req) { setShowFeedback(false); return true; }
     return req();
   }, []);
-  const openChat = useCallback(() => {
+  // The card the tutor should treat as "what I'm looking at". Set when the
+  // tutor is opened FROM a card — from the study view, or from the banner after
+  // a wrong answer. Null when opened from the nav, where there is no such card.
+  //
+  // Without this there was no path from a card to the tutor at all: openChat
+  // took no argument, so asking why you'd just missed something meant retyping
+  // the whole card into the box.
+  const [chatCard, setChatCard] = useState(null);
+  const openChat = useCallback((aboutCard = null) => {
     if (!dismissFeedback()) return;
     setShowLessonPanel(false);
+    setChatCard(aboutCard);
     setShowChat(true);
   }, [dismissFeedback]);
   const toggleChat = useCallback(() => {
     if (showChat) { setShowChat(false); return; }
     if (!dismissFeedback()) return;
     setShowLessonPanel(false);
+    setChatCard(null);
     setShowChat(true);
   }, [showChat, dismissFeedback]);
   const openFeedback = useCallback(() => { setShowChat(false); setShowLessonPanel(false); setShowFeedback(true); }, []);
@@ -1279,7 +1289,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <p style={S.onbCardDesc}>Paste a public Google Doc URL and we'll fetch the contents.</p>
               <div style={S.onbCardArrow}>→</div>
             </button>
-            <button data-tutor-toggle style={S.onbCard} onClick={openChat}>
+            <button data-tutor-toggle style={S.onbCard} onClick={() => openChat()}>
               <div style={S.onbCardIcon}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
               </div>
@@ -1304,7 +1314,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           open={showChat}
           onClose={() => setShowChat(false)}
           user={user}
-          deckFronts={[]}
+          cards={[]}
           onCardsAdded={reloadDeck}
         />
 
@@ -1527,7 +1537,8 @@ export default function FlashcardApp({ user, onSignOut }) {
         open={showChat}
         onClose={() => setShowChat(false)}
         user={user}
-        deckFronts={userCards.map((c) => c.f)}
+        cards={userCards}
+        currentCard={chatCard}
         onCardsAdded={reloadDeck}
         reflow={chatReflow}
       />
@@ -2151,9 +2162,23 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
                       <div style={S.feedbackRow}>
                         {feedbackState === null && (
-                          <button style={S.feedbackBtn} onClick={submitFeedback}>
-                            My answer should have been accepted
-                          </button>
+                          <>
+                            <button style={S.feedbackBtn} onClick={submitFeedback}>
+                              My answer should have been accepted
+                            </button>
+                            {/* The other thing you want after a miss: not
+                                "I was right", but "why was I wrong?". Sits in
+                                the SAME row as the dispute link — belowCard is
+                                a measured 170px well and a new line would push
+                                the card off its one fixed position. */}
+                            <button
+                              data-tutor-toggle
+                              style={S.feedbackBtn}
+                              onClick={() => openChat(card)}
+                            >
+                              Ask the tutor
+                            </button>
+                          </>
                         )}
                         {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
                         {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
