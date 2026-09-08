@@ -13,9 +13,56 @@ import { CAT_DB_TO_UI } from "./lib/cardCategories";
 //   next_due_at, lapses, stability, difficulty, fsrs_state, reps,
 //   last_review — FSRS scheduling state (migration_006).
 
+// Last-known deck, kept so a fresh page can paint one immediately.
+//
+// The app shows a bare "Loading…" until the deck arrives, and that is what
+// flashes when you come back to a backgrounded tab: Chrome discards tabs under
+// memory pressure and reloads them on return, so the app boots from scratch and
+// waits on a round trip before it has anything to draw. Nothing about that is
+// wrong, it is just visible.
+//
+// So the deck is written to localStorage on every successful load and read back
+// synchronously on the next mount. The network fetch still runs and still wins;
+// the cache only decides what is on screen for the few hundred milliseconds
+// before it lands, and the alternative to a slightly stale deck is no deck.
+//
+// Everything here is wrapped: storage throws in private windows and when the
+// quota is full, and a deck of several thousand cards is not small.
+const CACHE_PREFIX = "deck-cache:";
+const CACHE_VERSION = 1;
+
+function readCache(userId) {
+  if (!userId) return null;
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + userId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.v !== CACHE_VERSION || !Array.isArray(parsed.cards)) return null;
+    return parsed.cards;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(userId, cards) {
+  if (!userId) return;
+  try {
+    localStorage.setItem(
+      CACHE_PREFIX + userId,
+      JSON.stringify({ v: CACHE_VERSION, cards })
+    );
+  } catch {
+    // Over quota or storage unavailable. The cache is an optimisation; losing
+    // it costs a loading state, not correctness.
+    try { localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
+  }
+}
+
 export function useUserDeck(user) {
-  const [cards, setCards] = useState([]);
-  const [loaded, setLoaded] = useState(false);
+  // Seeded from the cache so the very first render already has a deck. Lazy
+  // initialisers, so the read happens once rather than on every render.
+  const [cards, setCards] = useState(() => readCache(user?.id) || []);
+  const [loaded, setLoaded] = useState(() => readCache(user?.id) !== null);
   const [reloadCounter, setReloadCounter] = useState(0);
   // The user whose deck is currently on screen. A refetch for that same user
   // (reload() after an edit, a delete, an upload, a card added from the tutor
@@ -32,7 +79,16 @@ export function useUserDeck(user) {
       loadedForUser.current = null;
       return;
     }
-    if (loadedForUser.current !== user.id) setLoaded(false);
+    // A cached deck counts as loaded: the refetch below is then a background
+    // refresh, exactly like a reload after an edit.
+    const cached = readCache(user.id);
+    if (cached) {
+      setCards(cached);
+      setLoaded(true);
+      loadedForUser.current = user.id;
+    } else if (loadedForUser.current !== user.id) {
+      setLoaded(false);
+    }
     (async () => {
       // Supabase caps responses at 1000 rows per request (server-side,
       // regardless of .limit()). Paginate with .range() to fetch all cards.
@@ -96,6 +152,7 @@ export function useUserDeck(user) {
         setCards(shaped);
       setLoaded(true);
       loadedForUser.current = user.id;
+      writeCache(user.id, shaped);
     })();
 
     return () => {

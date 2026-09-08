@@ -14,11 +14,32 @@ import FlashcardApp from "./FlashcardApp";
 // short enough that the failure is still obviously a failure.
 const SESSION_TIMEOUT_MS = 10000;
 
+// How long to wait before admitting we are waiting. Long enough that a session
+// read from local storage never trips it, short enough that a real stall does
+// not look like a hung page.
+const SLOW_AFTER_MS = 450;
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState("");
   const [retry, setRetry] = useState(0);
+  // Whether the wait has gone on long enough to be worth saying so.
+  //
+  // getSession() reads local storage first, so on the normal path it settles
+  // within a frame or two — but it is async, so SOMETHING has to be painted
+  // meanwhile, and painting the word "Loading…" is what flashes every time you
+  // come back to a tab Chrome discarded. Hold the message back a beat and the
+  // fast path never shows it at all; a genuinely slow or paused backend still
+  // explains itself, just after the moment where an explanation is useful
+  // rather than noise.
+  const [slow, setSlow] = useState(false);
+
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => setSlow(true), SLOW_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   useEffect(() => {
     // `settled` guards against the timeout and the response racing: whichever
@@ -97,11 +118,9 @@ export default function App() {
   }, []);
 
   if (loading) {
-    return (
-      <div style={centred}>
-        <span>Loading…</span>
-      </div>
-    );
+    // Painted in the app's own background either way, so the fast path is a
+    // held frame rather than a white flash followed by text.
+    return <div style={centred}>{slow ? <span>Loading…</span> : null}</div>;
   }
 
   // Reaching Supabase failed. Say so, rather than sitting on "Loading…" —
@@ -144,6 +163,7 @@ export default function App() {
 }
 
 const centred = {
+  background: "#fdf8f6",
   minHeight: "100vh",
   display: "flex",
   alignItems: "center",

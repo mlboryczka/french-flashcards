@@ -1,11 +1,48 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase";
 
+// Cached alongside the deck, and for the same reason.
+//
+// FlashcardApp will not render until BOTH the deck and this have arrived, so
+// caching only the deck moved the "Loading…" flash rather than removing it —
+// the gate simply waited on card_progress instead. Progress is a small object
+// keyed by card id, so it costs almost nothing to keep.
+//
+// See the note in useUserDeck for why this is a cache and not a source of
+// truth: the fetch below still runs and still wins.
+const CACHE_PREFIX = "progress-cache:";
+const CACHE_VERSION = 1;
+
+function readCache(userId) {
+  if (!userId) return null;
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + userId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.v !== CACHE_VERSION || typeof parsed.progress !== "object") return null;
+    return parsed.progress;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(userId, progress) {
+  if (!userId) return;
+  try {
+    localStorage.setItem(
+      CACHE_PREFIX + userId,
+      JSON.stringify({ v: CACHE_VERSION, progress })
+    );
+  } catch {
+    try { localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
+  }
+}
+
 // Manages per-user card progress with optimistic UI + Supabase persistence.
 // Shape of progress state: { [cardId]: { score, seen, got } }
 export function useProgress(user) {
-  const [progress, setProgress] = useState({});
-  const [loaded, setLoaded] = useState(false);
+  const [progress, setProgress] = useState(() => readCache(user?.id) || {});
+  const [loaded, setLoaded] = useState(() => readCache(user?.id) !== null);
 
   // Initial load: fetch all progress rows for this user
   useEffect(() => {
@@ -15,7 +52,15 @@ export function useProgress(user) {
       setLoaded(true);
       return;
     }
-    setLoaded(false);
+    // A cached copy counts as loaded, so the fetch below is a background
+    // refresh rather than something the first paint waits on.
+    const cached = readCache(user.id);
+    if (cached) {
+      setProgress(cached);
+      setLoaded(true);
+    } else {
+      setLoaded(false);
+    }
     (async () => {
       // Supabase caps responses at 1000 rows. Paginate to fetch all progress.
       const PAGE = 1000;
@@ -45,6 +90,7 @@ export function useProgress(user) {
       }
       setProgress(obj);
       setLoaded(true);
+      writeCache(user.id, obj);
     })();
     return () => {
       cancelled = true;
