@@ -5,7 +5,7 @@ import { openApp, finish, checker, gotoStats, layoutProbe, cardBox, settled } fr
 const ck = checker();
 const { browser, page } = await openApp();
 
-console.log("\n  the card fits the window at any height");
+console.log("\n  the card fits the window at any height, and keeps its shape at any width");
 // The card used to be a fixed 600x375. Once the area was shorter than that,
 // centring overflowed in BOTH directions and the top of the card rode up over
 // the counter and the back button.
@@ -31,6 +31,31 @@ for (const height of [1000, 900, 800, 700, 640, 560, 500]) {
     `card ${card.width}x${card.height} (${ratio}:1), top ${card.top} vs header ${header}`
   );
   ck(`${height}px tall: still landscape`, ratio >= 1.4 && ratio <= 1.75, `${ratio}:1`);
+}
+await page.setViewportSize({ width: 1400, height: 900 });
+await page.waitForTimeout(300);
+
+// ── ...and at any WIDTH, which is the half this suite used to miss ──────
+//
+// The loop above varies only the height, all of it at 1400px wide, so it can
+// only ever catch the card being squeezed vertically. Squeeze the COLUMN
+// instead and the card is capped by `max-width: 100%` while its height goes on
+// being driven by the flex column, and `aspect-ratio` loses: at an 800px
+// window the card measured 464x375, which is very nearly a square.
+//
+// That was live and unnoticed, and a later change made it worse before this
+// check existed to say so. The card is a flashcard; it is landscape or it is
+// wrong, and that has to hold on whichever axis is the tight one.
+for (const [w, h] of [[1600, 900], [1400, 900], [1400, 700], [1100, 900], [900, 900], [900, 700], [800, 900], [800, 700]]) {
+  await page.setViewportSize({ width: w, height: h });
+  await page.waitForTimeout(350);
+  const card = await cardBox(page);
+  const ratio = +(card.width / card.height).toFixed(2);
+  ck(
+    `${w}x${h}: the card is still a landscape card`,
+    ratio >= 1.4 && ratio <= 1.75,
+    `${card.width}x${card.height} = ${ratio}:1`
+  );
 }
 await page.setViewportSize({ width: 1400, height: 900 });
 await page.waitForTimeout(300);

@@ -3186,7 +3186,13 @@ const S = {
   // stretching it; the spare height goes to cardArea's `safe center` instead.
   // The basis must stay DEFINITE — `auto` reintroduces the circularity with
   // the card's `height: 100%` below and collapses it to its 170px floor.
-  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 375px", minHeight:170, display:"flex", alignItems:"safe center", justifyContent:"center" },
+  //
+  // `container-type: inline-size` is here so the card can cap its height
+  // against the width it actually has — see the card's maxHeight. INLINE-size,
+  // not size: size containment on an ancestor of the rotating card is the
+  // hazard the note below warns about, and inline-size leaves the flip alone
+  // (verified by sampling the transform mid-rotation — still a real matrix3d).
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 375px", minHeight:170, containerType:"inline-size", display:"flex", alignItems:"safe center", justifyContent:"center" },
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
   // Height-driven so a short window shrinks the card instead of overflowing
@@ -3194,13 +3200,26 @@ const S = {
   // absorbed the entire squeeze when a panel opened, collapsing to nothing
   // while 130px of padding sat unused below it.
   //
+  // maxHeight caps the card on BOTH axes, which took a container query.
+  //
+  // `aspect-ratio` only holds while one axis is free to follow the other. The
+  // height came from the flex column and the width was capped by
+  // `max-width: 100%`, so once the COLUMN was the tight axis both were pinned
+  // and the ratio simply lost: at an 800px window the card was 464x375, near
+  // enough a square, and at 900 it was 1.5:1. Long-standing, and invisible to
+  // a suite that varied only the window height.
+  //
+  // 62.5cqw is 100/1.6 percent of cardWrap's width, so this reads "never
+  // taller than the width can support", and whichever of the two caps binds
+  // first, the card stays 1.6:1.
+  //
   // NO containerType here. container-type: size applies containment, which
   // makes the element a grouping element and so FLATTENS transform-style:
   // preserve-3d — the computed style still reads preserve-3d, but the card
   // stopped rotating and just swapped faces mid-flip. The query container is
   // each face instead; they are inset:0 so their size is the card's, and they
   // hold no 3D children of their own.
-  card: { position:"relative", height:"100%", minHeight:170, maxHeight:375, maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1" },
+  card: { position:"relative", height:"100%", minHeight:170, maxHeight:"min(375px, 62.5cqw)", maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1" },
   cardFront: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
   cardBack: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },

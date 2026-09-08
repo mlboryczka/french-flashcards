@@ -329,12 +329,28 @@ These look arbitrary and are not:
   circular against the card's `height: 100%` and collapses it to its 170px
   floor. This also made the card *larger* on short windows (at 700px tall,
   461x288 -> 491x307) because the old `auto` basis was over-shrinking it.
+- **The card caps its height against its WIDTH, via a container query.**
+  `aspect-ratio` only holds while one axis is free to follow the other, and the
+  card had its height driven by the flex column and its width capped by
+  `max-width: 100%` — so once the column was the tight axis both were pinned
+  and the ratio lost. At an 800px window the card was 464x375, near enough a
+  square; at 900 it was 1.5:1. Long-standing, and invisible to a suite that
+  varied only the window height. `cardWrap` is now a `container-type:
+  inline-size` container and the card's `maxHeight` is `min(375px, 62.5cqw)` —
+  62.5 being 100/1.6 — so whichever cap binds first it stays 1.6:1. It must be
+  INLINE-size: size containment on an ancestor of the rotating card is the same
+  hazard as putting it on the card, and the flip was re-verified by sampling
+  the transform mid-rotation.
 - **`cardTopSpacer` shrinks at factor 8, not 1.** Flex shrinks weighted by
   factor x basis, so against cardWrap's 375 the old factor of 1 had the spacer
   absorbing only 106/481 of a squeeze and handing the card the other 78% — when
   the whole point of the spacer is to give its space up *first*. At 8 the card
   gives up about a third as much and the worst frame of a reflow drops from
   12.2px to 4.8px. It only bites under pressure; resting geometry is untouched.
+- **The layout suite varies the window's WIDTH as well as its height.** The
+  height-only loop it had could only ever catch the card being squeezed
+  vertically, and the squarish-card bug above lived through it untouched — then
+  a later change made it worse before there was a check to say so.
 - **`shellNarrow` clips one axis, `shell` clips both.** The card area's two
   decorative blur circles are positioned outside their container on purpose
   (`left:-60` / `right:-60`); the desktop shell's `overflow:hidden` hid that
@@ -549,6 +565,14 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
   frames, and its `cqh` text re-resolves with it. Animating `transform` instead
   of layout would remove the per-frame layout work altogether, and would change
   what the layout, motion and reflow suites assert.
+
+  **One case is still not smooth: an 800x700 window, closing the feedback
+  sheet.** The card's width covers 54px and 26 of them land in one frame, while
+  its height moves smoothly over the same stretch. That is the handover between
+  the two `maxHeight` caps — the 375px one and the 62.5cqw one — and the close
+  easing is at its fastest exactly there. Every wider or taller window is fine
+  (at 1400x900 the card resizes 8px total, worst frame 4.8px). Reproduce with a
+  per-frame sample of the card's box; a before/after measurement shows nothing.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
   exercise sheet ships no answer key, and her lesson PDF has at least one error
   (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
