@@ -11,6 +11,8 @@ import { useUserDeck } from "./useUserDeck";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
+import ApiKeyModal from "./ApiKeyModal";
+import { keyHeaders, hasKey } from "./lib/anthropicKey";
 
 const SIDEBAR_WIDTH = 256;
 // Narrowest content column worth reflowing to.
@@ -290,6 +292,9 @@ export default function FlashcardApp({ user, onSignOut }) {
     });
   }, []);
   const [showLessonPanel, setShowLessonPanel] = useState(false);
+  // "Connect your Claude account". Everything that calls Claude bills the
+  // caller's own Anthropic key now, so there has to be somewhere to put one.
+  const [showKeyModal, setShowKeyModal] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const profileRef = useRef(null);
 
@@ -369,9 +374,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   useEffect(() => {
     if (!user) return;
     (async () => {
+      // Scoped to the owner. This used to select the whole table: alternates
+      // had no user_id and RLS let every signed-in user read every row, so
+      // one person's accepted answer loosened everyone's grading. See
+      // migration_008.
       const { data, error } = await supabase
         .from("card_alternates")
-        .select("card_id, direction, alternate_text");
+        .select("card_id, direction, alternate_text")
+        .eq("user_id", user.id);
       if (error) { console.error("Failed to load alternates:", error); return; }
       const map = {};
       for (const row of data || []) {
@@ -811,7 +821,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Checking the event target for INPUT/TEXTAREA isn't enough; most of a
   // panel is neither.
   const overlayOpen =
-    showChat || showFeedback || showUpload ||
+    showChat || showFeedback || showUpload || showKeyModal ||
     showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
 
   useEffect(() => {
@@ -861,6 +871,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token}`,
+          ...keyHeaders(user?.id),
         },
         body: JSON.stringify({
           card_id: card.id,
@@ -907,6 +918,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token}`,
+          ...keyHeaders(user?.id),
         },
         body: JSON.stringify({
           card_id: card.id,
@@ -915,6 +927,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           english: card.b,
           user_answer: typedAnswer,
           expected_answer: card.shownDir === "fr" ? card.b : card.f,
+          // The server honours this now: it records the alternate without a
+          // model call instead of re-running the review it just lost.
           force: true,
         }),
       });
@@ -1306,10 +1320,18 @@ export default function FlashcardApp({ user, onSignOut }) {
           user={user}
           deckFronts={[]}
           onCardsAdded={reloadDeck}
+          onNeedKey={() => setShowKeyModal(true)}
+        />
+
+        <ApiKeyModal
+          open={showKeyModal}
+          onClose={() => setShowKeyModal(false)}
+          user={user}
         />
 
         <CahierUpload
           open={showUpload}
+          user={user}
           onClose={() => setShowUpload(false)}
           hasExisting={false}
           initialTab={uploadInitialTab}
@@ -1471,6 +1493,12 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     Upload document
                   </button>
+                  <button
+                    style={S.profileMenuItem}
+                    onClick={() => { setShowKeyModal(true); setShowProfileMenu(false); }}
+                  >
+                    {hasKey(user?.id) ? "Claude account ✓" : "Connect Claude account"}
+                  </button>
                   {isAdmin && (<>
                     <button
                       style={S.profileMenuItem}
@@ -1529,10 +1557,17 @@ export default function FlashcardApp({ user, onSignOut }) {
         user={user}
         deckFronts={userCards.map((c) => c.f)}
         onCardsAdded={reloadDeck}
+        onNeedKey={() => { setShowChat(false); setShowKeyModal(true); }}
         reflow={chatReflow}
+      />
+      <ApiKeyModal
+        open={showKeyModal}
+        onClose={() => setShowKeyModal(false)}
+        user={user}
       />
       <CahierUpload
         open={showUpload}
+        user={user}
         onClose={() => setShowUpload(false)}
         hasExisting={userCards.length > 0}
         initialTab={uploadInitialTab}

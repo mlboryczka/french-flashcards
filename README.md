@@ -216,15 +216,44 @@ function uses it to update feedback rows after the LLM verdict comes back.
 
 **5. Add server-side env vars to Vercel**
 
-Vercel dashboard → your project → Settings → Environment Variables. Add three
-new ones (all without the `VITE_` prefix, so they stay server-side only):
+Vercel dashboard → your project → Settings → Environment Variables. Add these
+(all without the `VITE_` prefix, so they stay server-side only):
 
-- `ANTHROPIC_API_KEY` → your key from step 3
 - `SUPABASE_URL` → same as `VITE_SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` → service role key from step 4
+- `ADMIN_EMAIL` → your email. **This is the real admin check.** It is read
+  only on the server, and the token it is compared against is verified with
+  Supabase rather than merely decoded.
+- `ANTHROPIC_API_KEY` → optional, your key from step 3. Used **only** for
+  requests from `ADMIN_EMAIL`. Every other user brings their own key (see
+  *Who pays for Claude* below), so leaving this unset simply means you bring
+  yours too.
 
 Also add `VITE_ADMIN_EMAIL` to Vercel (this one DOES use the VITE_ prefix
-because it's read in the browser).
+because it's read in the browser). It only decides whether the admin menu
+items are drawn — anything `VITE_`-prefixed is compiled into the public
+bundle, so it is never a security boundary. `ADMIN_EMAIL` is.
+
+### Who pays for Claude
+
+Every endpoint that calls Claude — the tutor (`api/chat.js`), the answer
+reviewer (`api/review-answer.js`), the cahier parser (`api/parse-cahier.js`,
+`api/cahier-parse.js`) and the sense auditor (`api/split-senses.js`) — bills
+an Anthropic account per request.
+
+Each user supplies their own key through **profile menu → Connect Claude
+account**. It is kept in that browser's `localStorage` and sent as an
+`x-anthropic-key` header on their own requests only. It is never written to
+the database or to a log, so this app is not a custodian of anyone's
+credentials.
+
+Without a key the server answers `402` and the client offers the dialog. The
+one exception is `ADMIN_EMAIL`, whose requests fall back to
+`ANTHROPIC_API_KEY` above.
+
+This closed a real hole: `/api/chat` and `/api/split-senses` previously
+accepted any signed-in caller and `/api/review-answer` accepted *anyone*,
+all of them spending the deploy owner's Anthropic credit.
 
 **6. Redeploy**
 
@@ -278,111 +307,30 @@ Or just push any git commit and it'll auto-redeploy. The new
 - **Mobile app**: the current app works fine in mobile browsers; wrapping it in
   Capacitor or PWA-enabling it would make it installable.
 
-## Audio: native French TTS + pronunciation grading
+## Audio: French text-to-speech
 
-Two features powered by Azure Speech Services:
+Speech is the browser's own `speechSynthesis`. No account, no key, no setup,
+no cost — click 🔊 on a card and the platform's French voice reads it.
 
-1. **🔊 button** plays the French pronunciation of any card using a high-quality
-   neural voice (Denise by default). MP3s are cached in your browser's IndexedDB
-   so the second play is instant and works offline.
-2. **🎤 button** records you saying the French aloud, sends the audio to Azure's
-   Pronunciation Assessment API, and shows per-word and per-phoneme accuracy
-   scores so you can see exactly which sounds need work.
+It needs a French voice installed. macOS, iOS and Windows all ship one;
+some Linux browsers do not, and `audio.js` logs a warning and stays silent
+rather than reading French with an English mouth.
 
-### Setup (one-time, ~10 min)
+**This used to be Azure.** `api/tts.js` and `api/pronounce.js` proxied Azure
+Speech Services for higher-quality voices and pronunciation scoring. Both
+endpoints took **no authentication at all**, so anyone who found the URLs
+could bill the deploy owner's Azure subscription indefinitely. They have been
+removed rather than patched.
 
-**1. Create an Azure Speech Service**
+To bring Azure back, restore those two files behind `requireUser` from
+`api/_lib/auth.js` — and if the deploy owner should not be the one paying,
+give it a per-user credential the way `api/_lib/anthropicKey.js` does for
+Anthropic. `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` are no longer read
+by anything and can be deleted from the Vercel project.
 
-Go to [portal.azure.com](https://portal.azure.com) → sign in (or create an
-account; free tier card needed but no charges for normal use). Then:
+The pronunciation-scoring UI is still in `FlashcardApp.jsx` behind
+`PRONUNCIATION_ENABLED`, which is `false`.
 
-- **+ Create a resource** → search "Speech" → Speech (by Microsoft)
-- Resource group: create new or pick existing
-- Region: pick something close to your users (`francecentral`, `eastus`,
-  `westeurope` are all fine)
-- Name: anything (e.g., `french-flashcards-speech`)
-- Pricing tier: **F0 (Free)** — gives you 500K TTS chars/month and 5 hours STT/month
-- Click Review + create → Create
-- Wait ~30s for provisioning, then click **Go to resource**
-- In the left sidebar, click **Keys and Endpoint**
-- Copy **KEY 1** (long alphanumeric string) and the **Location/Region** (e.g., `eastus`)
-
-**2. Add two env vars to Vercel**
-
-Vercel dashboard → your project → Settings → Environment Variables. Add:
-
-- `AZURE_SPEECH_KEY` → KEY 1 from step 1 (no `VITE_` prefix — server-side only)
-- `AZURE_SPEECH_REGION` → the region (e.g., `eastus`, `francecentral`)
-
-**3. Push and deploy**
-
-The serverless functions `api/tts.js` and `api/pronounce.js` are already in the
-repo. Any push will deploy them. If you've already pushed without the env vars,
-you can either push again or hit **Redeploy** in the Vercel dashboard.
-
-### How it works
-
-**TTS path:**
-1. User clicks 🔊 → `speakFrench(text)` checks IndexedDB cache
-2. Cache hit → play instantly (no network)
-3. Cache miss → POST to `/api/tts` → Azure synthesizes MP3 → cache it → play it
-4. Cleanup turns slashes into commas so "le vendeur / la vendeuse" reads as
-   "le vendeur, la vendeuse" instead of "le vendeur slash la vendeuse"
-
-**Pronunciation path:**
-1. User clicks 🎤 → mic permission prompt (first time only)
-2. Browser captures audio with Web Audio API → resampled to 16kHz mono → encoded
-   as 16-bit PCM WAV in JavaScript (Azure rejects WebM, which is what
-   MediaRecorder produces by default)
-3. POST raw WAV bytes to `/api/pronounce` with reference text in query string
-4. Backend forwards to Azure Pronunciation Assessment API with phoneme-level
-   granularity
-5. Response parsed into `{ accuracy, fluency, completeness, pronunciation, words: [{ word, accuracy, errorType, phonemes: [...] }] }`
-6. UI shows: big overall score, three sub-scores (accuracy/fluency/completeness),
-   per-word chips color-coded by accuracy (tap any chip to hear that word
-   spoken back), and the transcription if it differs from the reference
-
-### What it costs
-
-- **TTS**: Azure free tier gives 500K characters/month. The whole deck is ~25K
-  characters, so you can play every card 20 times/month per user before any
-  charges. Beyond that: $4/M chars (~$0.0001 per card play).
-- **STT**: Free tier gives 5 hours/month of pronunciation assessment. Beyond
-  that: $1/audio hour.
-- **Realistic monthly cost** for you + a teacher + ~10 students testing actively:
-  almost certainly $0. Heavy use after the free tier: a few dollars.
-
-### Voice options
-
-The default voice is `fr-FR-DeniseNeural` — the most popular French neural voice,
-pleasant and clear. Other options in `api/tts.js` (the client just sends a
-voice name in the request body):
-
-- `fr-FR-DeniseNeural` — female, friendly (default)
-- `fr-FR-HenriNeural` — male, friendly
-- `fr-FR-AlainNeural` — male, calm
-- `fr-FR-EloiseNeural` — female, young
-- ...and 9 others
-
-To switch, edit the default in `src/audio.js` or expose a voice picker in the UI.
-
-### Browser support
-
-- **TTS**: works in every modern browser (just uses `<Audio>`)
-- **STT**: needs `getUserMedia` (mic) + Web Audio API → works in Chrome, Edge,
-  Firefox, Safari, mobile Safari, Chrome on Android. The 🎤 button hides itself
-  if these aren't available.
-
-
-
-- The fuzzy matcher lives in `src/FlashcardApp.jsx` (look for `matchAnswer`).
-  It handles accents, articles, typos via Damerau-Levenshtein, and strict
-  French gender matching. If you hit a false positive or false negative, the
-  logic is in that function.
-- Progress is stored in Supabase but updated optimistically — the UI advances
-  immediately on rating a card, and the upsert happens in the background.
-- The deck is rebuilt only when filters/mode change, not on every answer, so
-  you don't get the back-and-forth between the same two cards bug.
 
 ## Cost
 

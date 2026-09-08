@@ -8,7 +8,7 @@
 // admin-email gate).
 
 import { createClient } from "@supabase/supabase-js";
-import { extractUserIdFromJwt, requireAdmin } from "./_lib/auth.js";
+import { requireAdmin } from "./_lib/auth.js";
 
 export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -16,7 +16,8 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Missing env vars" });
   }
 
-  if (!requireAdmin(req, res)) return;
+  const admin_user = await requireAdmin(req, res);
+  if (!admin_user) return;
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -52,7 +53,7 @@ async function handlePost(req, res, admin) {
     return res.status(400).json({ error: "category is required" });
   }
 
-  const user_id = body.user_id || extractUserIdFromJwt(req.headers.authorization || "");
+  const user_id = body.user_id || admin_user.id;
 
   const { data, error } = await admin
     .from("parse_corrections")

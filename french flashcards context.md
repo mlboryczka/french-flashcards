@@ -19,7 +19,7 @@ still open.
 | Frontend | Vite + React 18, no router, no CSS framework — styles are inline objects in a `S` / `T` theme constant |
 | Scheduling | `ts-fsrs` 5.4.2 |
 | Auth + data | Supabase (Postgres, magic-link email, RLS), free tier |
-| AI | Anthropic SDK, model `claude-opus-5`, called only from serverless functions |
+| AI | Anthropic SDK, model `claude-opus-5`, called only from serverless functions. **Each user brings their own API key** (see Who pays for Claude) |
 | Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
 
 **Free-tier gotcha:** Supabase pauses a project after ~7 days idle, and
@@ -152,16 +152,46 @@ The parser prompt also forbids producing these in the first place.
 | `split-senses.js` | Audits candidate multi-sense cards. Read-only |
 | `apply-splits.js` | Applies approved splits. Service role + manual ownership checks |
 | `admin-update-card.js` | Single-card edit. Service role, because RLS was silently returning success with zero rows affected from the client |
-| `review-answer.js` | Adjudicates "my answer should have been accepted" |
-| `tts.js` / `pronounce.js` | French speech; `src/audio.js` falls back to the browser's own `speechSynthesis` when the backend is unreachable |
+| `review-answer.js` | Adjudicates "my answer should have been accepted". Honours `force` without a model call; alternates are per-user |
+| ~~`tts.js` / `pronounce.js`~~ | **Deleted.** Unauthenticated proxies to the owner's Azure Speech account. `src/audio.js` now uses the browser's own `speechSynthesis` only |
 | `admin-users.js`, `parse-corrections.js`, `upload-batches.js`, `cahier-parse.js` | Admin and upload plumbing |
 
 `api/_lib/` is skipped by Vercel's function discovery (underscore prefix), so
 it is import-only.
 
-**Environment:** `ANTHROPIC_API_KEY`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`, `VITE_ADMIN_EMAIL`, plus `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_ANON_KEY` on the client.
+**Environment:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_EMAIL`,
+optionally `ANTHROPIC_API_KEY` (owner only), plus `VITE_SUPABASE_URL`,
+`VITE_SUPABASE_ANON_KEY` and `VITE_ADMIN_EMAIL` on the client. Azure Speech
+vars are gone with the endpoints that read them.
+
+`VITE_ADMIN_EMAIL` decides only whether the admin menu items are DRAWN.
+Anything `VITE_`-prefixed is compiled into the public bundle, so it can never
+be a security boundary; `ADMIN_EMAIL` is the one the server checks.
+
+## Who pays for Claude
+
+`api/_lib/auth.js` **verifies** the Supabase token (`auth.getUser`) rather
+than base64-decoding it. The old version decoded the payload and trusted it,
+so an unsigned `{"email":"<admin>"}` passed `requireAdmin` — and the admin
+address was public, being read from a `VITE_` variable. That reached
+`admin-users.js`, which lists every user's email.
+
+`api/_lib/anthropicKey.js` decides who pays. The caller supplies their own
+key in an `x-anthropic-key` header; without one the endpoint answers **402**
+with `code: "byok_required"` and the client offers the connect dialog. Only
+`ADMIN_EMAIL` falls back to the server's `ANTHROPIC_API_KEY`.
+
+Client side, `src/lib/anthropicKey.js` keeps the key in `localStorage` under
+`anthropic-key:<userId>` and `src/ApiKeyModal.jsx` is the UI (profile menu →
+Connect Claude account). The key is never written to the database or a log,
+so the app is not a custodian of anyone's credentials — the cost is
+re-entering it per browser.
+
+Guarded by `tests/suites/auth.mjs`, which points `ANTHROPIC_BASE_URL` at a
+local counting server and asserts an unauthenticated caller causes **zero**
+billable requests. Its first version watched `globalThis.fetch`, which the
+SDK does not use — it passed with the hole deliberately put back. Measure
+what the code actually sends.
 
 ---
 
@@ -427,6 +457,9 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
 
 ## Open items
 
+- **Speech is browser-only now.** The Azure endpoints were deleted rather than
+  secured. Restoring them means putting them behind `requireUser` and, if the
+  owner should not be paying, a per-user credential like the Anthropic one.
 - **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
   there is no install manifest or offline support.
 - **The multi-sense cleanup has no UI any more.** `SplitSensesModal` and its
