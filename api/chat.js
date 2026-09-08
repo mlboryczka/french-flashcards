@@ -268,13 +268,35 @@ export default async function handler(req, res) {
     // whole stream until it completed and undo the point of streaming.
     "X-Accel-Buffering": "no",
   });
-  const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  // Closing the panel aborts the browser's fetch. Without passing that on, the
+  // generation keeps running upstream and keeps costing money for an answer
+  // nobody will read.
+  //
+  // This has to hang off the RESPONSE, not the request: Vercel parses req.body
+  // before the handler runs, so by now the request stream is already destroyed
+  // and has already emitted its own "close". Listening there would arm nothing.
+  let clientGone = false;
+  let upstream = null;
+  res.on("close", () => {
+    if (res.writableEnded) return; // we finished normally
+    clientGone = true;
+    upstream?.abort();
+  });
+
+  const send = (event) => {
+    if (clientGone) return;
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
 
   try {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const stream = anthropic.messages.stream({
       model: MODEL,
-      max_tokens: 2000,
+      // Generous because streaming took the HTTP timeout off the table, and
+      // because this ceiling has to cover the thinking blocks as well as the
+      // answer and the tool call. The prompt is what keeps answers short; a low
+      // max_tokens would only truncate one mid-sentence.
+      max_tokens: 8000,
       // Explicit rather than implied. An absent `thinking` is not "off" — it
       // is the model's default, and that default has already changed once
       // underneath this file.
@@ -292,6 +314,7 @@ export default async function handler(req, res) {
       tools: [PROPOSE_TOOL],
       messages: withContext(messages, buildContextBlock(req.body?.context)),
     });
+    upstream = stream;
 
     stream.on("text", (delta) => send({ type: "text", delta }));
 
@@ -308,6 +331,9 @@ export default async function handler(req, res) {
     send({ type: "done" });
     res.end();
   } catch (err) {
+    // An abort we asked for is the expected end of a cancelled request, not a
+    // failure, and there is nobody left to tell about it either way.
+    if (clientGone) return res.end();
     console.error("chat failed:", err);
     let message = err?.message || "Chat failed";
     if (err instanceof Anthropic.RateLimitError) {

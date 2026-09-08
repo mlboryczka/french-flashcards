@@ -2174,7 +2174,14 @@ export default function FlashcardApp({ user, onSignOut }) {
                             <button
                               data-tutor-toggle
                               style={S.feedbackBtn}
-                              onClick={() => openChat(card)}
+                              onClick={() =>
+                                // The miss is stated, not read off the row:
+                                // last_answer_correct isn't patched until the
+                                // answer is committed, and this button sits in
+                                // the banner BEFORE that — so the row still
+                                // says whatever last time said.
+                                openChat({ ...card, last_answer_correct: false })
+                              }
                             >
                               Ask the tutor
                             </button>

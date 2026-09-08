@@ -368,8 +368,15 @@ export default function ChatPanel({
         if (streamError) throw new Error(streamError);
         if (!gotText) throw new Error("The tutor returned nothing. Try rephrasing.");
       } catch (e) {
-        // Closing the panel aborts on purpose — not something to report.
-        if (e.name === "AbortError") return;
+        // Closing the panel aborts on purpose — not something to report. The
+        // bubble still has to be closed out: the component isn't unmounted, so
+        // returning early left a half-answer blinking its caret forever and put
+        // an empty assistant turn into the next request's history.
+        if (e.name === "AbortError") {
+          if (gotText) updateLast((m) => ({ ...m, streaming: false }));
+          else setMessages(messages);
+          return;
+        }
         setError(e.message || "Something went wrong.");
         if (gotText) {
           // Part of an answer arrived before it broke. Keep it — it is usually
