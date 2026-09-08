@@ -1777,6 +1777,22 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Once the answer is showing, the card is the same affordance as
   // "Continue →": tapping it grades and moves on, so you can work through a
   // session without moving the pointer off the card.
+  // Which language the typed answer is supposed to be in.
+  //
+  // Not the same question as which side is showing. A vocab card shown
+  // French-side wants English back, but a drill shown French-side wants
+  // FRENCH back: "regarder (impératif) → tu" answers "regarde". The input
+  // used to read "Type English…" on every one of those, which is a plain
+  // instruction to type the wrong language.
+  //
+  // The arrow is the test, the same marker classifyCard treats as definitive
+  // for a conjugation drill.
+  const answerLang = (c) =>
+    !c ? "English"
+      : c.shownDir === "en" ? "French"
+      : String(c.f || "").includes("→") ? "French"
+      : "English";
+
   const onCardClick = () => {
     if (!effectiveTypeMode) return flip();
     if (!typeResult) return giveUpTyped();
@@ -2059,7 +2075,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         value={typedAnswer}
                         onChange={e => setTypedAnswer(e.target.value)}
                         onKeyDown={e => { if (e.key === "Enter") submitTyped(); else if (e.key === "Escape") { e.target.blur(); giveUpTyped(); } }}
-                        placeholder={`Type ${card.shownDir==="fr" ? "English" : "French"}…`}
+                        placeholder={`Type ${answerLang(card)}…`}
                         autoFocus
                       />
                       <button style={S.typeSubmit} onClick={submitTyped}>Check</button>

@@ -6,15 +6,22 @@
 // front is ALWAYS the French side and back the English one, because that is
 // what the rest of the app assumes: speakFrench() reads card.f aloud and
 // cleanFrenchPrompt(f, b) strips English glosses off the French. The
-// translation cards below therefore store the French as the front even
-// though the exercise asks for English -> French; the direction toggle is
-// what decides which side you are shown.
+// translation cards therefore store the French as the front even though the
+// exercise asks for English -> French; the direction toggle decides which
+// side you are shown.
 //
-// Categories are E for the translation and set-phrase cards and G for rules,
-// paradigms and transformation drills. classifyCard() then sorts them into
-// grammar / phrase on its own — every transformation front contains an arrow,
-// which it treats as a conjugation drill, and "impératif" is already one of
-// its grammar terms.
+// EVERY card is a thing to produce, never a rule to recite. An earlier
+// version had cards like "impératif : -er et aller devant en / y" answered by
+// "prennent un -s" — which is a statement, not a question, and unanswerable
+// in a typing box. Each of those rules is now carried by examples that make
+// you apply it: the -s rule by Vas-y, Profites-en, Retournes-y, Regardes-en
+// un and Penses-y, the pronoun-placement rules by the affirmative/negative
+// pairs, and "three persons, no subject pronoun" by the paradigms themselves.
+//
+// Every French-answered card carries an arrow in its front. That is load
+// bearing, not decoration: classifyCard() treats it as a conjugation drill,
+// and FlashcardApp's answerLang() reads it to know the typed answer should be
+// French rather than English.
 //
 // Two answers deliberately depart from the source PDF:
 //   - Laura's pronoun table pairs "Vous lui donnez" with "Donne-lui". The
@@ -45,14 +52,6 @@ export const CARDS = [
   ["savoir (impératif) → tu", "sache", "G", "irregular"],
   ["savoir (impératif) → nous", "sachons", "G", "irregular"],
   ["savoir (impératif) → vous", "sachez", "G", "irregular"],
-  ["L'impératif a combien de personnes ?", "3 : tu, nous, vous — et le sujet n'est jamais exprimé", "G", "rule"],
-  ["impératif : forme négative", "ne + verbe + pas — Ne regarde pas, Ne prenons pas", "G", "rule"],
-  ["impératif : où se placent les pronoms à l'affirmatif ?", "après le verbe, avec un tiret — Regarde-moi, Prends-en", "G", "rule"],
-  ["impératif : où se placent les pronoms au négatif ?", "avant le verbe, forme normale — Ne me regarde pas", "G", "rule"],
-  ["impératif : me et te à l'affirmatif deviennent…", "moi et toi — Regarde-moi, Lève-toi", "G", "rule"],
-  ["impératif : -er et aller devant en / y", "prennent un -s — Vas-y, Profites-en, Retournes-y", "G", "rule"],
-  ["impératif : deux pronoms, le/la/les avec moi/toi", "le/la/les d'abord — Dis-le-moi, Donne-la-moi", "G", "rule"],
-  ["nous à l'impératif traduit…", "let's — Allons-y (let's go), Parlons-en (let's talk about it)", "G", "rule"],
   ["Tu me regardes → à l'impératif", "Regarde-moi", "G", "ind2imp"],
   ["Tu me dis → à l'impératif", "Dis-moi", "G", "ind2imp"],
   ["Tu y réfléchis → à l'impératif", "Réfléchis-y", "G", "ind2imp"],
@@ -137,6 +136,9 @@ export const CARDS = [
   ["Rappelle-le-moi demain", "Remind me tomorrow", "E", "phrase"],
   ["Dis-le-moi !", "Tell me!", "E", "phrase"],
   ["Donne-les-moi", "Give them to me", "E", "phrase"],
+  ["Tu devrais y retourner → à l'impératif", "Retournes-y", "G", "ex7"],
+  ["Tu devrais en regarder un → à l'impératif", "Regardes-en un", "G", "ex7"],
+  ["Tu devrais y penser → à l'impératif", "Penses-y", "G", "ex7"],
 ];
 
 export const LESSON = {
