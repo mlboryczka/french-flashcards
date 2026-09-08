@@ -10,12 +10,18 @@
 // exercise asks for English -> French; the direction toggle decides which
 // side you are shown.
 //
+// Fronts do NOT say "(impératif)". The card wears its lesson as a badge in
+// the corner instead, which carries the same context without spending the
+// prompt on it — and the prompt is the part you are meant to read. The badge
+// is what disambiguates "regarder -> tu" from a présent drill once these
+// cards are mixed into the wider deck.
+//
 // EVERY card is a thing to produce, never a rule to recite. An earlier
 // version had cards like "impératif : -er et aller devant en / y" answered by
-// "prennent un -s" — which is a statement, not a question, and unanswerable
-// in a typing box. Each of those rules is now carried by examples that make
-// you apply it: the -s rule by Vas-y, Profites-en, Retournes-y, Regardes-en
-// un and Penses-y, the pronoun-placement rules by the affirmative/negative
+// "prennent un -s" — a statement, not a question, and unanswerable in a
+// typing box. Each of those rules is now carried by examples that make you
+// apply it: the -s rule by Vas-y, Profites-en, Retournes-y, Regardes-en un
+// and Penses-y, the pronoun-placement rules by the affirmative/negative
 // pairs, and "three persons, no subject pronoun" by the paradigms themselves.
 //
 // Every French-answered card carries an arrow in its front. That is load
@@ -31,27 +37,27 @@
 //     would miss.
 
 export const CARDS = [
-  ["regarder (impératif) → tu", "regarde", "G", "forms"],
-  ["regarder (impératif) → nous", "regardons", "G", "forms"],
-  ["regarder (impératif) → vous", "regardez", "G", "forms"],
-  ["finir (impératif) → tu", "finis", "G", "forms"],
-  ["finir (impératif) → nous", "finissons", "G", "forms"],
-  ["finir (impératif) → vous", "finissez", "G", "forms"],
-  ["prendre (impératif) → tu", "prends", "G", "forms"],
-  ["prendre (impératif) → nous", "prenons", "G", "forms"],
-  ["prendre (impératif) → vous", "prenez", "G", "forms"],
-  ["être (impératif) → tu", "sois", "G", "irregular"],
-  ["être (impératif) → nous", "soyons", "G", "irregular"],
-  ["être (impératif) → vous", "soyez", "G", "irregular"],
-  ["avoir (impératif) → tu", "aie", "G", "irregular"],
-  ["avoir (impératif) → nous", "ayons", "G", "irregular"],
-  ["avoir (impératif) → vous", "ayez", "G", "irregular"],
-  ["aller (impératif) → tu", "va", "G", "irregular"],
-  ["aller (impératif) → nous", "allons", "G", "irregular"],
-  ["aller (impératif) → vous", "allez", "G", "irregular"],
-  ["savoir (impératif) → tu", "sache", "G", "irregular"],
-  ["savoir (impératif) → nous", "sachons", "G", "irregular"],
-  ["savoir (impératif) → vous", "sachez", "G", "irregular"],
+  ["regarder → tu", "regarde", "G", "forms"],
+  ["regarder → nous", "regardons", "G", "forms"],
+  ["regarder → vous", "regardez", "G", "forms"],
+  ["finir → tu", "finis", "G", "forms"],
+  ["finir → nous", "finissons", "G", "forms"],
+  ["finir → vous", "finissez", "G", "forms"],
+  ["prendre → tu", "prends", "G", "forms"],
+  ["prendre → nous", "prenons", "G", "forms"],
+  ["prendre → vous", "prenez", "G", "forms"],
+  ["être → tu", "sois", "G", "irregular"],
+  ["être → nous", "soyons", "G", "irregular"],
+  ["être → vous", "soyez", "G", "irregular"],
+  ["avoir → tu", "aie", "G", "irregular"],
+  ["avoir → nous", "ayons", "G", "irregular"],
+  ["avoir → vous", "ayez", "G", "irregular"],
+  ["aller → tu", "va", "G", "irregular"],
+  ["aller → nous", "allons", "G", "irregular"],
+  ["aller → vous", "allez", "G", "irregular"],
+  ["savoir → tu", "sache", "G", "irregular"],
+  ["savoir → nous", "sachons", "G", "irregular"],
+  ["savoir → vous", "sachez", "G", "irregular"],
   ["Tu me regardes → à l'impératif", "Regarde-moi", "G", "ind2imp"],
   ["Tu me dis → à l'impératif", "Dis-moi", "G", "ind2imp"],
   ["Tu y réfléchis → à l'impératif", "Réfléchis-y", "G", "ind2imp"],
@@ -68,12 +74,12 @@ export const CARDS = [
   ["Prends-en → au négatif", "N'en prends pas", "G", "negative"],
   ["Attendez-nous → au négatif", "Ne nous attendez pas", "G", "negative"],
   ["Parlons-en → au négatif", "N'en parlons plus", "G", "negative"],
-  ["se lever (impératif) → tu", "Lève-toi", "G", "pronominal"],
-  ["se lever (impératif) → nous", "Levons-nous", "G", "pronominal"],
-  ["se lever (impératif) → vous", "Levez-vous", "G", "pronominal"],
-  ["se souvenir (impératif) → tu", "Souviens-toi", "G", "pronominal"],
-  ["s'amuser (impératif) → tu", "Amuse-toi", "G", "pronominal"],
-  ["se battre (impératif) → tu", "Bats-toi", "G", "pronominal"],
+  ["se lever → tu", "Lève-toi", "G", "pronominal"],
+  ["se lever → nous", "Levons-nous", "G", "pronominal"],
+  ["se lever → vous", "Levez-vous", "G", "pronominal"],
+  ["se souvenir → tu", "Souviens-toi", "G", "pronominal"],
+  ["s'amuser → tu", "Amuse-toi", "G", "pronominal"],
+  ["se battre → tu", "Bats-toi", "G", "pronominal"],
   ["Lève-toi → au négatif", "Ne te lève pas", "G", "pronominal"],
   ["Amuse-toi → au négatif", "Ne t'amuse pas", "G", "pronominal"],
   ["Souvenons-nous → au négatif", "Ne nous souvenons pas", "G", "pronominal"],

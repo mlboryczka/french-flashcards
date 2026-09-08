@@ -1787,6 +1787,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   //
   // The arrow is the test, the same marker classifyCard treats as definitive
   // for a conjugation drill.
+  const cardLesson = card ? LESSONS.find((l) => l.id === lessonIdOf(card)) || null : null;
+
   const answerLang = (c) =>
     !c ? "English"
       : c.shownDir === "en" ? "French"
@@ -1933,6 +1935,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={{...S.cardFront, pointerEvents: flipped ? "none" : "auto"}}>
+                    {cardLesson && <div style={S.cardBadge}>{cardLesson.title}</div>}
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -1959,7 +1962,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                   </div>
                   <div style={{...S.cardBack, pointerEvents: flipped ? "auto" : "none"}}>
-
+                    {cardLesson && <div style={S.cardBadge}>{cardLesson.title}</div>}
                     <div style={S.cardTextB}>{back}</div>
                     {TTS_AVAILABLE && card.shownDir === "en" && (
                       <div style={S.cardAudio}>
@@ -2943,6 +2946,10 @@ const S = {
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
   freqTag: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
   dot: { width:7, height:7, borderRadius:"50%" },
+  // Names the lesson a card belongs to, so the prompt itself does not have to.
+  // Absolute rather than in flow: cardFront centres its children, and a badge
+  // in the column would shove the prompt off the middle of the card.
+  cardBadge: { position:"absolute", top:14, right:16, fontSize:9, fontWeight:700, letterSpacing:"0.09em", textTransform:"uppercase", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7, pointerEvents:"none", maxWidth:"55%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   cardText: { fontSize:"clamp(19px, 10.7cqh, 40px)", textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:"clamp(16px, 8.3cqh, 31px)", textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
