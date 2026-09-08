@@ -24,7 +24,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `session` | working a queue to the end, and what the keyboard is allowed to touch | yes |
 | `split-senses` | the cleanup tool's client flow, with the audit and write endpoints stubbed | yes |
 
-## Three rules, all learned from checks that lied
+## Four rules, all learned from checks that lied
 
 **Write the assertion from the requirement, not from the implementation.**
 A check derived from the code you just wrote can only confirm that code. This
@@ -46,6 +46,16 @@ and the arithmetic read `15 → 1` and failed. It now compares the counter's own
 text across the tap, and reads it *after* grading — reading before would also
 pick up the "· 1 retry pending" the grade itself adds, and pass no matter what
 the tap did.
+
+**A max over noisy samples is not a measurement.** The `motion` suite asserted
+that the panel and the page never drift apart by more than 24px, taking the
+worst of ~45 sampled frames. Sample the instant after one element's style is
+applied and before the other's and you read a frame of lag — about 16px — that
+nobody could see; on the close animation that pushed the worst frame to 32px on
+roughly half of runs. The typical frame was drifting 0–1px the whole time. It
+now judges the median and keeps a looser guard on the worst, so the bug it
+exists for (the page starting two frames early, which separates the edges on
+*every* frame) still fails it.
 
 ## Adding a card to the fixture
 

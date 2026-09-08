@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { LESSONS, lessonSource, lessonIdOf } from "./data/lessons";
+import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt } from "./lib/cardText";
 import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
@@ -263,14 +264,24 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, []);
   const openChat = useCallback(() => {
     if (!dismissFeedback()) return;
+    setShowLessonPanel(false);
     setShowChat(true);
   }, [dismissFeedback]);
   const toggleChat = useCallback(() => {
     if (showChat) { setShowChat(false); return; }
     if (!dismissFeedback()) return;
+    setShowLessonPanel(false);
     setShowChat(true);
   }, [showChat, dismissFeedback]);
-  const openFeedback = useCallback(() => { setShowChat(false); setShowFeedback(true); }, []);
+  const openFeedback = useCallback(() => { setShowChat(false); setShowLessonPanel(false); setShowFeedback(true); }, []);
+  // Three panels share the right-hand slot; opening one puts the others away.
+  const toggleLessonPanel = useCallback(() => {
+    setShowLessonPanel((v) => {
+      if (!v) { setShowChat(false); setShowFeedback(false); }
+      return !v;
+    });
+  }, []);
+  const [showLessonPanel, setShowLessonPanel] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const profileRef = useRef(null);
 
@@ -1253,6 +1264,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // being covered — you can still read the card you're asking about. Below
   // 768px there is no room to give, so the panel stays an overlay instead.
   const chatReflow = showChat && !isNarrow;
+  const lessonReflow = showLessonPanel && !isNarrow;
   const shellStyle = isNarrow ? S.shellNarrow : S.shell;
   // The room is made by MAIN, not by the shell. Padding the shell shrank the
   // sidebar too — its account block jumped up the page and left a gap —
@@ -1261,7 +1273,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   const mainStyle = {
     ...S.main,
     boxSizing: "border-box",
-    paddingRight: chatReflow ? CHAT_PANEL_WIDTH : 0,
+    paddingRight: chatReflow ? CHAT_PANEL_WIDTH : lessonReflow ? LESSON_PANEL_WIDTH : 0,
     paddingBottom: showFeedback ? feedbackHeight : 0,
     // Same duration and curve as the panel's own slide, so the page and the
     // panel move together instead of as two separate animations.
@@ -1401,6 +1413,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   // they're triggered from the sidebar profile menu, which is global.
   const modals = (
     <>
+      <LessonPanel
+        open={showLessonPanel}
+        onClose={() => setShowLessonPanel(false)}
+        lesson={LESSONS.find((l) => l.id === lessonFilter) || null}
+        reflow={lessonReflow}
+      />
       <ChatPanel
         open={showChat}
         onClose={() => setShowChat(false)}
@@ -1837,6 +1855,16 @@ export default function FlashcardApp({ user, onSignOut }) {
             >
               {LESSONS.find((l) => l.id === lessonFilter)?.title || lessonFilter}
               <span style={S.lessonChipX}>×</span>
+            </button>
+          )}
+          {lessonFilter !== "all" && (
+            <button
+              data-lesson-toggle
+              style={showLessonPanel ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+              onClick={toggleLessonPanel}
+              title="The lesson, beside the cards"
+            >
+              Lesson notes
             </button>
           )}
           <div style={S.dirGroup}>

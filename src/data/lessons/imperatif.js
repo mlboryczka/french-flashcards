@@ -147,12 +147,96 @@ export const CARDS = [
   ["Tu devrais y penser → à l'impératif", "Penses-y", "G", "ex7"],
 ];
 
+// The lesson itself, distilled to what fits beside a card you are stuck on.
+//
+// Laura's PDF is six pages of prose and worked tables. A panel you open
+// mid-session is a different job: you are not reading it, you are checking one
+// thing. So this keeps the paradigms, the pairs and the two rules people
+// actually get wrong, and drops every sentence that only restates them.
+//
+// Sections render as: a `table` (header row + rows), `pairs` (two columns,
+// used for contrasts like affirmative vs negative), `lines` (plain bullets),
+// and an optional `note` above them.
+export const NOTES = [
+  {
+    h: "The shape of it",
+    note: "An order or a piece of advice. Only three persons, and the subject pronoun is never said — the only French tense that works that way.",
+  },
+  {
+    h: "Regular forms",
+    table: {
+      cols: ["", "regarder", "finir", "prendre"],
+      rows: [
+        ["tu", "regarde", "finis", "prends"],
+        ["nous", "regardons", "finissons", "prenons"],
+        ["vous", "regardez", "finissez", "prenez"],
+      ],
+    },
+    note: "The present indicative with the subject removed. -er verbs drop the -s of the tu form.",
+  },
+  {
+    h: "The four irregulars",
+    pairs: [
+      ["être", "sois · soyons · soyez"],
+      ["avoir", "aie · ayons · ayez"],
+      ["aller", "va · allons · allez"],
+      ["savoir", "sache · sachons · sachez"],
+    ],
+  },
+  {
+    h: "Negative",
+    note: "ne + verb + pas.",
+    lines: ["Ne regarde pas", "Ne finissons pas", "Ne prenez pas"],
+  },
+  {
+    h: "Pronouns",
+    note: "Affirmative: after the verb, joined by a hyphen, and me / te become moi / toi. Negative: back in front of the verb, in their ordinary form.",
+    pairs: [
+      ["Regarde-moi", "Ne me regarde pas"],
+      ["Dis-moi", "Ne me dis pas"],
+      ["Achète-le", "Ne l'achète pas"],
+      ["Donne-lui", "Ne lui donne pas"],
+      ["Prends-en", "N'en prends pas"],
+      ["Réfléchis-y", "N'y réfléchis pas"],
+      ["Parlons-en", "N'en parlons plus"],
+    ],
+  },
+  {
+    h: "Reflexive verbs",
+    note: "The reflexive pronoun behaves like any other.",
+    pairs: [
+      ["Lève-toi", "Ne te lève pas"],
+      ["Amuse-toi", "Ne t'amuse pas"],
+      ["Levez-vous", "Ne vous levez pas"],
+    ],
+  },
+  {
+    h: "Two that catch people",
+    lines: [
+      "-er verbs and aller take an -s before en and y — Vas-y, Profites-en, Retournes-y, Penses-y",
+      "With two pronouns, le / la / les come before moi / toi — Dis-le-moi, Donne-la-moi, Rappelle-le-moi",
+    ],
+  },
+  {
+    h: "Worth knowing by heart",
+    pairs: [
+      ["Dis-moi ce que tu as", "Tell me what's wrong"],
+      ["Amuse-toi bien !", "Have fun!"],
+      ["Allons-y !", "Let's go!"],
+      ["Ne me parle pas comme ça !", "Don't talk to me like that!"],
+      ["Profites-en bien !", "Make the most of it!"],
+      ["Dis-le-moi !", "Tell me!"],
+    ],
+  },
+];
+
 export const LESSON = {
   id: "imperatif",
   title: "L'impératif",
   subtitle: "Orders and advice — three persons, no subject pronoun",
   source: "LFL METHOD by Laura Caufour",
   cards: CARDS,
+  notes: NOTES,
 };
 
 export default LESSON;

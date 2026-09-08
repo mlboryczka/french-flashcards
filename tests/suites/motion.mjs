@@ -45,6 +45,7 @@ function analyse(frames, label) {
   const first = frames[0], last = frames[frames.length - 1];
   const travel = Math.abs(last.sheetTop - first.sheetTop);
   let biggestStep = 0, biggestGapDrift = 0;
+  const drifts = [];
   for (let i = 1; i < frames.length; i++) {
     biggestStep = Math.max(biggestStep, Math.abs(frames[i].sheetTop - frames[i - 1].sheetTop));
     // The content edge should stay level with the panel edge the whole way.
@@ -52,10 +53,23 @@ function analyse(frames, label) {
       (frames[i].contentBottom - frames[i].sheetTop) - (first.contentBottom - first.sheetTop)
     );
     biggestGapDrift = Math.max(biggestGapDrift, drift);
+    drifts.push(drift);
   }
+  // Drift is judged on the TYPICAL frame, not the worst one.
+  //
+  // The bug this guards against — the page setting off two frames before the
+  // sheet — separates the two edges for the whole move, so it shows up in
+  // every frame. A max, by contrast, fails on one unlucky sample: catch the
+  // instant after one element's style is applied and before the other's and
+  // you read a whole frame of lag, about 16px, that nobody could see. On the
+  // close animation that pushed the max to 32px on roughly half of runs while
+  // the median sat at 16, which is how this check came to fail at random on
+  // an app that was fine.
+  const sorted = [...drifts].sort((a, b) => a - b);
+  const typicalDrift = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
   const pct = travel ? Math.round((biggestStep / travel) * 100) : 0;
-  console.log(`  ${label}: ${frames.length} frames, travelled ${Math.round(travel)}px, biggest single step ${Math.round(biggestStep)}px (${pct}% of the move), panel/content drift ${Math.round(biggestGapDrift)}px`);
-  return { travel, biggestStep, pct, biggestGapDrift };
+  console.log(`  ${label}: ${frames.length} frames, travelled ${Math.round(travel)}px, biggest single step ${Math.round(biggestStep)}px (${pct}% of the move), panel/content drift ${Math.round(typicalDrift)}px typical / ${Math.round(biggestGapDrift)}px worst frame`);
+  return { travel, biggestStep, pct, biggestGapDrift, typicalDrift };
 }
 
 console.log("\n  opening");
@@ -64,7 +78,8 @@ const open = analyse(await record(async () => {
 }), "open");
 ck("the panel actually travels", open.travel > 60, `${Math.round(open.travel)}px`);
 ck("no frame jumps a large part of the distance", open.pct <= 25, `${open.pct}% in one frame`);
-ck("the page keeps pace with the panel", open.biggestGapDrift <= 24, `${Math.round(open.biggestGapDrift)}px drift`);
+ck("the page keeps pace with the panel", open.typicalDrift <= 24, `${Math.round(open.typicalDrift)}px on the typical frame`);
+ck("and never falls badly behind it", open.biggestGapDrift <= 48, `${Math.round(open.biggestGapDrift)}px worst frame`);
 
 console.log("\n  closing");
 const close = analyse(await record(async () => {
@@ -74,7 +89,8 @@ const close = analyse(await record(async () => {
 // covered by a single step — the pop this test exists to catch.
 ck("the panel slides out rather than vanishing", close.travel > 60, `${Math.round(close.travel)}px`);
 ck("no frame jumps a large part of the distance", close.pct <= 25, `${close.pct}% in one frame`);
-ck("the page keeps pace with the panel", close.biggestGapDrift <= 24, `${Math.round(close.biggestGapDrift)}px drift`);
+ck("the page keeps pace with the panel", close.typicalDrift <= 24, `${Math.round(close.typicalDrift)}px on the typical frame`);
+ck("and never falls badly behind it", close.biggestGapDrift <= 48, `${Math.round(close.biggestGapDrift)}px worst frame`);
 
 console.log("\n  one duration and one curve everywhere");
 const timings = await page.evaluate(() => {
