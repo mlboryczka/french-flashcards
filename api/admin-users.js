@@ -41,7 +41,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Missing env vars" });
   }
 
-  if (!requireAdmin(req, res)) return;
+  if (!(await requireAdmin(req, res))) return;
 
   const sbHeaders = {
     apikey: SUPABASE_SERVICE_ROLE_KEY,

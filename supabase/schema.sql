@@ -99,31 +99,40 @@ create policy "Admin can update feedback"
 -- these on load and treats them as additional acceptable answers during
 -- matching. This means approved feedback goes live without redeploying.
 
+-- Alternates are PER USER. card_id is the lowercased front text, which is
+-- shared across everyone's decks, so a table without user_id meant one
+-- learner's accepted answer became an accepted answer for every learner.
+-- See migration_008.
 create table if not exists public.card_alternates (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
   card_id text not null,
   direction text not null, -- 'fr' = alternate for English side, 'en' = alternate for French side
   alternate_text text not null,
   source_feedback_id uuid references public.feedback_submissions(id) on delete set null,
   created_at timestamptz not null default now(),
-  unique (card_id, direction, alternate_text)
+  unique (user_id, card_id, direction, alternate_text)
 );
+
+create index if not exists card_alternates_user_id_idx
+  on public.card_alternates(user_id);
 
 create index if not exists card_alternates_card_id_idx
   on public.card_alternates(card_id);
 
 alter table public.card_alternates enable row level security;
 
--- Everyone signed in can read alternates (needed for matching to work)
-create policy "Authenticated users can read alternates"
+-- You see and manage your own alternates, nobody else's. No email to fill in:
+-- the previous version of this file hard-coded the admin address into a
+-- policy, which is both a manual step and the wrong boundary.
+create policy "Users read their own alternates"
   on public.card_alternates for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = user_id);
 
--- Only admin can insert/update/delete alternates
--- (replace YOUR_EMAIL_HERE@example.com with your email before running)
-create policy "Admin can manage alternates"
+create policy "Users manage their own alternates"
   on public.card_alternates for all
-  using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- USER CARDS: the deck itself

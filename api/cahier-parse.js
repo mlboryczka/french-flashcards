@@ -6,6 +6,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 
+import { requireUser } from "./_lib/auth.js";
+import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 export const config = {
   api: {
     bodyParser: { sizeLimit: "10mb" },
@@ -39,29 +41,22 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } =
-    process.env;
-  if (!ANTHROPIC_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return res.status(500).json({ error: "Server misconfigured" });
   }
 
-  const authHeader = req.headers.authorization || "";
-  const accessToken = authHeader.replace(/^Bearer\s+/i, "");
-  if (!accessToken) {
-    return res.status(401).json({ error: "Missing auth token" });
-  }
+  const user = await requireUser(req, res);
+  if (!user) return;
+  const userId = user.id;
+
+  // The key that pays is the caller's own unless they are the deploy owner.
+  const apiKey = requireAnthropicKey(req, res, user);
+  if (!apiKey) return;
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-
-  const { data: userData, error: userErr } = await admin.auth.getUser(
-    accessToken
-  );
-  if (userErr || !userData?.user) {
-    return res.status(401).json({ error: "Invalid auth token" });
-  }
-  const userId = userData.user.id;
 
   const body = req.body || {};
   const source = body.source || "cahier-parse";
@@ -177,7 +172,7 @@ export default async function handler(req, res) {
     ? `${BASE_SYSTEM}\n\n${fewShotBlock}`
     : BASE_SYSTEM;
 
-  const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+  const anthropic = new Anthropic({ apiKey });
   let cards = [];
   let claudeError = null;
   const blockErrors = [];
