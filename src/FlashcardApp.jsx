@@ -2949,7 +2949,16 @@ const S = {
   // Names the lesson a card belongs to, so the prompt itself does not have to.
   // Absolute rather than in flow: cardFront centres its children, and a badge
   // in the column would shove the prompt off the middle of the card.
-  cardBadge: { position:"absolute", top:14, right:16, fontSize:9, fontWeight:700, letterSpacing:"0.09em", textTransform:"uppercase", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7, pointerEvents:"none", maxWidth:"55%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  // Outlined pill naming the card's lesson.
+  //
+  // right:70 rather than tucked into the corner because the back face floats
+  // the edit button at top:18/right:18 and it is about 40px wide — at right:16
+  // the two sat on top of each other. Same offset on both faces so the badge
+  // does not jump sideways mid-flip, and top:19 centres it against that
+  // button so the two read as one row rather than two near-misses. The pencil
+  // is 25px tall against the badge's 20, so their tops differ by design —
+  // top:23 is what puts the two centre lines together.
+  cardBadge: { position:"absolute", top:23, right:70, padding:"4px 10px", borderRadius:999, border:`1px solid ${T.color.outline || "rgba(3,22,50,0.18)"}`, fontSize:9, fontWeight:700, letterSpacing:"0.09em", textTransform:"uppercase", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:"transparent", pointerEvents:"none", maxWidth:"48%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   cardText: { fontSize:"clamp(19px, 10.7cqh, 40px)", textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:"clamp(16px, 8.3cqh, 31px)", textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
