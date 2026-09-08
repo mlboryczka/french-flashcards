@@ -23,7 +23,8 @@
 -- accepted may be marked wrong once more, and one click re-accepts it — this
 -- time owned by whoever clicked.
 --
--- Idempotent: safe to re-run.
+-- Idempotent: safe to re-run. (Verified by re-running it, after the first
+-- version was not — see the policy drops at the bottom.)
 
 -- 1. The column, nullable for the moment so the existing rows survive it.
 alter table public.card_alternates
@@ -53,6 +54,13 @@ create index if not exists card_alternates_user_id_idx
 --    address that the service-role writer bypassed anyway.
 drop policy if exists "Authenticated users can read alternates" on public.card_alternates;
 drop policy if exists "Admin can manage alternates" on public.card_alternates;
+
+-- The NEW names get dropped first too. Postgres has no
+-- `create policy if not exists`, so without these two lines a second run dies
+-- on "policy already exists" — which is what a re-run after a SUCCESSFUL run
+-- looked like, and made a finished migration read as a broken one.
+drop policy if exists "Users read their own alternates" on public.card_alternates;
+drop policy if exists "Users manage their own alternates" on public.card_alternates;
 
 create policy "Users read their own alternates"
   on public.card_alternates for select
