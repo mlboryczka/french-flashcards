@@ -1988,7 +1988,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       <main style={mainStyle}>
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
-          <div style={S.topBarInner}>
+          <div style={S.topBarInner} className="chip-row">
           <div style={S.typeGroup}>
             {[["all", "All"], ...CARD_TYPES.map((t) => [t, TYPE_LABEL[t] === "Phrase" ? "Phrases" : TYPE_LABEL[t]])]
               .map(([k, label]) => {
@@ -2055,7 +2055,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
         <div style={S.mainInner}>
           {/* Sub-toolbar: session counter and back control */}
-          <div style={S.subToolbar}>
+          <div style={S.subToolbar} className="chip-row">
             {card && (() => {
               // The counter shows progress against the *initial* deck size
               // so re-queued retries don't make the session look longer.
@@ -3028,7 +3028,10 @@ const S = {
   sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
 
   // ── Sub-toolbar (category filter + counter, below sticky top bar) ─
-  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:0, flexShrink:0, flexWrap:"wrap", minHeight:30 },
+  // flexWrap is gone; the row scrolls instead (className "chip-row"). Wrapping
+  // changed the row's HEIGHT at a threshold width, and a panel reflow crosses
+  // that threshold mid-animation — see the .chip-row note in styles.css.
+  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:0, flexShrink:0, minHeight:30 },
   subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
 
   // ── Card area: centered with decorative blur shapes ───────────────
@@ -3055,10 +3058,24 @@ const S = {
   //   below cardArea    16 (mainInner padBottom)
   //   spacer = 190 + 16 - 100 = 106
   //
-  // `0 1 106px` and not a fixed height: it must give its space up first when
+  // `0 8 106px` and not a fixed height: it must give its space up first when
   // the window is short or a panel opens, so the card keeps its size rather
   // than crushing. That is the job the old paddingBottom toggle was doing.
-  cardTopSpacer: { flex:"0 1 106px", minHeight:0, width:"100%", pointerEvents:"none" },
+  //
+  // The shrink factor is 8, not 1, because "first" is what the line above
+  // always claimed and `1` never delivered. Flex shrinks weighted by factor x
+  // basis, so against cardWrap's 375 basis a factor of 1 made this spacer
+  // absorb only 106/481 of any squeeze and handed the card the other 78%. On
+  // a tall window a panel takes 25px of card once the centring slack is
+  // spent, and the easing crosses that region in about two frames, so the
+  // card recovered 12 of those 19px in a SINGLE frame on the way back — the
+  // pop that survived every other fix here. At 8 the spacer takes the squeeze
+  // and the card gives up roughly a third as much.
+  //
+  // It only changes behaviour under pressure: with free space to spare the
+  // spacer stays 106 and cardArea's `safe center` places the card, so resting
+  // geometry at every window height is untouched.
+  cardTopSpacer: { flex:"0 8 106px", minHeight:0, width:"100%", pointerEvents:"none" },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -3095,7 +3112,10 @@ const S = {
   // stacked header userInfo block.
   // Sticky glass-blur top app bar — direction toggle, type/auto-speak chips
   topBar: { position:"sticky", top:0, zIndex:20, padding:"0 40px", background:"rgba(253,248,246,0.92)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", flexShrink:0 },
-  topBarInner: { display:"flex", alignItems:"center", gap:12, padding:"14px 0", maxWidth:1100, width:"100%", margin:"0 auto", borderBottom:"1px solid rgba(3,22,50,0.07)", flexWrap:"wrap" },
+  // Same as subToolbar: one line, always, scrolling if the chips outgrow the
+  // column. This row growing a second line is what made the card jump 39px in
+  // a single frame partway through every horizontal reflow.
+  topBarInner: { display:"flex", alignItems:"center", gap:12, padding:"14px 0", maxWidth:1100, width:"100%", margin:"0 auto", borderBottom:"1px solid rgba(3,22,50,0.07)" },
   topBarSpacer: { flex:1 },
   topBarBtn: { padding:"6px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
   topBarEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
@@ -3121,7 +3141,8 @@ const S = {
   // raw checkboxes. Same pill shape as catBtn but with an active state.
   chipToggle: { padding:"6px 13px", border:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}`, borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
   chipToggleA: { background:T.color.primary, color:T.color.onPrimary, borderColor:T.color.primary, fontWeight:600 },
-  typeGroup: { display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" },
+  // Sits inside the scrolling chip row, so it must not wrap on its own either.
+  typeGroup: { display:"flex", gap:6, alignItems:"center", flexWrap:"nowrap", flexShrink:0 },
   typeBtn: { padding:"6px 13px", borderWidth:1, borderStyle:"solid", borderColor:"rgba(3,22,50,0.08)", borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
   typeBtnA: { background:T.color.primary, borderColor:T.color.primary, color:T.color.onPrimary, fontWeight:600 },
   dirGroup: { display:"flex", gap:2, marginLeft:"auto", padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md },
@@ -3145,7 +3166,27 @@ const S = {
   // Continue row, and measures 170. Anything less and the card still shifts
   // when that state appears; measured, not estimated.
   belowCard: { width:"100%", maxWidth:600, minHeight:170, flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start" },
-  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"safe center", justifyContent:"center" },
+  // `0 1 375px`, not `1 1 auto`. The basis is the card's own maxHeight, so the
+  // wrapper is exactly as tall as the card wants to be and no taller.
+  //
+  // It used to GROW to swallow every spare pixel in cardArea, and that slack
+  // is what split a reflow into two separate motions. Squeeze the page and the
+  // wrapper's slack went first: the card kept its size and only slid upward.
+  // Once the slack ran out the card stopped sliding and started shrinking
+  // instead. One 420ms animation, two different behaviours, with a hard
+  // switchover about 80% of the way through — and on the way back the card
+  // recovered 62% of its size in a single frame.
+  //
+  // With a definite basis there is no slack to spend first. The spacer above
+  // (basis 106) and this (basis 375) shrink together, weighted by those bases,
+  // from the first pixel of the squeeze: the card moves and resizes at the
+  // same time, over one curve, instead of doing one and then the other.
+  //
+  // Grow stays 0 so a tall window still leaves the card at 375 rather than
+  // stretching it; the spare height goes to cardArea's `safe center` instead.
+  // The basis must stay DEFINITE — `auto` reintroduces the circularity with
+  // the card's `height: 100%` below and collapses it to its 170px floor.
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 375px", minHeight:170, display:"flex", alignItems:"safe center", justifyContent:"center" },
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
   // Height-driven so a short window shrinks the card instead of overflowing

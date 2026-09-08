@@ -19,11 +19,12 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `apply-splits` | the write endpoint: ownership, malformed splits, which row keeps its scheduling history | no |
 | `layout` | card fits the window at 7 heights; a panel moves the content column and **not** the sidebar, on Cards and on Stats | yes |
 | `panels` | tutor/feedback mutual exclusion, outside-click dismissal, reflow axis | yes |
+| `reflow` | what the reflow drags with it: the chrome above the card holding still, the card animating rather than popping, the feedback sheet staying inside the window, and panel/page agreeing across the reflow floor | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |
 | `session` | working a queue to the end, and what the keyboard is allowed to touch | yes |
 
-## Four rules, all learned from checks that lied
+## Five rules, all learned from checks that lied
 
 **Write the assertion from the requirement, not from the implementation.**
 A check derived from the code you just wrote can only confirm that code. This
@@ -45,6 +46,15 @@ and the arithmetic read `15 → 1` and failed. It now compares the counter's own
 text across the tap, and reads it *after* grading — reading before would also
 pick up the "· 1 retry pending" the grade itself adds, and pass no matter what
 the tap did.
+
+**Judge a jump against the move it belongs to, not against a fixed number.**
+The `reflow` suite asks whether anything covered too much ground in one frame.
+Neither a percentage nor a pixel count works alone. The card resizes 8px over a
+reflow on a tall window, so one 5px frame of that is "63% in a single frame"
+and is invisible; the same card genuinely resizes 92px on a short one, at about
+16px per frame, so any pixel threshold loose enough to allow that also waves
+through a 12px jump in a 19px move, which is a real pop. It takes both: a
+quarter of the move, with a pixel floor under it.
 
 **A max over noisy samples is not a measurement.** The `motion` suite asserted
 that the panel and the page never drift apart by more than 24px, taking the

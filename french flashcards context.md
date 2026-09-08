@@ -296,6 +296,45 @@ These look arbitrary and are not:
 - **Nav markers use CSS longhands**, not the `borderRight` shorthand. React
   diffs per property, so a shorthand base plus a longhand override leaves a
   stale value when the item deactivates — both nav items showed a marker.
+- **The chip rows scroll; they never wrap.** The top bar and the sub-toolbar
+  are single rows of chips above the card, and wrapping is a *step*: 58px tall,
+  then one chip no longer fits and it is 97px, with nothing in between. A panel
+  reflow narrows the column continuously over 420ms, so it crossed that
+  threshold mid-animation and shoved the whole card area down 39px in one
+  frame, taking 39px of card height with it (measured at 1400x700 — the single
+  worst reflow artefact in the app). `MIN_REFLOW_CONTENT` was supposed to
+  prevent this and could not: it guards the column's FINAL width, and the wrap
+  threshold sits around 777px, well above the 680 floor. `.chip-row` in
+  styles.css keeps both rows one line at every width and scrolls the overflow,
+  so the chrome above the card has a constant height and nothing below it
+  moves. The scrollbar is hidden because a visible one is itself a height
+  change.
+- **The feedback sheet sizes itself from `left`/`right`, never `width: 100%`.**
+  It is `position: fixed` with an inline `left` of `SIDEBAR_WIDTH`, and a
+  percentage width on a fixed element resolves against the VIEWPORT rather than
+  the span it occupies. Below a 1176px window (256 + 920) the width won,
+  `margin: 0 auto` had no free space left to centre with, and the sheet hung
+  off the right edge — 256px of it at a 900px window, carrying its own Minimize
+  and Close buttons off-screen. The only way out of the panel was an outside
+  click, which nothing advertises. `width: auto` lets left/right size it and
+  `maxWidth: 920` still caps it. The minimized bar had the identical bug.
+- **`cardWrap` has a definite flex basis (`0 1 375px`), not `1 1 auto`.** It
+  used to grow to swallow every spare pixel of `cardArea`, and that slack split
+  a reflow into two separate motions: the slack went first, so the card slid
+  upward at full size, and only once it ran out did the card stop sliding and
+  start shrinking. One 420ms animation, two behaviours, with a hard switchover
+  ~80% through — and on the way back the easing crossed the handover in about
+  two frames, so the card recovered 12 of its 19px in a single one. A definite
+  basis leaves no slack to spend first. The basis must stay definite: `auto` is
+  circular against the card's `height: 100%` and collapses it to its 170px
+  floor. This also made the card *larger* on short windows (at 700px tall,
+  461x288 -> 491x307) because the old `auto` basis was over-shrinking it.
+- **`cardTopSpacer` shrinks at factor 8, not 1.** Flex shrinks weighted by
+  factor x basis, so against cardWrap's 375 the old factor of 1 had the spacer
+  absorbing only 106/481 of a squeeze and handing the card the other 78% — when
+  the whole point of the spacer is to give its space up *first*. At 8 the card
+  gives up about a third as much and the worst frame of a reflow drops from
+  12.2px to 4.8px. It only bites under pressure; resting geometry is untouched.
 - **`shellNarrow` clips one axis, `shell` clips both.** The card area's two
   decorative blur circles are positioned outside their container on purpose
   (`left:-60` / `right:-60`); the desktop shell's `overflow:hidden` hid that
@@ -308,10 +347,17 @@ These look arbitrary and are not:
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Eight suites: two pure-logic, seven driving
-the real app in headless Chromium against a mock Supabase, asserting on
-**measured** values (geometry, computed styles, request payloads) rather than
-on intent.
+`npm test` — see `tests/README.md`. Twelve suites: four needing no browser, the
+rest driving the real app in headless Chromium against a mock Supabase,
+asserting on **measured** values (geometry, computed styles, request payloads)
+rather than on intent.
+
+`reflow` is the one to reach for when a panel looks wrong: it samples geometry
+every frame through a whole open and close, at several window sizes, and fails
+on anything that jumps rather than travels. Every reflow bug this app has had
+was something downstream of the animating padding moving in a single frame
+while the padding itself moved smoothly over twenty-five — invisible to any
+check that measures only before and after.
 
 If you change layout, measure it in a browser. Several bugs in this project's
 history were "fixed" against an assumption and shipped broken. Two rules the
@@ -491,11 +537,18 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
   module — a student can meet `Donne-les-leur` before `Regarde`. Interleaving on
   review and sequencing on first exposure are not in conflict.
 - **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
-  hypotheses tested and falsified; see the history in git. Separately, the card
-  DOES resize on ~16 of 25 frames during a panel reflow, because `padding-bottom`
-  is a layout property and the card's `cqh` text re-resolves each time. Measured
-  under CPU throttling. Animating `transform` instead would fix it, and would
-  change what the layout and motion suites assert.
+  hypotheses tested and falsified; see the history in git. Note that the
+  *reflow* half of this complaint turned out to be three separate, measurable
+  bugs, all now fixed and covered by the `reflow` suite — see the chip-row,
+  feedback-sheet and `cardWrap` notes above. Whether anything remains wrong
+  with the FLIP itself is still open, and should be measured separately from
+  the reflow now that the reflow is quiet.
+
+  The card still resizes across a reflow (that is the point — the column really
+  does get smaller), but it now does so continuously rather than in one or two
+  frames, and its `cqh` text re-resolves with it. Animating `transform` instead
+  of layout would remove the per-frame layout work altogether, and would change
+  what the layout, motion and reflow suites assert.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
   exercise sheet ships no answer key, and her lesson PDF has at least one error
   (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
