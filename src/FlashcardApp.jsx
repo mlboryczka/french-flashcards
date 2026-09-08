@@ -949,6 +949,74 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Bulk-inserts RAW into user_cards for the current user. Preserves
   // categories (vocab/expr/gram/pron → V/E/G/P) and dates so Matt's existing
   // card_progress rows continue to match via the lowercased-front id.
+  // Keep every lesson's cards in step with the lesson itself.
+  //
+  // Lessons are part of the app, not something a student uploads: a new
+  // account should find L'impératif already in its deck. And because the
+  // lesson is the authority, this also removes cards it no longer contains —
+  // otherwise an earlier version's mistakes live on in the deck of everyone
+  // who added it. That is how the eight "state the rule" cards, which asked
+  // things like "L'impératif a combien de personnes ?" with nothing to type,
+  // outlived being deleted from the source.
+  //
+  // Runs once per mount, and only writes when there is a difference, so the
+  // usual case costs one comparison and no network.
+  const lessonsSynced = useRef(false);
+  useEffect(() => {
+    if (!user || !deckLoaded || lessonsSynced.current) return;
+    lessonsSynced.current = true;
+    (async () => {
+      const missing = [];
+      const stale = [];
+      for (const lesson of LESSONS) {
+        const want = new Map(lesson.cards.map(([f, b, c]) => [f, { f, b, c }]));
+        const have = userCards.filter((card) => lessonIdOf(card) === lesson.id);
+        const haveFronts = new Set(have.map((card) => card.f));
+        for (const [front, card] of want) {
+          if (!haveFronts.has(front)) {
+            missing.push({
+              user_id: user.id,
+              front: card.f,
+              back: card.b,
+              category: card.c,
+              dates: [],
+              source: lessonSource(lesson.id),
+            });
+          }
+        }
+        for (const card of have) {
+          if (!want.has(card.f) && card.row_id != null) stale.push(card.row_id);
+        }
+      }
+      if (!missing.length && !stale.length) return;
+      try {
+        if (missing.length) {
+          const { error } = await supabase
+            .from("user_cards")
+            .upsert(missing, { onConflict: "user_id,front" });
+          if (error) throw error;
+        }
+        if (stale.length) {
+          const { error } = await supabase
+            .from("user_cards")
+            .delete()
+            .in("id", stale)
+            .eq("user_id", user.id);
+          if (error) throw error;
+        }
+        console.info(
+          `[lessons] synced: +${missing.length} card(s), -${stale.length} retired`
+        );
+        reloadDeck();
+      } catch (e) {
+        // A lesson that cannot sync is not worth blocking the app for; the
+        // deck the student already has still works.
+        console.error("Lesson sync failed:", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, deckLoaded]);
+
   // Copy a lesson's cards into this user's deck.
   //
   // The lesson itself is static and shared; the copy is what makes the
@@ -1598,22 +1666,21 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <div style={S.lessonTitle}>{lesson.title}</div>
                       <div style={S.lessonSub}>{lesson.subtitle}</div>
                     </div>
+                    {/* No "add" step: lessons ship with the app and sync
+                        themselves into the deck on load. A student should
+                        find L'impératif already there. */}
                     <button
-                      style={added ? S.lessonStudyBtn : S.lessonAddBtn}
-                      disabled={busy}
-                      onClick={() =>
-                        added
-                          ? (setLessonFilter(lesson.id), setMode("study"))
-                          : addLesson(lesson)
-                      }
+                      style={S.lessonStudyBtn}
+                      disabled={busy || !added}
+                      onClick={() => { setLessonFilter(lesson.id); setMode("study"); }}
                     >
-                      {busy ? "Adding…" : added ? "Study" : `Add ${lesson.cards.length} cards`}
+                      {added ? "Study" : "Adding…"}
                     </button>
                   </div>
                   <div style={S.lessonMeta}>
                     {added
                       ? `${owned.length} of ${lesson.cards.length} cards in your deck`
-                      : `${lesson.cards.length} cards`}
+                      : `${lesson.cards.length} cards · adding to your deck`}
                     {" · "}
                     {lesson.source}
                   </div>
