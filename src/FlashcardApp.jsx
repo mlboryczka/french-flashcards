@@ -2780,12 +2780,17 @@ const S = {
   // old 52 it aligned to neither the icon nor the label and just looked
   // dropped in the wrong place.
   //
+  // Same 13px as the nav labels, deliberately: a glyph's left side bearing
+  // scales with font size, so at 12px the L's ink started about a pixel right
+  // of the L above it even though both text boxes began at exactly 64. The
+  // hierarchy is carried by weight, colour and case instead of size.
+  //
   // The active marker is the same right-hand bar the parent items use, rather
   // than a left bar 64px away from the text it was supposed to be marking.
   // Longhands, not the borderRight shorthand: React diffs per property, so a
   // shorthand base plus a longhand override strands the old value when the
   // item deactivates.
-  sideSubItem: { display:"block", width:"100%", padding:"7px 32px 7px 64px", border:"none", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:12, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left", boxSizing:"border-box" },
+  sideSubItem: { display:"block", width:"100%", padding:"7px 32px 7px 64px", border:"none", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left", boxSizing:"border-box" },
   sideSubItemActive: { color:T.color.secondary, fontWeight:700, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
   sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderTopWidth:3, borderTopStyle:"solid", borderTopColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
