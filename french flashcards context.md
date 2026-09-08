@@ -457,6 +457,12 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
 
 ## Open items
 
+- **`^0.x` dependency versions can never update themselves.** The Anthropic
+  SDK sat on 0.27.0 (Sept 2024) from the first commit until it was bumped to
+  0.124.0, because below 1.0 a caret pins the MINOR — `^0.27.0` means 0.27.x
+  forever, through every reinstall. The same trap is live again at `^0.124.0`
+  and applies to `ts-fsrs` too. Check these deliberately; nothing will
+  surface it.
 - **Speech is browser-only now.** The Azure endpoints were deleted rather than
   secured. Restoring them means putting them behind `requireUser` and, if the
   owner should not be paying, a per-user credential like the Anthropic one.

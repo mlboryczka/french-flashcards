@@ -57,6 +57,21 @@ const ck = checker();
   await browser.close();
 }
 
+// The lesson notes are rendered into <body> like the other two slide-overs,
+// rather than in place inside the app shell. There is deliberately NO check
+// for that here.
+//
+// The reasoning for the change was that the shell sets overflow:hidden, and a
+// fixed element stops ignoring that the moment an ancestor gains a transform
+// or filter. True in general — but measured here, the shell is exactly the
+// viewport (1600x900 in a 1600x900 window), so making it the containing block
+// moves and clips nothing. A check written for it passed with the change
+// reverted, which makes it worse than no check.
+//
+// The change stands on consistency: three panels, one mechanism. If the shell
+// ever stops being viewport-sized, this becomes testable and should get a
+// check then.
+
 // ── The retry counter counts the retries that exist ──────────────────────
 //
 // Miss one card and the tail read "Retry 1 of 2": the total added your
