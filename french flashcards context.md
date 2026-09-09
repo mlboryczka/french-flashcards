@@ -394,7 +394,7 @@ These look arbitrary and are not:
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Fourteen suites: four needing no browser,
+`npm test` — see `tests/README.md`. Fifteen suites: four needing no browser,
 the rest driving the real app in headless Chromium against a mock Supabase,
 asserting on **measured** values (geometry, computed styles, request payloads)
 rather than on intent.
@@ -476,6 +476,17 @@ The shape of it:
   lesson", taking its FSRS history, and the uncorrected original was inserted
   in its place. Rows written before keys existed are matched by front and
   re-keyed on the next sync.
+- **The sync itself is covered by `lesson-sync`, separately from `lessons`.**
+  The `lessons` suite serves the lesson's own cards AS the deck, so the sync it
+  triggers finds nothing missing and writes nothing — the path that matters for
+  a new account was invisible to it. Worse, the shared mock answers every
+  non-GET on `user_cards` with `200 []` and then goes on serving the same fixed
+  deck, so an insert that never happened and one that silently failed looked
+  identical. `lesson-sync` gives `user_cards` a real in-memory store (GET,
+  upsert, delete) and asserts on what the student ends up with: 108 cards, each
+  keyed, studiable, with all four note sections rendering; a second visit
+  writing nothing at all; and an existing deck keeping its own cards and their
+  FSRS state.
 - **Synced on load, once per mount.** A student finds L'impératif in their deck
   without pressing anything. The lesson is the authority, so the sync also
   *retires* cards it no longer contains: that is how the eight abandoned "state
