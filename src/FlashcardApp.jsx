@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
-import { LESSONS, lessonSource, lessonIdOf } from "./data/lessons";
+import { LESSONS, lessonIdOf } from "./data/lessons";
+import { reconcileLessons } from "./lib/lessonSync";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt } from "./lib/cardText";
@@ -303,15 +304,25 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!req) { setShowFeedback(false); return true; }
     return req();
   }, []);
-  const openChat = useCallback(() => {
+  // The card the tutor should treat as "what I'm looking at". Set when the
+  // tutor is opened FROM a card — from the study view, or from the banner after
+  // a wrong answer. Null when opened from the nav, where there is no such card.
+  //
+  // Without this there was no path from a card to the tutor at all: openChat
+  // took no argument, so asking why you'd just missed something meant retyping
+  // the whole card into the box.
+  const [chatCard, setChatCard] = useState(null);
+  const openChat = useCallback((aboutCard = null) => {
     if (!dismissFeedback()) return;
     setShowLessonPanel(false);
+    setChatCard(aboutCard);
     setShowChat(true);
   }, [dismissFeedback]);
   const toggleChat = useCallback(() => {
     if (showChat) { setShowChat(false); return; }
     if (!dismissFeedback()) return;
     setShowLessonPanel(false);
+    setChatCard(null);
     setShowChat(true);
   }, [showChat, dismissFeedback]);
   const openFeedback = useCallback(() => { setShowChat(false); setShowLessonPanel(false); setShowFeedback(true); }, []);
@@ -876,7 +887,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Checking the event target for INPUT/TEXTAREA isn't enough; most of a
   // panel is neither.
   const overlayOpen =
-    showChat || showFeedback || showUpload || showKeyModal ||
+    showChat || showFeedback || showUpload || showKeyModal || showLessonPanel ||
     showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
 
   useEffect(() => {
@@ -1035,34 +1046,29 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user || !deckLoaded || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const missing = [];
-      const stale = [];
-      for (const lesson of LESSONS) {
-        const want = new Map(lesson.cards.map(([f, b, c]) => [f, { f, b, c }]));
-        const have = userCards.filter((card) => lessonIdOf(card) === lesson.id);
-        const haveFronts = new Set(have.map((card) => card.f));
-        for (const [front, card] of want) {
-          if (!haveFronts.has(front)) {
-            missing.push({
-              user_id: user.id,
-              front: card.f,
-              back: card.b,
-              category: card.c,
-              dates: [],
-              source: lessonSource(lesson.id),
-            });
-          }
-        }
-        for (const card of have) {
-          if (!want.has(card.f) && card.row_id != null) stale.push(card.row_id);
-        }
+      const { missing, rekey, stale, unkeyed } = reconcileLessons(LESSONS, userCards);
+      if (unkeyed.length) {
+        // Written before lesson cards had a stable key, and matching nothing in
+        // the lesson now. That is either a card the lesson retired or one the
+        // user corrected, and there is no way to tell which — so it stays.
+        console.info(
+          `[lessons] ${unkeyed.length} unkeyed card(s) match no lesson card; left alone:`,
+          unkeyed.map((c) => c.f)
+        );
       }
-      if (!missing.length && !stale.length) return;
+      if (!missing.length && !rekey.length && !stale.length) return;
+      const owned = (rows) => rows.map((r) => ({ ...r, user_id: user.id }));
       try {
         if (missing.length) {
           const { error } = await supabase
             .from("user_cards")
-            .upsert(missing, { onConflict: "user_id,front" });
+            .upsert(owned(missing), { onConflict: "user_id,front" });
+          if (error) throw error;
+        }
+        if (rekey.length) {
+          const { error } = await supabase
+            .from("user_cards")
+            .upsert(owned(rekey), { onConflict: "user_id,front" });
           if (error) throw error;
         }
         if (stale.length) {
@@ -1074,7 +1080,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           if (error) throw error;
         }
         console.info(
-          `[lessons] synced: +${missing.length} card(s), -${stale.length} retired`
+          `[lessons] synced: +${missing.length} card(s), ${rekey.length} re-keyed, ` +
+            `-${stale.length} retired`
         );
         reloadDeck();
       } catch (e) {
@@ -1319,7 +1326,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <p style={S.onbCardDesc}>Paste a public Google Doc URL and we'll fetch the contents.</p>
               <div style={S.onbCardArrow}>→</div>
             </button>
-            <button data-tutor-toggle style={S.onbCard} onClick={openChat}>
+            <button data-tutor-toggle style={S.onbCard} onClick={() => openChat()}>
               <div style={S.onbCardIcon}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
               </div>
@@ -1344,7 +1351,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           open={showChat}
           onClose={() => setShowChat(false)}
           user={user}
-          deckFronts={[]}
+          cards={[]}
           onCardsAdded={reloadDeck}
           onNeedKey={() => setShowKeyModal(true)}
         />
@@ -1580,7 +1587,8 @@ export default function FlashcardApp({ user, onSignOut }) {
         open={showChat}
         onClose={() => setShowChat(false)}
         user={user}
-        deckFronts={userCards.map((c) => c.f)}
+        cards={userCards}
+        currentCard={chatCard}
         onCardsAdded={reloadDeck}
         onNeedKey={() => { setShowChat(false); setShowKeyModal(true); }}
         reflow={chatReflow}
@@ -2222,9 +2230,29 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
                       <div style={S.feedbackRow}>
                         {feedbackState === null && (
-                          <button style={S.feedbackBtn} onClick={submitFeedback}>
-                            My answer should have been accepted
-                          </button>
+                          <>
+                            <button style={S.feedbackBtn} onClick={submitFeedback}>
+                              My answer should have been accepted
+                            </button>
+                            {/* The other thing you want after a miss: not "I
+                                was right", but "why was I wrong?". Sits in the
+                                SAME row as the dispute link — belowCard is a
+                                measured 170px well and a new line would push
+                                the card off its one fixed position. */}
+                            <button
+                              data-tutor-toggle
+                              style={S.feedbackBtn}
+                              onClick={() =>
+                                // The miss is stated, not read off the row:
+                                // last_answer_correct isn't patched until the
+                                // answer is committed, and this button sits in
+                                // the banner BEFORE that.
+                                openChat({ ...card, last_answer_correct: false })
+                              }
+                            >
+                              Ask the tutor
+                            </button>
+                          </>
                         )}
                         {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
                         {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
@@ -3260,7 +3288,11 @@ const S = {
   // button so the two read as one row rather than two near-misses. The pencil
   // is 25px tall against the badge's 20, so their tops differ by design —
   // top:23 is what puts the two centre lines together.
-  cardBadge: { position:"absolute", top:23, right:70, padding:"4px 10px", borderRadius:999, border:`1px solid ${T.color.outline || "rgba(3,22,50,0.18)"}`, fontSize:9, fontWeight:700, letterSpacing:"0.09em", textTransform:"uppercase", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:"transparent", pointerEvents:"none", maxWidth:"48%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  // Set as written, not uppercased: a lesson title is a name ("L'impératif"),
+  // and forcing caps on it both loses that and mangles the accented capital.
+  // Sentence case needs a little more size and a lot less tracking than the
+  // 9px micro-caps it replaces.
+  cardBadge: { position:"absolute", top:23, right:70, padding:"4px 10px", borderRadius:999, border:`1px solid ${T.color.outline || "rgba(3,22,50,0.18)"}`, fontSize:10.5, fontWeight:600, letterSpacing:"0.01em", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:"transparent", pointerEvents:"none", maxWidth:"48%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
   cardText: { fontSize:"clamp(19px, 10.7cqh, 40px)", textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:"clamp(16px, 8.3cqh, 31px)", textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },
@@ -3269,7 +3301,7 @@ const S = {
   btnWrong: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.color.secondary, color:T.color.onSecondary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   btnRight: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   shortcuts: { textAlign:"center", fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7, letterSpacing:"0.03em" },
-  lessonChip: { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px 6px 12px", borderRadius:999, border:"none", background:T.color.primary, color:"#fff", fontSize:11, fontWeight:700, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", textTransform:"uppercase", letterSpacing:"0.05em" },
+  lessonChip: { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px 6px 12px", borderRadius:999, border:"none", background:T.color.primary, color:"#fff", fontSize:12, fontWeight:600, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", letterSpacing:"0.01em" },
   lessonChipX: { fontSize:14, lineHeight:1, opacity:0.75 },
   lessonIntro: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, maxWidth:560, lineHeight:1.55, marginBottom:24 },
   lessonCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card, maxWidth:720 },

@@ -15,7 +15,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 
 | Suite | Covers | Browser |
 |---|---|---|
-| `logic` | `classifyCard`, `looksMultiSense`, `cleanFrenchPrompt` | no |
+| `logic` | `classifyCard`, `looksMultiSense`, `cleanFrenchPrompt`, the tutor's deck-context picker | no |
 | `apply-splits` | the write endpoint: ownership, malformed splits, which row keeps its scheduling history | no |
 | `layout` | card fits the window at 7 heights; a panel moves the content column and **not** the sidebar, on Cards and on Stats | yes |
 | `panels` | tutor/feedback mutual exclusion, outside-click dismissal, reflow axis | yes |
@@ -23,6 +23,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |
 | `session` | working a queue to the end, and what the keyboard is allowed to touch | yes |
+| `tutor` | the answer rendering as it streams, the deck context the endpoint is sent, editing a proposed card before it is written | yes |
 
 ## Five rules, all learned from checks that lied
 

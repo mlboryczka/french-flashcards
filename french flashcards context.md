@@ -19,7 +19,7 @@ still open.
 | Frontend | Vite + React 18, no router, no CSS framework — styles are inline objects in a `S` / `T` theme constant |
 | Scheduling | `ts-fsrs` 5.4.2 |
 | Auth + data | Supabase (Postgres, magic-link email, RLS), free tier |
-| AI | Anthropic SDK, model `claude-opus-5`, called only from serverless functions. **Each user brings their own API key** (see Who pays for Claude) |
+| AI | Anthropic SDK, called only from serverless functions. Model is per route — see the table under Serverless functions. **Each user brings their own API key** (see Who pays for Claude) |
 | Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
 
 **Free-tier gotcha:** Supabase pauses a project after ~7 days idle, and
@@ -27,6 +27,24 @@ still open.
 catches rejections, so this now surfaces as "Couldn't reach the server" with a
 Try again button and a note about paused projects, rather than "Loading…"
 forever. Resuming the project in the Supabase dashboard is still the fix.
+
+---
+
+## Working protocol
+
+**Commit straight to `main`.** Vercel deploys from `main`, so a change is not
+real until it lands there — a feature branch is invisible to the live app and
+to anyone looking at it. Work has been going to `main` directly since the
+2026-09-07 session and that is the convention.
+
+An agent session may arrive pre-configured with its own feature branch and an
+instruction not to push anywhere else. That configuration does not know about
+this project. Say so at the START of the session and get it resolved, rather
+than working for an hour and pushing somewhere nobody is looking — which is
+exactly what happened on 2026-09-08, and cost a whole session's work being
+invisible until it was noticed.
+
+`npm test` before every push. It is 12 suites and a few minutes.
 
 ---
 
@@ -148,13 +166,26 @@ The parser prompt also forbids producing these in the first place.
 | Route | Does |
 |---|---|
 | `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, polysemy-aware dedupe |
-| `chat.js` | Tutor chat. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
+| `chat.js` | Tutor chat. Streams (SSE), Sonnet 5 at effort `low`, sent a slice of the deck as context. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
 | `split-senses.js` | Audits candidate multi-sense cards. Read-only |
 | `apply-splits.js` | Applies approved splits. Service role + manual ownership checks |
 | `admin-update-card.js` | Single-card edit. Service role, because RLS was silently returning success with zero rows affected from the client |
 | `review-answer.js` | Adjudicates "my answer should have been accepted". Honours `force` without a model call; alternates are per-user |
 | ~~`tts.js` / `pronounce.js`~~ | **Deleted.** Unauthenticated proxies to the owner's Azure Speech account. `src/audio.js` now uses the browser's own `speechSynthesis` only |
 | `admin-users.js`, `parse-corrections.js`, `upload-batches.js`, `cahier-parse.js` | Admin and upload plumbing |
+
+### Which model each route runs
+
+The model is a constant per file, chosen for that file's job — not something a
+router picks per request. The endpoint boundaries already sort the traffic by
+kind, so this needs no classifier.
+
+| Route | Model | Why |
+|---|---|---|
+| `chat.js` | `claude-sonnet-5`, effort `low` | On the latency path; a vocabulary lookup is not hard inference |
+| `review-answer.js` | `claude-opus-5` | Rare, and it writes to `card_alternates` and to scheduling. Cost of error is real, so it keeps the strongest model |
+| `split-senses.js` | `claude-opus-5` | Batch classification against written-out rules. **Overkill; Sonnet would do**, and being offline it could go through the Batch API at half price |
+| `parse-cahier.js`, `cahier-parse.js` | `claude-haiku-4-5` | Structured extraction from a regular format. Correct as-is |
 
 `api/_lib/` is skipped by Vercel's function discovery (underscore prefix), so
 it is import-only.
@@ -363,8 +394,8 @@ These look arbitrary and are not:
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Twelve suites: four needing no browser, the
-rest driving the real app in headless Chromium against a mock Supabase,
+`npm test` — see `tests/README.md`. Fourteen suites: four needing no browser,
+the rest driving the real app in headless Chromium against a mock Supabase,
 asserting on **measured** values (geometry, computed styles, request payloads)
 rather than on intent.
 
@@ -436,9 +467,15 @@ The shape of it:
 - **Static in the app, copied into the deck.** The lesson is shared; adding it
   copies its cards into `user_cards`, and that copy is what makes the
   scheduling personal, since FSRS state lives on the row.
-- **Tagged `source = "lesson:<id>"`.** That column already existed — the cahier
-  parser writes `cahier-upload`, the tutor writes `tutor-chat` — so lessons
-  needed no migration.
+- **Tagged `source = "lesson:<id>#<cardKey>"`.** That column already existed —
+  the cahier parser writes `cahier-upload`, the tutor writes `tutor-chat` — so
+  lessons needed no migration. The key hashes the front the LESSON ships
+  (`src/lib/lessonSource.js`) and is the card's identity. Identity used to be
+  the stored front, which meant correcting a typo on a lesson card made the
+  sync unable to recognise it: the row was retired as "no longer in the
+  lesson", taking its FSRS history, and the uncorrected original was inserted
+  in its place. Rows written before keys existed are matched by front and
+  re-keyed on the next sync.
 - **Synced on load, once per mount.** A student finds L'impératif in their deck
   without pressing anything. The lesson is the authority, so the sync also
   *retires* cards it no longer contains: that is how the eight abandoned "state
@@ -517,6 +554,115 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
 
 ---
 
+## Recent work (branch `claude/tutor-functionality-improvements-wa5wa8`)
+
+The tutor, which was slow, generic, and hard to get a good card out of.
+
+### The latency was a default that changed underneath the file
+
+`api/chat.js` passed no `thinking` and no `output_config`. That was written
+when omitting `thinking` meant *no thinking*. On Opus 5 an omitted `thinking`
+runs **adaptive**, and an omitted effort defaults to **`high`** — so every
+two-word lookup was getting a maximum-depth reasoning pass from the most
+expensive model, non-streamed, inside Vercel's default 10s function budget.
+That is the whole of "the tutor is slow", and none of it was visible in the
+code, only in what the code didn't say.
+
+Now: `claude-sonnet-5`, `thinking: {type: "adaptive"}` stated explicitly, and
+`output_config: {effort: "low"}`.
+
+**Effort is a ceiling; adaptive thinking is the allocation underneath it.** At
+effort `low` a lookup costs almost nothing and a nuance question still gets
+more thought than the lookup did. That is per-question compute allocation
+decided by something that has read the question — which is the reason there is
+no model router here. Routing by question type has to decide before the answer
+exists, and in French the difficulty isn't in the surface form: *si* is five
+characters and one of the hardest words in the language, and "how do I say I
+miss you" looks like translation right up until the inversion. A classifier
+good enough to route those correctly would have to know French as well as the
+model it was trying to avoid calling.
+
+### Everything else it needed
+
+- **It streams.** SSE, one JSON event per `data:` line (`text` / `cards` /
+  `done` / `error`). Failures *before* the stream opens still answer in JSON,
+  so the client's existing error path survives. `maxDuration` is 60.
+- **It knows what you're studying.** It used to be sent `deckFronts.slice(0, 60)`
+  — sixty fronts by array position, no backs, no history. `src/lib/deckContext.js`
+  now picks the cards that bear on the question (scored on shared content words,
+  French side weighted double), the cards you recently got wrong, and the card
+  on screen. All of it is a filter over an array already in browser memory.
+- **`openChat(card)` takes an argument**, and a wrong typed answer offers "Ask
+  the tutor" beside the dispute link — in the *same row*, because `belowCard` is
+  a measured 170px well and a new line would move the card off its one position.
+- **Proposed cards are editable before they are added.** This is what makes the
+  cheaper model safe: card quality stops being load-bearing when correcting a
+  front costs a keystroke. Fronts are also run through `cleanFrenchPrompt`.
+- **A tutor card no longer stamps `dates: [today]`.** Those are the *lesson*
+  dates a word appeared on; a card invented in a chat appeared on none, and the
+  stamp made tutor cards outrank real ones in the frequency sort.
+- **The system prompt stopped lecturing.** It used to require register, gender,
+  an example sentence and a false-friend warning on *every* answer. A checklist
+  cannot be proportional to the question, which is why a two-word lookup came
+  back as five bullets. It is now cached (`cache_control` on the system block),
+  which is also why per-request deck context goes in the **user turn**: caching
+  is a prefix match, and the old code concatenated the deck onto the end of
+  `SYSTEM_PROMPT`, which would have invalidated the cache on every turn.
+- **Closing the panel aborts the request** instead of letting the answer land in
+  a panel nobody is looking at.
+
+### Two bugs found by driving it, not by running the suite
+
+- **Editing a card before adding it never showed as added.** `addCard` keyed the
+  added-set on the *edited* front while the chip checked the *original*
+  proposal, so the two never matched and you could add the same card
+  repeatedly. The check now lives inside `ProposedCard`, against its own state.
+- Writing the suite: `button:has-text("Send")` also matches **"Send feedback"**,
+  which closed the tutor and opened the feedback sheet. `:text-is()` for both
+  that and Add, since "Added" contains "Add" too.
+
+### The SDK, since it came up
+
+The tutor's parameters — `output_config`, adaptive thinking, GA prompt caching
+— all postdate `@anthropic-ai/sdk` 0.27.3, which this project was pinned to
+when the work started. They reached the API anyway, because that SDK forwards
+unknown body keys verbatim (verified by capturing the request it builds, not
+assumed). Moot now: `main` bumped the SDK to **^0.124.0** in the same window,
+so the parameters are supported rather than merely tolerated.
+
+## Recent work: bugs around the tutor branch
+
+Found by a review pass over the whole branch, not by the tutor work itself.
+
+- **Editing a lesson card destroyed it and its scheduling.** The sync
+  reconciled by front text, so a corrected front read as "the lesson dropped
+  this" — delete the row, re-insert the original, start from New. Identity is
+  now a key hashed from the lesson's own front; see the Lessons section.
+  `reconcileLessons` (`src/lib/lessonSync.js`) is pure and tested, including
+  the case that motivated it. Legacy un-keyed rows matching nothing are now
+  **left alone rather than deleted**: they are either a card the lesson retired
+  or one the user corrected, and there is no way to tell, so the safe side wins
+  and the sync logs them.
+- **The keyboard graded the card behind the lesson panel.** `showLessonPanel`
+  was missing from `overlayOpen`, so Space flipped and Enter graded a hidden
+  card — a real FSRS review for something never seen. Exactly the failure the
+  comment above that line documents; the lesson panel was added afterwards and
+  never joined the list.
+- **The score jumped backwards.** A cached copy counts as loaded, so the app is
+  answerable while the real fetch runs. `setProgress(obj)` then overwrote the
+  optimistic update with a snapshot taken before it. Local writes since mount
+  are now merged over the server rows, and `resetAll` clears the cache — without
+  that, a reload undid the reset.
+- **A network blip blanked a painted deck.** The error path did `setCards([])`
+  over a deck already on screen from cache, which then convinced the lesson sync
+  the user owned none of their lesson cards.
+- **Both caches survived sign-out.** `deck-cache:<id>` and `progress-cache:<id>`
+  sat in localStorage with one person's whole vocabulary and score history.
+  Cleared in `handleSignOut`, before the sign-out itself.
+- **Dead code in `useUserDeck`** — an unreachable duplicate of the cache write,
+  lacking the quota guard the live one has, kept quiet with an
+  `eslint-disable no-unreachable`. Deleted.
+
 ## Open items
 
 - **`^0.x` dependency versions can never update themselves.** The Anthropic
@@ -554,17 +700,11 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
   review and sequencing on first exposure are not in conflict.
 - **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
   hypotheses tested and falsified; see the history in git. Note that the
-  *reflow* half of this complaint turned out to be three separate, measurable
+  *reflow* half of this complaint turned out to be four separate, measurable
   bugs, all now fixed and covered by the `reflow` suite — see the chip-row,
   feedback-sheet and `cardWrap` notes above. Whether anything remains wrong
   with the FLIP itself is still open, and should be measured separately from
   the reflow now that the reflow is quiet.
-
-  The card still resizes across a reflow (that is the point — the column really
-  does get smaller), but it now does so continuously rather than in one or two
-  frames, and its `cqh` text re-resolves with it. Animating `transform` instead
-  of layout would remove the per-frame layout work altogether, and would change
-  what the layout, motion and reflow suites assert.
 
   The last of the jerkiness was a chain of HANDOVERS. The card's size is the
   last thing to absorb a squeeze, behind cardArea's centring slack, cardWrap's
@@ -580,7 +720,59 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
   Judge this on the card's EDGES, not its height. Height is derived, and its
   rate can shift with nothing visibly jumping — the top edge slows while the
   bottom carries on. Worst edge-rate spread is 2.0x, against 3.0x before.
+  Animating `transform` instead of layout would remove the per-frame layout
+  work altogether, and would change what the layout, motion and reflow suites
+  assert.
+- **The tutor's model change is unmeasured.** `chat.js` moved from Opus 5 to
+  Sonnet 5 on reasoning about the task, not on evidence that quality holds for
+  French specifically — nuance questions are exactly where a lighter model
+  gives a confident wrong answer. The mitigation is that proposed cards are now
+  editable, so a bad card costs a keystroke rather than months of reviews. A
+  real answer needs ~30-40 real questions with checked answers, run against both
+  at a couple of effort levels. Until then: use it, and switch back if it is
+  visibly worse.
+- **The tutor's cache breakpoint may be a no-op.** The system prompt plus tool
+  schema is roughly 900 tokens and the minimum cacheable prefix is
+  model-dependent; below it, `cache_control` silently does nothing. One
+  `count_tokens` call against the real prompt would settle it.
+- **`split-senses.js` still runs Opus 5** for what is batch classification
+  against written-out rules — see the table under Serverless functions. It is
+  offline, so it could also go through the Batch API at half price.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
-  exercise sheet ships no answer key, and her lesson PDF has at least one error
-  (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
-  pass from her before it goes to students.
+  exercise sheet ships no answer key. Worth a pass from her before it goes to
+  students.
+
+---
+
+## Recent work (session of 2026-09-08, lesson notes)
+
+`LESSON.notes` was rebuilt from Laura's source PDF. The old distillation had
+been cut past usefulness: rules with the examples removed, French specimens
+with the captions removed, and two sections that stated no rule at all — tables
+with nothing telling you what to do.
+
+- **Sections are an ORDERED list of blocks** (`lead`, `sub`, `note`, `list`,
+  `forms`, `pairs`, `table`). Her material interleaves — a rule, its examples, a
+  caveat on those examples — which the old fixed note/table/pairs/lines order
+  could not express.
+- **One tab per section.** Section 3 is taller than the window; on one scroll
+  the pronoun rules sat below the fold every time the panel opened.
+- **Every example keeps its label, every rule keeps an example.** Her PDF
+  captions each specimen block; stripping those left French floating with
+  nothing saying what it was. This was the single biggest source of confusion
+  in review, three separate times.
+
+Three source errors are corrected rather than reproduced: `Vous lui donnez →
+Donnez-lui` (her `Donne-lui` is the *tu* form); `Ne faites pas de bêtises !`
+(missing its exclamation mark); and her "EXCEPTION" for `Dis-le-moi`, which is
+not one — it obeys the same order as `Dis-le-lui`. It only looked exceptional
+because she never states the order, deferring to a pronoun lesson this app does
+not have. The panel gives the order instead.
+
+Two sentences are **not hers** and carry rules her prose only implies through
+its tables: how the imperative is formed, and `me`/`te` → `moi`/`toi`.
+
+Also: French spacing before `!` `?` `;` `:` and inside `« »` is applied at
+display time as U+202F, so punctuation cannot wrap onto its own line; and lesson
+titles render as written — the card badge and filter chip case-folded them,
+which loses the name and mangles the accented capital.
