@@ -38,6 +38,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 
+import { requireUser } from "./_lib/auth.js";
+import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 export const config = {
   api: {
     bodyParser: { sizeLimit: "10mb" },
@@ -69,28 +71,21 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } =
-    process.env;
-  if (!ANTHROPIC_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return res.status(500).json({ error: "Server misconfigured" });
   }
 
-  const authHeader = req.headers.authorization || "";
-  const accessToken = authHeader.replace(/^Bearer\s+/i, "");
-  if (!accessToken) {
-    return res.status(401).json({ error: "Missing auth token" });
-  }
+  // ANTHROPIC_API_KEY is deliberately NOT required here any more: the key
+  // that pays is the caller's own unless they are the deploy owner, and
+  // only the "extract" action spends anything at all.
+  const user = await requireUser(req, res);
+  if (!user) return;
+  const userId = user.id;
 
   const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data: userData, error: userErr } = await adminClient.auth.getUser(
-    accessToken
-  );
-  if (userErr || !userData?.user) {
-    return res.status(401).json({ error: "Invalid auth token" });
-  }
-  const userId = userData.user.id;
 
   // ═════════════════════════════════════════════════════════════════════
   // ACTION DISPATCH
@@ -121,7 +116,10 @@ export default async function handler(req, res) {
     return await handleSlice(req, res);
   }
   if (action === "extract") {
-    return await handleExtract(req, res);
+    // The only action that calls Claude, so the only one that needs a key.
+    const apiKey = requireAnthropicKey(req, res, user);
+    if (!apiKey) return;
+    return await handleExtract(req, res, apiKey);
   }
   if (action === "commit") {
     return await handleCommit(req, res, adminClient, userId);
@@ -174,7 +172,7 @@ async function handleSlice(req, res) {
 // ACTION 2: EXTRACT — run Claude on a chunk of blocks, return raw cards
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function handleExtract(req, res) {
+async function handleExtract(req, res, apiKey) {
   const { blocks } = req.body || {};
   if (!Array.isArray(blocks) || blocks.length === 0) {
     return res.status(400).json({ error: "Missing or empty blocks array" });
@@ -185,7 +183,7 @@ async function handleExtract(req, res) {
     });
   }
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const anthropic = new Anthropic({ apiKey });
   const cards = [];
   const errors = [];
 

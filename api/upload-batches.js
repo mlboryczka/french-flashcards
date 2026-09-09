@@ -9,7 +9,7 @@
 // can't do /:id routing without an [id].js file.
 
 import { createClient } from "@supabase/supabase-js";
-import { extractUserIdFromJwt, requireAdmin } from "./_lib/auth.js";
+import { requireAdmin } from "./_lib/auth.js";
 
 export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -17,7 +17,8 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Missing env vars" });
   }
 
-  if (!requireAdmin(req, res)) return;
+  const adminUser = await requireAdmin(req, res);
+  if (!adminUser) return;
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -37,7 +38,7 @@ export default async function handler(req, res) {
 
 async function handleCreate(req, res, admin) {
   const body = req.body || {};
-  const user_id = body.user_id || extractUserIdFromJwt(req.headers.authorization || "");
+  const user_id = body.user_id || adminUser.id;
   if (!user_id) {
     return res.status(400).json({ error: "user_id required" });
   }

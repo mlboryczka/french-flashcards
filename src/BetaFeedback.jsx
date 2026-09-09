@@ -205,9 +205,19 @@ export function BetaFeedback({
 
   // Publish the close request upward. Kept current on every render so it
   // always sees the live draft state.
-  if (requestCloseRef) {
+  // Assigned after the commit, not during render.
+  //
+  // This ran in the render body, which is a side effect where React is
+  // allowed to call you twice and throw the result away. It happened to work,
+  // but "happened to" is the whole problem: under StrictMode or concurrent
+  // rendering the ref can be left pointing at a discarded render's closure,
+  // and this ref is what decides whether an unsent draft prompts before the
+  // panel closes. No dependency array — it should track the latest `open`
+  // and handler on every commit.
+  useEffect(() => {
+    if (!requestCloseRef) return;
     requestCloseRef.current = () => (open ? handleCloseClick() : true);
-  }
+  });
 
   async function handleSubmit() {
     if (!message.trim() || message.trim().length < 5) {

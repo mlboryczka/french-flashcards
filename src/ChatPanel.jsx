@@ -4,35 +4,33 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
+import { keyHeaders, BYOK_REQUIRED } from "./lib/anthropicKey";
 import { cleanFrenchPrompt } from "./lib/cardText";
 import { buildTutorContext } from "./lib/deckContext";
 
-// "Ask the tutor" slide-over. Look a word or phrase up, get an answer, and add
-// the cards Claude proposes straight into the deck.
+// "Ask the tutor" slide-over. Look a word or phrase up, get an explanation,
+// and add the cards Claude proposes straight into the deck.
 //
 // Design notes:
 //   • Right-hand slide-over rather than a centered modal — the card behind
 //     stays visible, so you can look something up mid-session without
 //     losing your place.
 //   • The answer STREAMS. It used to arrive as one blocking JSON response,
-//     which meant staring at "Thinking…" for the whole generation and, past
-//     Vercel's default 10s function budget, a timeout instead of an answer.
+//     which meant staring at "Thinking…" for the whole generation.
 //   • Proposed cards are never auto-added, and they are EDITABLE before you
-//     add them. A wrong card in a spaced-repetition deck costs you months of
-//     reviews; making the front a text input turns that from a bad review
-//     stream into a keystroke.
+//     add them. Claude suggests, you correct, you click. A wrong card in a
+//     spaced-repetition deck costs you months of reviews; making the front a
+//     text input turns that from a bad review stream into a keystroke.
 //   • Adds go straight to Supabase from the client, not through /api/chat.
 //     user_cards is RLS-protected (migration_003), so the insert runs as
 //     the signed-in user and can only touch their own rows.
 //   • Upsert on (user_id, front) means re-adding an existing card updates
-//     it rather than erroring. `dates` is deliberately NOT written: those are
-//     the LESSON dates a word appeared on, and a card invented in a chat
-//     appeared on none. The column defaults to '[]', and omitting it also
-//     leaves an existing card's real dates alone on conflict.
+//     it rather than erroring — which is also why the endpoint is told
+//     which fronts already exist, so it can say "you have that" instead.
 //
 // Usage:
 //   <ChatPanel open={showChat} onClose={...} user={user}
-//              cards={userCards} currentCard={card} onCardsAdded={reloadDeck} />
+//              deckFronts={userCards.map(c => c.f)} onCardsAdded={reloadDeck} />
 
 // Panel width. Exported because FlashcardApp reflows the app by exactly this
 // much when the panel is open on a wide screen, so the two must agree.
@@ -62,17 +60,17 @@ const SUGGESTIONS = [
 // hoisting that into ChatPanel would mean a keystroke in one chip re-rendering
 // the whole thread.
 function ProposedCard({ card, added, onAdd }) {
-  // The front is cleaned the same way the study view cleans it, so what you
-  // see in the chip is what the card will look like when you meet it.
+  // Cleaned the same way the study view cleans it, so the chip shows what the
+  // card will actually look like when you meet it.
   const [front, setFront] = useState(() => cleanFrenchPrompt(card.front, card.back));
   const [back, setBack] = useState(card.back);
   const [editing, setEditing] = useState(false);
 
   const dirty = front !== cleanFrenchPrompt(card.front, card.back) || back !== card.back;
   // Keyed on the front as it stands NOW, not on the proposal. Checking the
-  // original meant that editing a card before adding it wrote one key and
-  // looked up another, so the chip never showed it had been added and you
-  // could add the same card again and again.
+  // original meant editing a card before adding it wrote one key and looked up
+  // another, so the chip never showed it had been added and the same card
+  // could be added over and over.
   const isAdded = added.has(front.toLowerCase().trim());
 
   return (
@@ -131,13 +129,17 @@ export default function ChatPanel({
   open,
   onClose,
   user,
-  // The whole shaped deck, not a list of fronts. `deckContext` reads backs and
+  // The whole shaped deck, not a list of fronts. deckContext reads backs and
   // review history off these rows to tell the tutor what you already have and
   // what you keep missing.
   cards = [],
   // The card on screen, if the tutor was opened from a study session.
   currentCard = null,
   onCardsAdded,
+  // Opens the "connect your Claude account" dialog. The tutor spends money
+  // per question and the server refuses without a key, so the error needs a
+  // way out of itself rather than just an explanation.
+  onNeedKey,
   // Wide screens push the app aside to make room for the panel rather than
   // covering it, so you can read the card you're asking about while you type.
   // Narrow screens have no room to reflow, so the panel stays an overlay with
@@ -148,6 +150,9 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  // "byok_required" when the server refused for want of a key, so the error
+  // can offer the fix instead of only naming the problem.
+  const [errorCode, setErrorCode] = useState("");
   // Fronts added this session, so the chip can flip to "Added" without a
   // full deck refetch on every click.
   const [added, setAdded] = useState(() => new Set());
@@ -155,8 +160,8 @@ export default function ChatPanel({
   const inputRef = useRef(null);
   const panelRef = useRef(null);
   // Lets a close abort an answer in flight. Without it, closing the panel
-  // mid-request left the fetch running and its answer landing in a panel
-  // nobody was looking at.
+  // mid-request left the request running — spending the caller's own Anthropic
+  // credit — and its answer landing in a panel nobody was looking at.
   const abortRef = useRef(null);
 
   // Two flags rather than one so the panel can animate on the way OUT as well
@@ -203,8 +208,7 @@ export default function ChatPanel({
     };
   }, [mounted, open]);
 
-  // Keep the newest message in view as the thread grows — and as it streams,
-  // since the last bubble gets taller a token at a time.
+  // Keep the newest message in view as the thread grows.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -260,8 +264,8 @@ export default function ChatPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Rewrite the last message in place. Streaming touches only the tail of the
-  // thread, so the rest is left identically referenced and doesn't re-render.
+  // Rewrite the last message in place. Streaming only touches the tail of the
+  // thread, so everything above it keeps its identity and doesn't re-render.
   const updateLast = useCallback((fn) => {
     setMessages((prev) => {
       if (!prev.length) return prev;
@@ -277,10 +281,11 @@ export default function ChatPanel({
       if (!trimmed || sending) return;
 
       setError("");
+      setErrorCode("");
       setInput("");
       const nextMessages = [...messages, { role: "user", content: trimmed }];
-      // The empty assistant bubble is the thing that fills in as tokens
-      // arrive, so it goes in before the request rather than after it.
+      // The empty assistant bubble is what fills in as tokens arrive, so it
+      // goes in before the request rather than after it.
       setMessages([
         ...nextMessages,
         { role: "assistant", content: "", cards: [], streaming: true },
@@ -302,6 +307,9 @@ export default function ChatPanel({
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${session.access_token}`,
+            // The user's own Anthropic key. Absent when they haven't
+            // connected one; the server then answers 402.
+            ...keyHeaders(user?.id),
           },
           signal: controller.signal,
           body: JSON.stringify({
@@ -314,26 +322,29 @@ export default function ChatPanel({
           }),
         });
 
-        // A failure before the stream opens still answers in JSON — auth,
-        // config, a malformed body, or a platform-level HTML error page.
+        // A failure before the stream opens still answers in JSON — the 402
+        // with no key, a rejected token, a platform-level HTML error page.
         if (!res.ok || !res.body) {
           const raw = await res.text();
-          let message;
+          let data = null;
           try {
-            message = JSON.parse(raw).error;
+            data = JSON.parse(raw);
           } catch {
-            message =
+            throw new Error(
               res.status === 504
                 ? "The tutor timed out. Try a shorter question."
-                : `Server error (${res.status}).`;
+                : `Server error (${res.status}).`
+            );
           }
-          throw new Error(message || `Request failed (${res.status})`);
+          const err = new Error(data.error || `Request failed (${res.status})`);
+          err.code = data.code || "";
+          throw err;
         }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        let streamError = "";
+        let streamError = null;
 
         // SSE frames are separated by a blank line and can be split across
         // network chunks, so hold the tail back until its terminator arrives.
@@ -359,28 +370,36 @@ export default function ChatPanel({
             } else if (event.type === "cards") {
               updateLast((m) => ({ ...m, cards: event.cards || [] }));
             } else if (event.type === "error") {
-              streamError = event.error;
+              streamError = event;
             }
           }
         }
 
         updateLast((m) => ({ ...m, streaming: false }));
-        if (streamError) throw new Error(streamError);
+        if (streamError) {
+          // A key Anthropic rejects can only surface once generation has
+          // started, so it arrives here rather than as a status — but it
+          // carries the same code, and gets the same offer of a way out.
+          const err = new Error(streamError.error || "The tutor failed mid-answer.");
+          err.code = streamError.code || "";
+          throw err;
+        }
         if (!gotText) throw new Error("The tutor returned nothing. Try rephrasing.");
       } catch (e) {
-        // Closing the panel aborts on purpose — not something to report. The
-        // bubble still has to be closed out: the component isn't unmounted, so
-        // returning early left a half-answer blinking its caret forever and put
-        // an empty assistant turn into the next request's history.
+        // Closing the panel aborts on purpose. The bubble still has to be
+        // closed out: this component is not unmounted, so returning early left
+        // a half-answer blinking its caret forever and put an empty assistant
+        // turn into the next request's history.
         if (e.name === "AbortError") {
           if (gotText) updateLast((m) => ({ ...m, streaming: false }));
           else setMessages(messages);
           return;
         }
         setError(e.message || "Something went wrong.");
+        setErrorCode(e.code || "");
         if (gotText) {
-          // Part of an answer arrived before it broke. Keep it — it is usually
-          // the useful part — and let the error banner explain the rest.
+          // Part of an answer arrived before it broke. Keep it — usually the
+          // useful part — and let the error banner explain the rest.
           updateLast((m) => ({ ...m, streaming: false }));
         } else {
           // Nothing arrived: drop the empty bubble and put the question back
@@ -393,7 +412,7 @@ export default function ChatPanel({
         abortRef.current = null;
       }
     },
-    [input, sending, messages, cards, currentCard, updateLast]
+    [input, sending, messages, cards, currentCard, user, updateLast]
   );
 
   const addCard = useCallback(
@@ -408,6 +427,10 @@ export default function ChatPanel({
             front: card.front,
             back: card.back,
             category: CAT_UI_TO_DB[card.category] || "V",
+            // `dates` deliberately not written: those are the LESSON dates a
+            // word appeared on, and a card invented in a chat appeared on
+            // none. The column defaults to '[]', and omitting it also leaves
+            // an existing card's real dates alone on conflict.
             source: "tutor-chat",
           },
           { onConflict: "user_id,front" }
@@ -481,7 +504,7 @@ export default function ChatPanel({
             <div key={i} style={m.role === "user" ? S.userRow : S.botRow}>
               <div style={m.role === "user" ? S.userBubble : S.botBubble}>
                 {m.content}
-                {/* A caret while the text is still arriving, so an answer
+                {/* A caret while text is still arriving, so an answer
                     mid-generation doesn't read as one that has finished. */}
                 {m.streaming && <span style={S.caret}>▌</span>}
               </div>
@@ -496,7 +519,16 @@ export default function ChatPanel({
           ))}
         </div>
 
-        {error && <div style={S.error}>{error}</div>}
+        {error && (
+          <div style={S.error}>
+            {error}
+            {errorCode === BYOK_REQUIRED && onNeedKey && (
+              <button style={S.errorAction} onClick={onNeedKey}>
+                Connect Claude account
+              </button>
+            )}
+          </div>
+        )}
 
         <div style={S.composer}>
           <textarea
@@ -596,6 +628,8 @@ const S = {
   },
   botBubble: {
     maxWidth: "92%",
+    // A bubble that starts empty and fills as the stream arrives still needs
+    // to occupy a line, or the caret appears in a zero-height box.
     minHeight: 20,
     padding: "10px 14px",
     background: T.color.surfaceLowest,
@@ -620,9 +654,8 @@ const S = {
   chipMain: { flex: 1, minWidth: 0 },
   chipFront: { fontFamily: T.font.serif, fontSize: 14, fontWeight: 600, color: T.color.onSurface },
   chipBack: { fontSize: 12.5, color: T.color.onSurface, marginTop: 2 },
-  chipMeta: { fontSize: 11, color: T.color.onSurfaceVariant, marginTop: 4, lineHeight: 1.4 },
-  // The edit inputs sit at the same size and weight as the text they replace,
-  // so turning editing on doesn't reflow the chip.
+  // The edit inputs sit at the size and weight of the text they replace, so
+  // turning editing on doesn't reflow the chip.
   chipEditFront: {
     width: "100%",
     boxSizing: "border-box",
@@ -649,8 +682,27 @@ const S = {
     borderRadius: T.radius.sm,
     outline: "none",
   },
-  chipActions: { flexShrink: 0, display: "flex", flexDirection: "column", gap: 5, alignItems: "stretch" },
+  chipActions: {
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 5,
+    alignItems: "stretch",
+  },
+  chipEditToggle: {
+    padding: "4px 14px",
+    background: "transparent",
+    color: T.color.onSurfaceVariant,
+    border: "none",
+    borderRadius: T.radius.md,
+    fontSize: 11,
+    fontWeight: 500,
+    fontFamily: T.font.sans,
+    cursor: "pointer",
+  },
+  chipMeta: { fontSize: 11, color: T.color.onSurfaceVariant, marginTop: 4, lineHeight: 1.4 },
   chipAdd: {
+    flexShrink: 0,
     padding: "7px 14px",
     background: T.gradient.ink,
     color: T.color.onPrimary,
@@ -662,6 +714,7 @@ const S = {
     cursor: "pointer",
   },
   chipAdded: {
+    flexShrink: 0,
     padding: "7px 14px",
     background: "transparent",
     color: T.color.onSurfaceVariant,
@@ -672,14 +725,16 @@ const S = {
     fontFamily: T.font.sans,
     cursor: "default",
   },
-  chipEditToggle: {
-    padding: "4px 14px",
-    background: "transparent",
-    color: T.color.onSurfaceVariant,
+  errorAction: {
+    display: "block",
+    marginTop: 8,
+    padding: "6px 12px",
+    background: T.gradient.ink,
+    color: T.color.onPrimary,
     border: "none",
     borderRadius: T.radius.md,
-    fontSize: 11,
-    fontWeight: 500,
+    fontSize: 12,
+    fontWeight: 600,
     fontFamily: T.font.sans,
     cursor: "pointer",
   },

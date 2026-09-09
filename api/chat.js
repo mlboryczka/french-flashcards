@@ -1,9 +1,9 @@
 // Vercel serverless function: POST /api/chat
 //
 // A French tutor chat. The user asks about a word, phrase, or grammar
-// point; Claude answers and — when there's something worth drilling —
+// point; Claude explains it and — when there's something worth drilling —
 // proposes flashcards via a tool call. The client renders those proposals
-// as editable "Add to deck" chips; nothing is written to user_cards here.
+// as "Add to deck" chips; nothing is written to user_cards here.
 //
 // Keeping the write on the client matters: user_cards is RLS-protected
 // (migration_003), so the insert runs as the signed-in user with their own
@@ -21,40 +21,49 @@
 //   }
 //
 // Response: an SSE stream of JSON events, one per `data:` line —
-//   { type: "text",  delta: "..." }        prose, as it is generated
-//   { type: "cards", cards: [...] }        card proposals, once complete
+//   { type: "text",  delta: "..." }              prose, as it is generated
+//   { type: "cards", cards: [...] }              card proposals, once complete
 //   { type: "done" }
-//   { type: "error", error: "..." }
-// Failures BEFORE the stream opens (auth, config, bad body) are plain JSON
-// with a 4xx/5xx status instead, so the client's error path still works.
+//   { type: "error", error: "...", code?: "..." }
+// Failures BEFORE the stream opens — not signed in, no key, empty body —
+// answer in JSON with a 4xx status, so the client's key prompt still fires on
+// a 402. A key Anthropic rejects can only be discovered once generation has
+// started, so that one arrives as an error EVENT carrying the same code.
+//
+// Who pays: the caller's own Anthropic key, sent in an x-anthropic-key
+// header and never stored server-side. Without one this answers 402. The
+// deploy owner (ADMIN_EMAIL) falls back to the server's ANTHROPIC_API_KEY.
+// See api/_lib/anthropicKey.js.
 //
 // Environment variables:
-//   ANTHROPIC_API_KEY — server-side only, never VITE_-prefixed
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — to VERIFY the caller's token
+//   ADMIN_EMAIL                             — the one account that may fall back
+//   ANTHROPIC_API_KEY                       — optional, owner's requests only
 
 import Anthropic from "@anthropic-ai/sdk";
-import { extractUserIdFromJwt } from "./_lib/auth.js";
+import { requireUser } from "./_lib/auth.js";
+import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 
-// Sonnet rather than Opus. Answering "what's the difference between amener
-// and apporter" is not a hard inference problem, and the endpoint is on the
+// The answer streams, so the wall-clock limit is no longer a cliff — but the
+// function still needs room. Vercel's default is 10s.
+export const config = { maxDuration: 60 };
+
+// Sonnet rather than Opus. Answering "what's the difference between amener and
+// apporter" is not a hard inference problem, and this endpoint is on the
 // latency path — you are waiting at the panel for it.
 const MODEL = "claude-sonnet-5";
 
 // Effort is a CEILING on how much reasoning the model may spend; adaptive
-// thinking then varies underneath it, per question. So a lookup costs almost
+// thinking then varies underneath it, per question. A lookup costs almost
 // nothing while a nuance question still gets more thought than the lookup did
-// — which is the "match the compute to the question" behaviour, decided by
-// something that has read the question rather than by a router guessing from
-// its surface form.
+// — compute matched to the question, decided by something that has read the
+// question rather than by a router guessing from its surface form.
 //
-// This used to be absent, which is not the same as off: on Opus 5 an omitted
-// `thinking` runs adaptive and an omitted effort defaults to HIGH, so every
+// This used to be absent, which is not the same as off: with no `thinking` and
+// no `output_config`, Opus 5 runs adaptive thinking at effort HIGH, so every
 // vocabulary lookup was getting a maximum-depth reasoning pass. That was the
 // bulk of the latency, and it read as "the tutor is slow".
 const EFFORT = "low";
-
-// Streaming means the wall-clock limit is no longer a cliff, but the function
-// still needs room for a long answer. Vercel's default is 10s.
-export const config = { maxDuration: 60 };
 
 // Cost guardrails. The client sends the whole visible thread on every turn,
 // so without a cap a long session grows the bill quadratically.
@@ -68,7 +77,7 @@ const MAX_CONTEXT_CARDS = 12;
 // bullets: a checklist cannot be proportional to the question.
 //
 // This text is the cached prefix — it must not carry anything that varies per
-// request. Deck context goes in the user turn, below.
+// request. Deck context goes in the user turn instead; see buildContextBlock.
 const SYSTEM_PROMPT = `You are helping an English-speaking learner of French. They keep a spaced-repetition flashcard deck and are asking you about something they've hit.
 
 Answer the question that was asked, at the length it deserves. A word lookup is a line. A question about a distinction between two words is a short paragraph. Nobody wants a lesson they didn't ask for.
@@ -166,18 +175,16 @@ function cardList(raw) {
   return raw.map(cardLine).filter(Boolean).slice(0, MAX_CONTEXT_CARDS);
 }
 
-// Render the deck context as a block prefixed to the user's own question.
+// Render the deck context as a block prefixed to the learner's own question.
 //
-// It goes in the USER TURN, not appended to the system prompt. Two reasons:
-// caching is a prefix match, so per-request text in the system prompt would
-// invalidate the cached prefix on every single turn (the previous version
-// concatenated the deck onto SYSTEM_PROMPT and would have done exactly that);
-// and Sonnet does not accept mid-conversation system messages, so the user
-// turn is the correct channel for it.
+// It goes in the USER TURN, not appended to the system prompt. Caching is a
+// prefix match, so per-request text in the system prompt would invalidate the
+// cached prefix every single turn — which is what the previous version did,
+// concatenating the deck onto the end of SYSTEM_PROMPT. Sonnet also does not
+// accept mid-conversation system messages, so the user turn is the channel.
 //
 // Only the LAST user message is augmented, and the client never sees the
-// augmented copy — so context is rebuilt fresh each turn and never piles up
-// in the history.
+// augmented copy, so context is rebuilt fresh each turn and never piles up.
 function buildContextBlock(ctx) {
   if (!ctx || typeof ctx !== "object") return "";
   const parts = [];
@@ -203,8 +210,7 @@ function buildContextBlock(ctx) {
   return `[Context]\n${parts.join("\n\n")}\n[/Context]`;
 }
 
-// Attach the context to the final user turn. Returns a new array; the caller's
-// sanitized messages are left alone.
+// Attach the context to the final user turn, leaving the caller's array alone.
 function withContext(messages, contextBlock) {
   if (!contextBlock || !messages.length) return messages;
   const last = messages[messages.length - 1];
@@ -216,8 +222,8 @@ function withContext(messages, contextBlock) {
 }
 
 // Validate the model's tool input rather than trusting it toward the DB. The
-// client lets the user edit a proposal before adding, so this is the floor on
-// shape, not on quality.
+// client lets the learner edit a proposal before adding it, so this is the
+// floor on shape, not on quality.
 function normalizeCards(input) {
   const proposed = Array.isArray(input?.cards) ? input.cards : [];
   return proposed
@@ -239,46 +245,42 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Signed-in users only. This endpoint spends money per call, so an
-  // unauthenticated caller would be spending the deploy owner's Anthropic
-  // credit. The JWT is not cryptographically verified here (same posture as
-  // the other routes), but it does keep the endpoint off the open internet.
-  const userId = extractUserIdFromJwt(req.headers.authorization || "");
-  if (!userId) {
-    return res.status(401).json({ error: "Sign in to use the tutor." });
-  }
-
-  const { ANTHROPIC_API_KEY } = process.env;
-  if (!ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: "Missing ANTHROPIC_API_KEY" });
-  }
+  // Signed in, with something to pay with. The token is verified against
+  // Supabase, not just decoded — and the key that pays is the caller's own
+  // unless the caller is the deploy owner.
+  const user = await requireUser(req, res);
+  if (!user) return;
+  const apiKey = requireAnthropicKey(req, res, user);
+  if (!apiKey) return;
 
   const messages = sanitizeMessages(req.body?.messages);
   if (!messages.length) {
     return res.status(400).json({ error: "No message to answer." });
   }
 
-  // Everything above can still answer with a JSON error. From here the stream
-  // is open, so failures have to travel as SSE events instead.
+  // Everything above can still answer in JSON — including the 402 that makes
+  // the client offer its "connect a key" button. From here the stream is open,
+  // so failures have to travel as SSE events instead.
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
     // Vercel's edge buffers proxied responses by default, which would hold the
-    // whole stream until it completed and undo the point of streaming.
+    // whole stream until it finished and undo the point of streaming.
     "X-Accel-Buffering": "no",
   });
+
   // Closing the panel aborts the browser's fetch. Without passing that on, the
-  // generation keeps running upstream and keeps costing money for an answer
-  // nobody will read.
+  // generation keeps running upstream and keeps spending the caller's credit
+  // on an answer nobody will read.
   //
-  // This has to hang off the RESPONSE, not the request: Vercel parses req.body
-  // before the handler runs, so by now the request stream is already destroyed
-  // and has already emitted its own "close". Listening there would arm nothing.
+  // This hangs off the RESPONSE, not the request: Vercel parses req.body before
+  // the handler runs, so by now the request stream is already destroyed and has
+  // emitted its own "close". Listening there would arm nothing.
   let clientGone = false;
   let upstream = null;
   res.on("close", () => {
-    if (res.writableEnded) return; // we finished normally
+    if (res.writableEnded) return; // finished normally
     clientGone = true;
     upstream?.abort();
   });
@@ -289,27 +291,23 @@ export default async function handler(req, res) {
   };
 
   try {
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const anthropic = new Anthropic({ apiKey });
     const stream = anthropic.messages.stream({
       model: MODEL,
       // Generous because streaming took the HTTP timeout off the table, and
-      // because this ceiling has to cover the thinking blocks as well as the
-      // answer and the tool call. The prompt is what keeps answers short; a low
+      // because this ceiling covers the thinking blocks as well as the answer
+      // and the tool call. The prompt is what keeps answers short; a low
       // max_tokens would only truncate one mid-sentence.
       max_tokens: 8000,
-      // Explicit rather than implied. An absent `thinking` is not "off" — it
-      // is the model's default, and that default has already changed once
+      // Explicit rather than implied. An absent `thinking` is not "off" — it is
+      // the model's default, and that default has already changed once
       // underneath this file.
       thinking: { type: "adaptive" },
       output_config: { effort: EFFORT },
-      // The system prompt and the tool schema are the only stable prefix here,
-      // so the breakpoint goes at the end of it.
+      // The system prompt and tool schema are the only stable prefix, so the
+      // breakpoint goes at the end of it.
       system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
+        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ],
       tools: [PROPOSE_TOOL],
       messages: withContext(messages, buildContextBlock(req.body?.context)),
@@ -331,19 +329,25 @@ export default async function handler(req, res) {
     send({ type: "done" });
     res.end();
   } catch (err) {
-    // An abort we asked for is the expected end of a cancelled request, not a
-    // failure, and there is nobody left to tell about it either way.
+    // An abort we asked for is the expected end of a cancelled request, and
+    // there is nobody left to tell either way.
     if (clientGone) return res.end();
     console.error("chat failed:", err);
+
     let message = err?.message || "Chat failed";
+    let code = "";
     if (err instanceof Anthropic.RateLimitError) {
       message = "Rate limited — give it a moment and try again.";
     } else if (err instanceof Anthropic.AuthenticationError) {
-      message = "Anthropic API key is invalid.";
+      // Almost always the caller's own key. It cannot be checked before the
+      // request, so unlike the missing-key 402 this arrives mid-stream — the
+      // code is what lets the client offer the same "fix your key" action.
+      message = "Anthropic rejected that API key. Check it in your profile menu.";
+      code = "bad_key"; // matches resolveAnthropicKey's code for a rejected key
     } else if (err instanceof Anthropic.APIError) {
       message = `Anthropic API: ${err.message}`;
     }
-    send({ type: "error", error: message });
+    send({ type: "error", error: message, ...(code ? { code } : null) });
     res.end();
   }
 }

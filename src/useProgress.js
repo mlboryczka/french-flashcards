@@ -40,6 +40,8 @@ function writeCache(userId, progress) {
 
 // Manages per-user card progress with optimistic UI + Supabase persistence.
 // Shape of progress state: { [cardId]: { score, seen, got } }
+// Sign-out has to be able to clear this: it is a copy of one person's progress
+// sitting in a browser that may not be theirs alone.
 export function clearProgressCache(userId) {
   try {
     if (userId) localStorage.removeItem(CACHE_PREFIX + userId);
@@ -54,6 +56,9 @@ export function clearProgressCache(userId) {
 }
 
 export function useProgress(user) {
+  // The ID, not the object — see the note in useUserDeck. A token refresh
+  // hands back a new object and used to re-run this whole fetch.
+  const userId = user?.id ?? null;
   const [progress, setProgress] = useState(() => readCache(user?.id) || {});
   const [loaded, setLoaded] = useState(() => readCache(user?.id) !== null);
   // Whose progress is already on screen.
@@ -68,14 +73,14 @@ export function useProgress(user) {
   const loadedForUser = useRef(null);
   // Cards answered locally since mount. A cached copy counts as loaded, so the
   // app is answerable while the fetch is still running — and the fetch's result
-  // is a snapshot from BEFORE those answers. Overwriting with it made the score
+  // is a snapshot from BEFORE those answers. Overwriting with it made a score
   // visibly go up and then back down.
   const localWrites = useRef(new Map());
 
   // Initial load: fetch all progress rows for this user
   useEffect(() => {
     let cancelled = false;
-    if (!user) {
+    if (!userId) {
       setProgress({});
       setLoaded(true);
       loadedForUser.current = null;
@@ -83,12 +88,12 @@ export function useProgress(user) {
     }
     // A cached copy counts as loaded, so the fetch below is a background
     // refresh rather than something the first paint waits on.
-    const cached = readCache(user.id);
+    const cached = readCache(userId);
     if (cached) {
       setProgress(cached);
       setLoaded(true);
-      loadedForUser.current = user.id;
-    } else if (loadedForUser.current !== user.id) {
+      loadedForUser.current = userId;
+    } else if (loadedForUser.current !== userId) {
       setLoaded(false);
     }
     (async () => {
@@ -100,13 +105,21 @@ export function useProgress(user) {
         const { data, error } = await supabase
           .from("card_progress")
           .select("card_id, score, seen, got")
-          .eq("user_id", user.id)
+          .eq("user_id", userId)
+          // A stable order across pages — see useUserDeck for why.
+          .order("card_id", { ascending: true })
           .range(from, from + PAGE - 1);
         if (cancelled) return;
         if (error) {
           console.error("Failed to load progress:", error);
           setProgress({});
           setLoaded(true);
+          // Marking WHO is loaded, which this path used to skip while
+          // useUserDeck's equivalent set it. After one failed fetch the next
+          // background refresh took the setLoaded(false) branch instead, and
+          // that unmounts the whole tree — the "Loading…" flash that losing
+          // your place looks like, and exactly what this ref exists to stop.
+          loadedForUser.current = userId;
           return;
         }
         allRows = allRows.concat(data || []);
@@ -122,23 +135,23 @@ export function useProgress(user) {
       const merged = { ...obj, ...Object.fromEntries(localWrites.current) };
       setProgress(merged);
       setLoaded(true);
-      loadedForUser.current = user.id;
-      writeCache(user.id, merged);
+      loadedForUser.current = userId;
+      writeCache(userId, merged);
     })();
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [userId]);
 
   // Update a single card's progress (optimistic local update + async upsert)
   const updateCard = useCallback(
     async (cardId, update) => {
       localWrites.current.set(cardId, update);
       setProgress((prev) => ({ ...prev, [cardId]: update }));
-      if (!user) return;
+      if (!userId) return;
       const { error } = await supabase.from("card_progress").upsert(
         {
-          user_id: user.id,
+          user_id: userId,
           card_id: cardId,
           score: update.score,
           seen: update.seen,
@@ -149,7 +162,7 @@ export function useProgress(user) {
       );
       if (error) console.error("Failed to save progress:", error);
     },
-    [user]
+    [userId]
   );
 
   const resetAll = useCallback(async () => {
@@ -157,14 +170,14 @@ export function useProgress(user) {
     // Both of these, or a reload undoes the reset: the cache would repaint the
     // old scores and the in-flight writes would be merged back over them.
     localWrites.current.clear();
-    if (user) clearProgressCache(user.id);
-    if (!user) return;
+    if (userId) clearProgressCache(userId);
+    if (!userId) return;
     const { error } = await supabase
       .from("card_progress")
       .delete()
-      .eq("user_id", user.id);
+      .eq("user_id", userId);
     if (error) console.error("Failed to reset progress:", error);
-  }, [user]);
+  }, [userId]);
 
   return { progress, loaded, updateCard, resetAll };
 }

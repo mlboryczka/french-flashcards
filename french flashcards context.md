@@ -19,7 +19,7 @@ still open.
 | Frontend | Vite + React 18, no router, no CSS framework — styles are inline objects in a `S` / `T` theme constant |
 | Scheduling | `ts-fsrs` 5.4.2 |
 | Auth + data | Supabase (Postgres, magic-link email, RLS), free tier |
-| AI | Anthropic SDK (pinned at 0.27.3), called only from serverless functions. Model is per route — see the table below |
+| AI | Anthropic SDK, called only from serverless functions. Model is per route — see the table under Serverless functions. **Each user brings their own API key** (see Who pays for Claude) |
 | Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
 
 **Free-tier gotcha:** Supabase pauses a project after ~7 days idle, and
@@ -27,6 +27,24 @@ still open.
 catches rejections, so this now surfaces as "Couldn't reach the server" with a
 Try again button and a note about paused projects, rather than "Loading…"
 forever. Resuming the project in the Supabase dashboard is still the fix.
+
+---
+
+## Working protocol
+
+**Commit straight to `main`.** Vercel deploys from `main`, so a change is not
+real until it lands there — a feature branch is invisible to the live app and
+to anyone looking at it. Work has been going to `main` directly since the
+2026-09-07 session and that is the convention.
+
+An agent session may arrive pre-configured with its own feature branch and an
+instruction not to push anywhere else. That configuration does not know about
+this project. Say so at the START of the session and get it resolved, rather
+than working for an hour and pushing somewhere nobody is looking — which is
+exactly what happened on 2026-09-08, and cost a whole session's work being
+invisible until it was noticed.
+
+`npm test` before every push. It is 12 suites and a few minutes.
 
 ---
 
@@ -152,8 +170,8 @@ The parser prompt also forbids producing these in the first place.
 | `split-senses.js` | Audits candidate multi-sense cards. Read-only |
 | `apply-splits.js` | Applies approved splits. Service role + manual ownership checks |
 | `admin-update-card.js` | Single-card edit. Service role, because RLS was silently returning success with zero rows affected from the client |
-| `review-answer.js` | Adjudicates "my answer should have been accepted" |
-| `tts.js` / `pronounce.js` | French speech; `src/audio.js` falls back to the browser's own `speechSynthesis` when the backend is unreachable |
+| `review-answer.js` | Adjudicates "my answer should have been accepted". Honours `force` without a model call; alternates are per-user |
+| ~~`tts.js` / `pronounce.js`~~ | **Deleted.** Unauthenticated proxies to the owner's Azure Speech account. `src/audio.js` now uses the browser's own `speechSynthesis` only |
 | `admin-users.js`, `parse-corrections.js`, `upload-batches.js`, `cahier-parse.js` | Admin and upload plumbing |
 
 ### Which model each route runs
@@ -165,16 +183,46 @@ kind, so this needs no classifier.
 | Route | Model | Why |
 |---|---|---|
 | `chat.js` | `claude-sonnet-5`, effort `low` | On the latency path; a vocabulary lookup is not hard inference |
-| `review-answer.js` | `claude-opus-4-6` | Rare, and it writes to `card_alternates` and to scheduling. **Should be `claude-opus-5`** — not yet done |
+| `review-answer.js` | `claude-opus-5` | Rare, and it writes to `card_alternates` and to scheduling. Cost of error is real, so it keeps the strongest model |
 | `split-senses.js` | `claude-opus-5` | Batch classification against written-out rules. **Overkill; Sonnet would do**, and being offline it could go through the Batch API at half price |
 | `parse-cahier.js`, `cahier-parse.js` | `claude-haiku-4-5` | Structured extraction from a regular format. Correct as-is |
 
 `api/_lib/` is skipped by Vercel's function discovery (underscore prefix), so
 it is import-only.
 
-**Environment:** `ANTHROPIC_API_KEY`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`, `VITE_ADMIN_EMAIL`, plus `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_ANON_KEY` on the client.
+**Environment:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_EMAIL`,
+optionally `ANTHROPIC_API_KEY` (owner only), plus `VITE_SUPABASE_URL`,
+`VITE_SUPABASE_ANON_KEY` and `VITE_ADMIN_EMAIL` on the client. Azure Speech
+vars are gone with the endpoints that read them.
+
+`VITE_ADMIN_EMAIL` decides only whether the admin menu items are DRAWN.
+Anything `VITE_`-prefixed is compiled into the public bundle, so it can never
+be a security boundary; `ADMIN_EMAIL` is the one the server checks.
+
+## Who pays for Claude
+
+`api/_lib/auth.js` **verifies** the Supabase token (`auth.getUser`) rather
+than base64-decoding it. The old version decoded the payload and trusted it,
+so an unsigned `{"email":"<admin>"}` passed `requireAdmin` — and the admin
+address was public, being read from a `VITE_` variable. That reached
+`admin-users.js`, which lists every user's email.
+
+`api/_lib/anthropicKey.js` decides who pays. The caller supplies their own
+key in an `x-anthropic-key` header; without one the endpoint answers **402**
+with `code: "byok_required"` and the client offers the connect dialog. Only
+`ADMIN_EMAIL` falls back to the server's `ANTHROPIC_API_KEY`.
+
+Client side, `src/lib/anthropicKey.js` keeps the key in `localStorage` under
+`anthropic-key:<userId>` and `src/ApiKeyModal.jsx` is the UI (profile menu →
+Connect Claude account). The key is never written to the database or a log,
+so the app is not a custodian of anyone's credentials — the cost is
+re-entering it per browser.
+
+Guarded by `tests/suites/auth.mjs`, which points `ANTHROPIC_BASE_URL` at a
+local counting server and asserts an unauthenticated caller causes **zero**
+billable requests. Its first version watched `globalThis.fetch`, which the
+SDK does not use — it passed with the hole deliberately put back. Measure
+what the code actually sends.
 
 ---
 
@@ -511,13 +559,14 @@ model it was trying to avoid calling.
   which closed the tutor and opened the feedback sheet. `:text-is()` for both
   that and Add, since "Added" contains "Add" too.
 
-### Still true, and worth knowing
+### The SDK, since it came up
 
-`@anthropic-ai/sdk` is pinned at **0.27.3** (mid-2024), which predates
-`output_config`, adaptive thinking and GA prompt caching. It works because that
-SDK passes unknown body keys through verbatim — verified by capturing the
-request it builds — not because it supports them. A bump is overdue and would
-touch all five API routes.
+The tutor's parameters — `output_config`, adaptive thinking, GA prompt caching
+— all postdate `@anthropic-ai/sdk` 0.27.3, which this project was pinned to
+when the work started. They reached the API anyway, because that SDK forwards
+unknown body keys verbatim (verified by capturing the request it builds, not
+assumed). Moot now: `main` bumped the SDK to **^0.124.0** in the same window,
+so the parameters are supported rather than merely tolerated.
 
 ## Recent work: bugs around the tutor branch
 
@@ -554,6 +603,15 @@ Found by a review pass over the whole branch, not by the tutor work itself.
 
 ## Open items
 
+- **`^0.x` dependency versions can never update themselves.** The Anthropic
+  SDK sat on 0.27.0 (Sept 2024) from the first commit until it was bumped to
+  0.124.0, because below 1.0 a caret pins the MINOR — `^0.27.0` means 0.27.x
+  forever, through every reinstall. The same trap is live again at `^0.124.0`
+  and applies to `ts-fsrs` too. Check these deliberately; nothing will
+  surface it.
+- **Speech is browser-only now.** The Azure endpoints were deleted rather than
+  secured. Restoring them means putting them behind `requireUser` and, if the
+  owner should not be paying, a per-user credential like the Anthropic one.
 - **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
   there is no install manifest or offline support.
 - **The multi-sense cleanup has no UI any more.** `SplitSensesModal` and its
@@ -592,18 +650,48 @@ Found by a review pass over the whole branch, not by the tutor work itself.
   real answer needs ~30-40 real questions with checked answers, run against both
   at a couple of effort levels. Until then: use it, and switch back if it is
   visibly worse.
-- **`@anthropic-ai/sdk` is pinned at 0.27.3** (mid-2024), which predates
-  `output_config`, adaptive thinking and GA prompt caching. `chat.js` works
-  because that SDK forwards unknown body keys verbatim — verified by capturing
-  the request it builds — not because it supports them. A bump is overdue and
-  touches all five routes.
 - **The tutor's cache breakpoint may be a no-op.** The system prompt plus tool
   schema is roughly 900 tokens and the minimum cacheable prefix is
   model-dependent; below it, `cache_control` silently does nothing. One
   `count_tokens` call against the real prompt would settle it.
-- **The other three routes still have their old model choices** — see the table
-  under Serverless functions. Only `chat.js` was changed.
+- **`split-senses.js` still runs Opus 5** for what is batch classification
+  against written-out rules — see the table under Serverless functions. It is
+  offline, so it could also go through the Batch API at half price.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
-  exercise sheet ships no answer key, and her lesson PDF has at least one error
-  (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
-  pass from her before it goes to students.
+  exercise sheet ships no answer key. Worth a pass from her before it goes to
+  students.
+
+---
+
+## Recent work (session of 2026-09-08, lesson notes)
+
+`LESSON.notes` was rebuilt from Laura's source PDF. The old distillation had
+been cut past usefulness: rules with the examples removed, French specimens
+with the captions removed, and two sections that stated no rule at all — tables
+with nothing telling you what to do.
+
+- **Sections are an ORDERED list of blocks** (`lead`, `sub`, `note`, `list`,
+  `forms`, `pairs`, `table`). Her material interleaves — a rule, its examples, a
+  caveat on those examples — which the old fixed note/table/pairs/lines order
+  could not express.
+- **One tab per section.** Section 3 is taller than the window; on one scroll
+  the pronoun rules sat below the fold every time the panel opened.
+- **Every example keeps its label, every rule keeps an example.** Her PDF
+  captions each specimen block; stripping those left French floating with
+  nothing saying what it was. This was the single biggest source of confusion
+  in review, three separate times.
+
+Three source errors are corrected rather than reproduced: `Vous lui donnez →
+Donnez-lui` (her `Donne-lui` is the *tu* form); `Ne faites pas de bêtises !`
+(missing its exclamation mark); and her "EXCEPTION" for `Dis-le-moi`, which is
+not one — it obeys the same order as `Dis-le-lui`. It only looked exceptional
+because she never states the order, deferring to a pronoun lesson this app does
+not have. The panel gives the order instead.
+
+Two sentences are **not hers** and carry rules her prose only implies through
+its tables: how the imperative is formed, and `me`/`te` → `moi`/`toi`.
+
+Also: French spacing before `!` `?` `;` `:` and inside `« »` is applied at
+display time as U+202F, so punctuation cannot wrap onto its own line; and lesson
+titles render as written — the card badge and filter chip case-folded them,
+which loses the name and mangles the accented capital.

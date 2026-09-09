@@ -65,18 +65,25 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "front and back are required strings" });
   }
 
-  // Dual-lookup strategy. The client sometimes hits this endpoint with
-  // row_id undefined (we've seen it in prod — the React state carrying
-  // the edit card loses its row_id somehow). As a fallback we can match
-  // by the user's lowercased-trimmed French front text, which is unique
-  // per user by construction. At least one of row_id or original_front
-  // must be present.
+  // Dual-lookup strategy: by row id, falling back to the card's original
+  // French text.
+  //
+  // The fallback used to be the ONLY path that ever ran. The guard here read
+  // `typeof row_id === "string"`, but user_cards.id is a bigint, so it
+  // arrives as a JSON number and the condition was never true. Every edit
+  // silently matched on French text instead — which fails precisely when the
+  // French side is what you changed, giving "Card not found" on the most
+  // ordinary edit there is. (The comment that used to sit here blamed React
+  // for "losing row_id somehow". React was fine.)
+  const rowIdValue =
+    typeof row_id === "number" || typeof row_id === "string" ? row_id : null;
+
   let existing = null;
-  if (row_id && typeof row_id === "string") {
+  if (rowIdValue !== null && rowIdValue !== "") {
     const { data, error } = await admin
       .from("user_cards")
       .select("id, user_id, front")
-      .eq("id", row_id)
+      .eq("id", rowIdValue)
       .maybeSingle();
     if (error) {
       console.error("[admin-update-card] fetch by id failed:", error);
