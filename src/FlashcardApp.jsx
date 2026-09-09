@@ -3049,7 +3049,7 @@ const S = {
   // viewport height. The fix is `cardTopSpacer` below; the bottom padding is
   // gone because it was the larger half of the same error, and the well
   // already leaves plenty of space beneath the card.
-  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:0, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
+  cardArea: { position:"relative", flex:1, minHeight:0, containerType:"inline-size", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:0, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
   // Mirrors what sits below the card, less the chrome that already sits above
   // cardArea, so the card's own midpoint lands on the window's midpoint:
   //
@@ -3062,20 +3062,28 @@ const S = {
   // the window is short or a panel opens, so the card keeps its size rather
   // than crushing. That is the job the old paddingBottom toggle was doing.
   //
-  // The shrink factor is 8, not 1, because "first" is what the line above
-  // always claimed and `1` never delivered. Flex shrinks weighted by factor x
-  // basis, so against cardWrap's 375 basis a factor of 1 made this spacer
-  // absorb only 106/481 of any squeeze and handed the card the other 78%. On
-  // a tall window a panel takes 25px of card once the centring slack is
-  // spent, and the easing crosses that region in about two frames, so the
-  // card recovered 12 of those 19px in a SINGLE frame on the way back — the
-  // pop that survived every other fix here. At 8 the spacer takes the squeeze
-  // and the card gives up roughly a third as much.
+  // The shrink factor is 2, and the number is load-bearing: it is the largest
+  // one that does not make this spacer BOTTOM OUT mid-animation.
+  //
+  // Flex shrinks weighted by factor x basis, so the factor sets the spacer's
+  // share of a squeeze against cardWrap's 375 basis. Push it too high and the
+  // spacer's share exceeds the 106px it actually has, so it pins at 0 while
+  // the deficit is large and only un-pins as the deficit shrinks. That pinning
+  // is a HANDOVER, and it is what "jerky" finally turned out to be: closing
+  // the sheet on a 700px-tall window, the card grew at 1.00px per px of page
+  // movement for four frames with the spacer stuck at 0, then dropped to
+  // 0.31 the moment it came off the floor. A rate change of 3.2x in one frame,
+  // in the middle of a single 420ms move.
+  //
+  // Measured across window heights 640-900, worst-case ratio of fastest to
+  // slowest frame: factor 1 gives 6.5x, factor 8 gives 3.2x, factor 4 gives
+  // 2.9x, factor 2 gives 2.0x — and 1.1x at the short heights where the card
+  // has real resizing to do. Worst single frame falls from 26px to 10px.
   //
   // It only changes behaviour under pressure: with free space to spare the
   // spacer stays 106 and cardArea's `safe center` places the card, so resting
   // geometry at every window height is untouched.
-  cardTopSpacer: { flex:"0 8 106px", minHeight:0, width:"100%", pointerEvents:"none" },
+  cardTopSpacer: { flex:"0 2 106px", minHeight:0, width:"100%", pointerEvents:"none" },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -3187,12 +3195,21 @@ const S = {
   // The basis must stay DEFINITE — `auto` reintroduces the circularity with
   // the card's `height: 100%` below and collapses it to its 170px floor.
   //
-  // `container-type: inline-size` is here so the card can cap its height
-  // against the width it actually has — see the card's maxHeight. INLINE-size,
-  // not size: size containment on an ancestor of the rotating card is the
-  // hazard the note below warns about, and inline-size leaves the flip alone
-  // (verified by sampling the transform mid-rotation — still a real matrix3d).
-  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 375px", minHeight:170, containerType:"inline-size", display:"flex", alignItems:"safe center", justifyContent:"center" },
+  // The SAME maxHeight as the card, and that matters more than it looks.
+  //
+  // This wrapper used to be allowed to stand taller than the card could ever
+  // be — 309px against a 290px cap at an 800px window. That 19px of slack is
+  // an absorber, and absorbers are what make a reflow lurch: opening the sheet,
+  // the card sat perfectly still for three frames while the slack was eaten,
+  // then started shrinking at 0.64px per px of page movement the moment the
+  // wrapper dropped to the card's size. Still, then moving, in one frame.
+  //
+  // Capping both at the same value leaves nothing to eat first, so the card
+  // starts moving on frame one and keeps one rate throughout. The query
+  // container is cardArea (see there) because an element cannot query itself,
+  // and 62.5cqw resolves the same against it: this wrapper is
+  // min(600, cardArea width) wide, and above 600 the 375px cap wins anyway.
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 min(375px, 62.5cqw)", minHeight:170, maxHeight:"min(375px, 62.5cqw)", display:"flex", alignItems:"safe center", justifyContent:"center" },
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
   // Height-driven so a short window shrinks the card instead of overflowing
@@ -3201,6 +3218,11 @@ const S = {
   // while 130px of padding sat unused below it.
   //
   // maxHeight caps the card on BOTH axes, which took a container query.
+  //
+  // The container is cardArea, not cardWrap: INLINE-size, not size — size
+  // containment on an ancestor of the rotating card is the hazard the note
+  // below warns about. Verified by sampling the card's transform mid-rotation
+  // rather than trusting its computed style: still a real matrix3d.
   //
   // `aspect-ratio` only holds while one axis is free to follow the other. The
   // height came from the flex column and the width was capped by

@@ -566,13 +566,20 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
   of layout would remove the per-frame layout work altogether, and would change
   what the layout, motion and reflow suites assert.
 
-  **One case is still not smooth: an 800x700 window, closing the feedback
-  sheet.** The card's width covers 54px and 26 of them land in one frame, while
-  its height moves smoothly over the same stretch. That is the handover between
-  the two `maxHeight` caps — the 375px one and the 62.5cqw one — and the close
-  easing is at its fastest exactly there. Every wider or taller window is fine
-  (at 1400x900 the card resizes 8px total, worst frame 4.8px). Reproduce with a
-  per-frame sample of the card's box; a before/after measurement shows nothing.
+  The last of the jerkiness was a chain of HANDOVERS. The card's size is the
+  last thing to absorb a squeeze, behind cardArea's centring slack, cardWrap's
+  slack above the card's cap, and cardTopSpacer — and each of those has a
+  finite capacity, so each one running out changed the card's speed mid-move.
+  Measured as the card's share of each pixel the page gives up, it grew at
+  1.00px per px for four frames with the spacer pinned at 0, then dropped to
+  0.31 the moment the spacer came off the floor. Removing the slack (cardWrap
+  capped to the card's own height, and its flex BASIS set to that cap so flex
+  never freezes it) and setting the spacer's shrink factor to 2 leaves one
+  constant rate: 0.58px per px from the first frame at 800x700.
+
+  Judge this on the card's EDGES, not its height. Height is derived, and its
+  rate can shift with nothing visibly jumping — the top edge slows while the
+  bottom carries on. Worst edge-rate spread is 2.0x, against 3.0x before.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
   exercise sheet ships no answer key, and her lesson PDF has at least one error
   (`Vous lui donnez` paired with `Donne-lui`; the subject is *vous*). Worth a
