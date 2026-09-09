@@ -24,9 +24,10 @@
 //     the easing crossed the handover in about two frames and the card
 //     recovered most of its size in one of them.
 //
-// Jumps are judged as a fraction of the move WITH a pixel floor under it, for
-// the reason spelled out at `popped` below: on its own, either half of that
-// rule reports on moves nobody can see and waves through ones they can.
+// A fourth, subtler than those three, is the reason `shareOfPageMove` below
+// measures the card against the page rather than against itself: the card's
+// size is the LAST thing to absorb a reflow, behind several slacks that each
+// run out at a different moment, and every handover changed its speed mid-move.
 import { openApp, finish, checker, settled } from "../harness.mjs";
 
 const ck = checker();
@@ -85,38 +86,28 @@ const reflowed = (frames) => travelled(frames, "pad") > 1;
 // intermediate attempt that still lurched read worse than it too.
 const SPREAD = 2.5;
 
-// Judge the card AGAINST THE PAGE, not against itself.
+// Judge the card's EDGES against the PAGE.
 //
-// Two metrics were tried here first and both lied. A percentage of the card's
-// own travel calls a 5px frame of an 8px resize "63% in one frame", which is
-// invisible; a fixed pixel threshold has to clear the largest legitimate frame
-// of the largest legitimate move, and by then it waves through real lurches.
-// Both were asking the wrong question.
+// The page's padding is the thing being animated, so the question is not how
+// far the card moved in a frame — it is whether it moved by the same FRACTION
+// as the page did, every frame. Divide one by the other and a smooth reflow is
+// a flat line; a lurch shows as that share changing partway through.
 //
-// The page's padding is the thing being animated, and at 420ms its fastest
-// frame covers about 16px. So the question is not how far the card moved in a
-// frame — it is whether the card moved BY THE SAME FRACTION as the page did,
-// every frame. Divide one by the other and a smooth reflow gives a flat line:
-// the card takes a constant share of every pixel the page gives up. A lurch
-// shows as that share changing partway through.
-//
-// This is what "jerky" turned out to be, after the chip row and the sheet were
+// This is what "jerky" turned out to be, once the chip row and the sheet were
 // dealt with. Closing the sheet on a 700px-tall window, the card grew at
 // 1.00px per px of page movement for four frames while cardTopSpacer sat
 // pinned at 0, then dropped to 0.31 the instant the spacer came off the floor
-// — a 3.2x change of speed in one frame, in the middle of one 420ms move.
-// Nothing that measures the card alone can see it.
-// Judge the EDGES, not the size.
+// — a 3.2x change of speed in one frame, mid-move.
 //
-// The card's height is a derived quantity, and its rate of change can shift
-// without anything visibly jumping — the top edge slows while the bottom edge
-// carries on, which reads as smooth. Asserting on height alone therefore
-// reports lurches nobody can see (a 6.1x height-rate spread at 1400x800 whose
-// edges both travel at a steady 1.7x). What a person watches is where the
-// card's boundaries are, so that is what this asks about.
+// EDGES rather than height, because height is derived and its rate can shift
+// with nothing visibly jumping: the top edge slows while the bottom carries on,
+// which reads as smooth. Asserting on height reported lurches nobody can see
+// (6.1x at 1400x800, whose edges both travel at a steady 1.7x). What a person
+// watches is where the card's boundaries are.
 //
-// Confirmed to discriminate: against the code this replaced the same measure
-// reads 3.0x at 1400x700 and 2.7x at 800x700, both now 1.0-1.1x.
+// Confirmed to discriminate rather than merely pass: against the code this
+// replaced the same measure reads 3.0x at 1400x700 and 2.7x at 800x700, both
+// now 1.0-1.1x.
 const EDGES = ["cardTop", "cardBottom"];
 
 function shareOfPageMove(frames, key) {
