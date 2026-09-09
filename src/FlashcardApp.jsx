@@ -311,6 +311,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Without this there was no path from a card to the tutor at all: openChat
   // took no argument, so asking why you'd just missed something meant retyping
   // the whole card into the box.
+  //
+  // It is only ever an OVERRIDE. The tutor falls back to whatever card is on
+  // screen (see the ChatPanel call below), because opening the panel from the
+  // nav mid-session and having it not know what you are looking at is the
+  // question people actually ask it — "what is this card" — and the first
+  // version answered "I can't see your screen".
   const [chatCard, setChatCard] = useState(null);
   const openChat = useCallback((aboutCard = null) => {
     if (!dismissFeedback()) return;
@@ -565,6 +571,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   const card = deck[idx];
   // Keep the ref in sync so deck rebuilds can find the current card.
   useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
+  // Drop the tutor's card override once you move on. It is a snapshot taken at
+  // a wrong answer (it carries the miss), so leaving it set would have the
+  // tutor still talking about a card two behind the one on screen.
+  useEffect(() => { setChatCard(null); }, [card?.row_id]);
   const flip = useCallback(() => setFlipped(f => !f), []);
 
   // Auto-speak French when a French side becomes visible
@@ -1588,7 +1598,10 @@ export default function FlashcardApp({ user, onSignOut }) {
         onClose={() => setShowChat(false)}
         user={user}
         cards={userCards}
-        currentCard={chatCard}
+        // The override if there is one, otherwise the card on screen. Passing
+        // `card` live rather than a snapshot means the tutor follows you as
+        // you advance through the session.
+        currentCard={chatCard || (mode === "study" ? card : null)}
         onCardsAdded={reloadDeck}
         onNeedKey={() => { setShowChat(false); setShowKeyModal(true); }}
         reflow={chatReflow}
