@@ -66,6 +66,21 @@ function writeCache(userId, cards) {
   }
 }
 
+// The deck is one person's whole vocabulary. It has no business surviving in
+// a browser after they sign out of it.
+export function clearDeckCache(userId) {
+  try {
+    if (userId) localStorage.removeItem(CACHE_PREFIX + userId);
+    else {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k);
+      }
+    }
+  } catch {
+    // Storage unavailable. Nothing to clear that we can reach.
+  }
+}
+
 export function useUserDeck(user) {
   // Depend on the ID, not the object. supabase-js hands back a NEW user object
   // every time it refreshes the token — roughly hourly — and keying the effect
@@ -130,7 +145,11 @@ export function useUserDeck(user) {
         if (cancelled) return;
         if (error) {
           console.error("Failed to load user deck:", error);
-          setCards([]);
+          // Keep whatever is already on screen. Blanking a cached deck over a
+          // transient error emptied the study view AND convinced the lesson
+          // sync the user owned none of their lesson cards, so it re-inserted
+          // all of them. An empty deck is only the truth on a first load.
+          setCards((prev) => (prev.length ? prev : []));
           setLoaded(true);
           loadedForUser.current = userId;
           return;

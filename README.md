@@ -1,15 +1,67 @@
 # French Flashcards
 
-A spaced-repetition flashcard app built from a year of daily French lesson logs.
-Features 919 cards across vocabulary, expressions, grammar, and pronunciation,
-with fuzzy typing mode, gender-aware matching, fill-in-the-blank exercises, and
-per-user progress synced via Supabase.
+A spaced-repetition flashcard app for learning French. Upload a class notebook,
+Claude parses it into cards, and FSRS decides what you see and when.
+
+Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.vercel.app).
+
+## What's in it
+
+- **Notebook parsing.** `api/parse-cahier.js` turns raw notebook text (PDF or
+  Word) into cards: section slicing, homework stripping, slash-pair splitting,
+  conjugation expansion, polysemy-aware dedupe.
+- **FSRS scheduling.** Per-card memory strength rather than a fixed ladder, so
+  intervals keep growing and a miss shortens the gap instead of wiping it.
+- **Session building.** `src/lib/sessionQueue.js` selects by priority — lapses,
+  due reviews, new cards, and a spot-check sample of mastered ones — reserving
+  the new and spot-check slots *before* the target is spent on due work, then
+  shuffles. Blocked practice feels easier during a session and tests worse
+  afterwards.
+- **Card quality.** Two mechanisms for the two ways a card goes bad: an English
+  gloss leaking onto the French side, and one card teaching two unrelated words
+  that happen to share a spelling. A bad card is worse than no card, because
+  FSRS records a recall that never happened.
+- **Lessons.** Fixed card sets built from a teacher's materials, synced into a
+  learner's deck on load and scheduled through FSRS like anything else.
+- **Tutor chat.** A side panel that proposes new cards; the client performs the
+  insert under row-level security, so the model never writes to the database.
 
 ## Stack
 
-- **Frontend**: Vite + React (no framework besides React itself)
-- **Auth + database**: Supabase (Postgres + magic-link email auth, both free tier)
-- **Hosting**: Vercel, Cloudflare Pages, or Netlify — all work identically
+| Layer | Choice |
+|---|---|
+| Frontend | Vite + React 18 — no router, no CSS framework |
+| Scheduling | [`ts-fsrs`](https://www.npmjs.com/package/ts-fsrs) 5.4 |
+| Auth + data | Supabase — Postgres, magic-link email, row-level security |
+| AI | Anthropic SDK, called only from serverless functions |
+| Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
+| Tests | `playwright-core` driving headless Chromium against a mock Supabase |
+
+## Layout
+
+```
+api/           10 serverless functions: notebook parsing, tutor chat, sense
+               splitting, answer adjudication, admin and upload plumbing.
+               api/_lib is import-only — the underscore hides it from Vercel's
+               function discovery
+src/           React app
+src/lib/       scheduling, session building, card classification, text cleanup
+src/data/      the deck, and static lessons
+migrations/    run in order in the Supabase SQL editor
+supabase/      schema.sql for a fresh deploy
+tests/         15 suites, most driving the real app in a browser
+```
+
+## Tests
+
+```bash
+npm test              every suite
+npm test -- layout    only suites whose name contains "layout"
+```
+
+Suites assert on **measured** values — geometry, computed styles, request
+payloads — rather than on intent. [`tests/README.md`](tests/README.md) lists what
+each suite covers and the rules the suite exists to enforce.
 
 ## Deploy from scratch (~30 minutes the first time)
 

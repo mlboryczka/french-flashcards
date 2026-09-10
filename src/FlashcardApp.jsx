@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
-import { LESSONS, lessonSource, lessonIdOf } from "./data/lessons";
+import { LESSONS, lessonIdOf } from "./data/lessons";
+import { reconcileLessons } from "./lib/lessonSync";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt } from "./lib/cardText";
@@ -303,15 +304,31 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!req) { setShowFeedback(false); return true; }
     return req();
   }, []);
-  const openChat = useCallback(() => {
+  // The card the tutor should treat as "what I'm looking at". Set when the
+  // tutor is opened FROM a card — from the study view, or from the banner after
+  // a wrong answer. Null when opened from the nav, where there is no such card.
+  //
+  // Without this there was no path from a card to the tutor at all: openChat
+  // took no argument, so asking why you'd just missed something meant retyping
+  // the whole card into the box.
+  //
+  // It is only ever an OVERRIDE. The tutor falls back to whatever card is on
+  // screen (see the ChatPanel call below), because opening the panel from the
+  // nav mid-session and having it not know what you are looking at is the
+  // question people actually ask it — "what is this card" — and the first
+  // version answered "I can't see your screen".
+  const [chatCard, setChatCard] = useState(null);
+  const openChat = useCallback((aboutCard = null) => {
     if (!dismissFeedback()) return;
     setShowLessonPanel(false);
+    setChatCard(aboutCard);
     setShowChat(true);
   }, [dismissFeedback]);
   const toggleChat = useCallback(() => {
     if (showChat) { setShowChat(false); return; }
     if (!dismissFeedback()) return;
     setShowLessonPanel(false);
+    setChatCard(null);
     setShowChat(true);
   }, [showChat, dismissFeedback]);
   const openFeedback = useCallback(() => { setShowChat(false); setShowLessonPanel(false); setShowFeedback(true); }, []);
@@ -554,6 +571,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   const card = deck[idx];
   // Keep the ref in sync so deck rebuilds can find the current card.
   useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
+  // Drop the tutor's card override once you move on. It is a snapshot taken at
+  // a wrong answer (it carries the miss), so leaving it set would have the
+  // tutor still talking about a card two behind the one on screen.
+  useEffect(() => { setChatCard(null); }, [card?.row_id]);
   const flip = useCallback(() => setFlipped(f => !f), []);
 
   // Auto-speak French when a French side becomes visible
@@ -876,7 +897,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Checking the event target for INPUT/TEXTAREA isn't enough; most of a
   // panel is neither.
   const overlayOpen =
-    showChat || showFeedback || showUpload || showKeyModal ||
+    showChat || showFeedback || showUpload || showKeyModal || showLessonPanel ||
     showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
 
   useEffect(() => {
@@ -1035,34 +1056,29 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user || !deckLoaded || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const missing = [];
-      const stale = [];
-      for (const lesson of LESSONS) {
-        const want = new Map(lesson.cards.map(([f, b, c]) => [f, { f, b, c }]));
-        const have = userCards.filter((card) => lessonIdOf(card) === lesson.id);
-        const haveFronts = new Set(have.map((card) => card.f));
-        for (const [front, card] of want) {
-          if (!haveFronts.has(front)) {
-            missing.push({
-              user_id: user.id,
-              front: card.f,
-              back: card.b,
-              category: card.c,
-              dates: [],
-              source: lessonSource(lesson.id),
-            });
-          }
-        }
-        for (const card of have) {
-          if (!want.has(card.f) && card.row_id != null) stale.push(card.row_id);
-        }
+      const { missing, rekey, stale, unkeyed } = reconcileLessons(LESSONS, userCards);
+      if (unkeyed.length) {
+        // Written before lesson cards had a stable key, and matching nothing in
+        // the lesson now. That is either a card the lesson retired or one the
+        // user corrected, and there is no way to tell which — so it stays.
+        console.info(
+          `[lessons] ${unkeyed.length} unkeyed card(s) match no lesson card; left alone:`,
+          unkeyed.map((c) => c.f)
+        );
       }
-      if (!missing.length && !stale.length) return;
+      if (!missing.length && !rekey.length && !stale.length) return;
+      const owned = (rows) => rows.map((r) => ({ ...r, user_id: user.id }));
       try {
         if (missing.length) {
           const { error } = await supabase
             .from("user_cards")
-            .upsert(missing, { onConflict: "user_id,front" });
+            .upsert(owned(missing), { onConflict: "user_id,front" });
+          if (error) throw error;
+        }
+        if (rekey.length) {
+          const { error } = await supabase
+            .from("user_cards")
+            .upsert(owned(rekey), { onConflict: "user_id,front" });
           if (error) throw error;
         }
         if (stale.length) {
@@ -1074,7 +1090,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           if (error) throw error;
         }
         console.info(
-          `[lessons] synced: +${missing.length} card(s), -${stale.length} retired`
+          `[lessons] synced: +${missing.length} card(s), ${rekey.length} re-keyed, ` +
+            `-${stale.length} retired`
         );
         reloadDeck();
       } catch (e) {
@@ -1319,7 +1336,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <p style={S.onbCardDesc}>Paste a public Google Doc URL and we'll fetch the contents.</p>
               <div style={S.onbCardArrow}>→</div>
             </button>
-            <button data-tutor-toggle style={S.onbCard} onClick={openChat}>
+            <button data-tutor-toggle style={S.onbCard} onClick={() => openChat()}>
               <div style={S.onbCardIcon}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
               </div>
@@ -1344,7 +1361,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           open={showChat}
           onClose={() => setShowChat(false)}
           user={user}
-          deckFronts={[]}
+          cards={[]}
           onCardsAdded={reloadDeck}
           onNeedKey={() => setShowKeyModal(true)}
         />
@@ -1580,7 +1597,11 @@ export default function FlashcardApp({ user, onSignOut }) {
         open={showChat}
         onClose={() => setShowChat(false)}
         user={user}
-        deckFronts={userCards.map((c) => c.f)}
+        cards={userCards}
+        // The override if there is one, otherwise the card on screen. Passing
+        // `card` live rather than a snapshot means the tutor follows you as
+        // you advance through the session.
+        currentCard={chatCard || (mode === "study" ? card : null)}
         onCardsAdded={reloadDeck}
         onNeedKey={() => { setShowChat(false); setShowKeyModal(true); }}
         reflow={chatReflow}
@@ -1988,7 +2009,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       <main style={mainStyle}>
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
-          <div style={S.topBarInner}>
+          <div style={S.topBarInner} className="chip-row">
           <div style={S.typeGroup}>
             {[["all", "All"], ...CARD_TYPES.map((t) => [t, TYPE_LABEL[t] === "Phrase" ? "Phrases" : TYPE_LABEL[t]])]
               .map(([k, label]) => {
@@ -2055,7 +2076,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
         <div style={S.mainInner}>
           {/* Sub-toolbar: session counter and back control */}
-          <div style={S.subToolbar}>
+          <div style={S.subToolbar} className="chip-row">
             {card && (() => {
               // The counter shows progress against the *initial* deck size
               // so re-queued retries don't make the session look longer.
@@ -2222,9 +2243,29 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
                       <div style={S.feedbackRow}>
                         {feedbackState === null && (
-                          <button style={S.feedbackBtn} onClick={submitFeedback}>
-                            My answer should have been accepted
-                          </button>
+                          <>
+                            <button style={S.feedbackBtn} onClick={submitFeedback}>
+                              My answer should have been accepted
+                            </button>
+                            {/* The other thing you want after a miss: not "I
+                                was right", but "why was I wrong?". Sits in the
+                                SAME row as the dispute link — belowCard is a
+                                measured 170px well and a new line would push
+                                the card off its one fixed position. */}
+                            <button
+                              data-tutor-toggle
+                              style={S.feedbackBtn}
+                              onClick={() =>
+                                // The miss is stated, not read off the row:
+                                // last_answer_correct isn't patched until the
+                                // answer is committed, and this button sits in
+                                // the banner BEFORE that.
+                                openChat({ ...card, last_answer_correct: false })
+                              }
+                            >
+                              Ask the tutor
+                            </button>
+                          </>
                         )}
                         {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
                         {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
@@ -3028,7 +3069,10 @@ const S = {
   sideEmail: { fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, padding:"4px 12px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"100%", opacity:0.7 },
 
   // ── Sub-toolbar (category filter + counter, below sticky top bar) ─
-  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:0, flexShrink:0, flexWrap:"wrap", minHeight:30 },
+  // flexWrap is gone; the row scrolls instead (className "chip-row"). Wrapping
+  // changed the row's HEIGHT at a threshold width, and a panel reflow crosses
+  // that threshold mid-animation — see the .chip-row note in styles.css.
+  subToolbar: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, marginBottom:0, flexShrink:0, minHeight:30 },
   subToolbarRight: { display:"flex", alignItems:"center", gap:12 },
 
   // ── Card area: centered with decorative blur shapes ───────────────
@@ -3046,7 +3090,7 @@ const S = {
   // viewport height. The fix is `cardTopSpacer` below; the bottom padding is
   // gone because it was the larger half of the same error, and the well
   // already leaves plenty of space beneath the card.
-  cardArea: { position:"relative", flex:1, minHeight:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:0, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
+  cardArea: { position:"relative", flex:1, minHeight:0, containerType:"inline-size", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:0, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
   // Mirrors what sits below the card, less the chrome that already sits above
   // cardArea, so the card's own midpoint lands on the window's midpoint:
   //
@@ -3055,10 +3099,32 @@ const S = {
   //   below cardArea    16 (mainInner padBottom)
   //   spacer = 190 + 16 - 100 = 106
   //
-  // `0 1 106px` and not a fixed height: it must give its space up first when
+  // `0 8 106px` and not a fixed height: it must give its space up first when
   // the window is short or a panel opens, so the card keeps its size rather
   // than crushing. That is the job the old paddingBottom toggle was doing.
-  cardTopSpacer: { flex:"0 1 106px", minHeight:0, width:"100%", pointerEvents:"none" },
+  //
+  // The shrink factor is 2, and the number is load-bearing: it is the largest
+  // one that does not make this spacer BOTTOM OUT mid-animation.
+  //
+  // Flex shrinks weighted by factor x basis, so the factor sets the spacer's
+  // share of a squeeze against cardWrap's 375 basis. Push it too high and the
+  // spacer's share exceeds the 106px it actually has, so it pins at 0 while
+  // the deficit is large and only un-pins as the deficit shrinks. That pinning
+  // is a HANDOVER, and it is what "jerky" finally turned out to be: closing
+  // the sheet on a 700px-tall window, the card grew at 1.00px per px of page
+  // movement for four frames with the spacer stuck at 0, then dropped to
+  // 0.31 the moment it came off the floor. A rate change of 3.2x in one frame,
+  // in the middle of a single 420ms move.
+  //
+  // Measured across window heights 640-900, worst-case ratio of fastest to
+  // slowest frame: factor 1 gives 6.5x, factor 8 gives 3.2x, factor 4 gives
+  // 2.9x, factor 2 gives 2.0x — and 1.1x at the short heights where the card
+  // has real resizing to do. Worst single frame falls from 26px to 10px.
+  //
+  // It only changes behaviour under pressure: with free space to spare the
+  // spacer stays 106 and cardArea's `safe center` places the card, so resting
+  // geometry at every window height is untouched.
+  cardTopSpacer: { flex:"0 2 106px", minHeight:0, width:"100%", pointerEvents:"none" },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -3095,7 +3161,10 @@ const S = {
   // stacked header userInfo block.
   // Sticky glass-blur top app bar — direction toggle, type/auto-speak chips
   topBar: { position:"sticky", top:0, zIndex:20, padding:"0 40px", background:"rgba(253,248,246,0.92)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", flexShrink:0 },
-  topBarInner: { display:"flex", alignItems:"center", gap:12, padding:"14px 0", maxWidth:1100, width:"100%", margin:"0 auto", borderBottom:"1px solid rgba(3,22,50,0.07)", flexWrap:"wrap" },
+  // Same as subToolbar: one line, always, scrolling if the chips outgrow the
+  // column. This row growing a second line is what made the card jump 39px in
+  // a single frame partway through every horizontal reflow.
+  topBarInner: { display:"flex", alignItems:"center", gap:12, padding:"14px 0", maxWidth:1100, width:"100%", margin:"0 auto", borderBottom:"1px solid rgba(3,22,50,0.07)" },
   topBarSpacer: { flex:1 },
   topBarBtn: { padding:"6px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
   topBarEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
@@ -3121,7 +3190,8 @@ const S = {
   // raw checkboxes. Same pill shape as catBtn but with an active state.
   chipToggle: { padding:"6px 13px", border:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}`, borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
   chipToggleA: { background:T.color.primary, color:T.color.onPrimary, borderColor:T.color.primary, fontWeight:600 },
-  typeGroup: { display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" },
+  // Sits inside the scrolling chip row, so it must not wrap on its own either.
+  typeGroup: { display:"flex", gap:6, alignItems:"center", flexWrap:"nowrap", flexShrink:0 },
   typeBtn: { padding:"6px 13px", borderWidth:1, borderStyle:"solid", borderColor:"rgba(3,22,50,0.08)", borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
   typeBtnA: { background:T.color.primary, borderColor:T.color.primary, color:T.color.onPrimary, fontWeight:600 },
   dirGroup: { display:"flex", gap:2, marginLeft:"auto", padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md },
@@ -3145,7 +3215,42 @@ const S = {
   // Continue row, and measures 170. Anything less and the card still shifts
   // when that state appears; measured, not estimated.
   belowCard: { width:"100%", maxWidth:600, minHeight:170, flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start" },
-  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"1 1 auto", minHeight:0, display:"flex", alignItems:"safe center", justifyContent:"center" },
+  // `0 1 375px`, not `1 1 auto`. The basis is the card's own maxHeight, so the
+  // wrapper is exactly as tall as the card wants to be and no taller.
+  //
+  // It used to GROW to swallow every spare pixel in cardArea, and that slack
+  // is what split a reflow into two separate motions. Squeeze the page and the
+  // wrapper's slack went first: the card kept its size and only slid upward.
+  // Once the slack ran out the card stopped sliding and started shrinking
+  // instead. One 420ms animation, two different behaviours, with a hard
+  // switchover about 80% of the way through — and on the way back the card
+  // recovered 62% of its size in a single frame.
+  //
+  // With a definite basis there is no slack to spend first. The spacer above
+  // (basis 106) and this (basis 375) shrink together, weighted by those bases,
+  // from the first pixel of the squeeze: the card moves and resizes at the
+  // same time, over one curve, instead of doing one and then the other.
+  //
+  // Grow stays 0 so a tall window still leaves the card at 375 rather than
+  // stretching it; the spare height goes to cardArea's `safe center` instead.
+  // The basis must stay DEFINITE — `auto` reintroduces the circularity with
+  // the card's `height: 100%` below and collapses it to its 170px floor.
+  //
+  // The SAME maxHeight as the card, and that matters more than it looks.
+  //
+  // This wrapper used to be allowed to stand taller than the card could ever
+  // be — 309px against a 290px cap at an 800px window. That 19px of slack is
+  // an absorber, and absorbers are what make a reflow lurch: opening the sheet,
+  // the card sat perfectly still for three frames while the slack was eaten,
+  // then started shrinking at 0.64px per px of page movement the moment the
+  // wrapper dropped to the card's size. Still, then moving, in one frame.
+  //
+  // Capping both at the same value leaves nothing to eat first, so the card
+  // starts moving on frame one and keeps one rate throughout. The query
+  // container is cardArea (see there) because an element cannot query itself,
+  // and 62.5cqw resolves the same against it: this wrapper is
+  // min(600, cardArea width) wide, and above 600 the 375px cap wins anyway.
+  cardWrap: { perspective:1200, marginBottom:20, width:"100%", maxWidth:600, position:"relative", zIndex:1, flex:"0 1 min(375px, 62.5cqw)", minHeight:170, maxHeight:"min(375px, 62.5cqw)", display:"flex", alignItems:"safe center", justifyContent:"center" },
   // maxHeight caps it on tall screens and lets it give up height on short
   // ones; the old minHeight:340 floor is what made it overflow instead.
   // Height-driven so a short window shrinks the card instead of overflowing
@@ -3153,13 +3258,31 @@ const S = {
   // absorbed the entire squeeze when a panel opened, collapsing to nothing
   // while 130px of padding sat unused below it.
   //
+  // maxHeight caps the card on BOTH axes, which took a container query.
+  //
+  // The container is cardArea, not cardWrap: INLINE-size, not size — size
+  // containment on an ancestor of the rotating card is the hazard the note
+  // below warns about. Verified by sampling the card's transform mid-rotation
+  // rather than trusting its computed style: still a real matrix3d.
+  //
+  // `aspect-ratio` only holds while one axis is free to follow the other. The
+  // height came from the flex column and the width was capped by
+  // `max-width: 100%`, so once the COLUMN was the tight axis both were pinned
+  // and the ratio simply lost: at an 800px window the card was 464x375, near
+  // enough a square, and at 900 it was 1.5:1. Long-standing, and invisible to
+  // a suite that varied only the window height.
+  //
+  // 62.5cqw is 100/1.6 percent of cardWrap's width, so this reads "never
+  // taller than the width can support", and whichever of the two caps binds
+  // first, the card stays 1.6:1.
+  //
   // NO containerType here. container-type: size applies containment, which
   // makes the element a grouping element and so FLATTENS transform-style:
   // preserve-3d — the computed style still reads preserve-3d, but the card
   // stopped rotating and just swapped faces mid-flip. The query container is
   // each face instead; they are inset:0 so their size is the card's, and they
   // hold no 3D children of their own.
-  card: { position:"relative", height:"100%", minHeight:170, maxHeight:375, maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1" },
+  card: { position:"relative", height:"100%", minHeight:170, maxHeight:"min(375px, 62.5cqw)", maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1" },
   cardFront: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
   cardBack: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },

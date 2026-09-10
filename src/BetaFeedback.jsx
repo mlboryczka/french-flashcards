@@ -459,7 +459,17 @@ const BF = {
     right: 0,
     margin: "0 auto",
     maxWidth: 920,
-    width: "100%",
+    // NOT width:100%. The sheet is `position: fixed`, so a percentage width
+    // resolves against the VIEWPORT — not against the left/right span it
+    // actually occupies. `left` is overridden inline to SIDEBAR_WIDTH so the
+    // sheet centres over the content column rather than straddling the nav,
+    // and below a 1176px window (256 of sidebar + 920 of sheet) the two
+    // fought: the width won, `margin: 0 auto` had no free space left to
+    // centre with, and the sheet hung off the right edge — 256px of it at a
+    // 900px window, carrying its own Minimize and Close buttons off-screen.
+    // The only remaining way out was an outside click, which nothing
+    // advertises. `auto` lets left/right do the sizing; maxWidth still caps it.
+    width: "auto",
     // No fixed height any more — the sheet is as tall as its content, which is
     // a title row, one growing field and a row of chips. The cap is a backstop
     // for a long error plus a screenshot preview, not the usual case.
@@ -617,7 +627,10 @@ const BF = {
     right: 0,
     margin: "0 auto",
     maxWidth: 920,
-    width: "100%",
+    // Same reason as `sheet` above: fixed position + an inline `left` means a
+    // percentage width overflows the span instead of filling it, and the bar's
+    // own × goes off the right edge on a narrow window.
+    width: "auto",
     background: T.color.surfaceLowest,
     borderRadius: `${T.radius.lg}px ${T.radius.lg}px 0 0`,
     boxShadow: "0 -6px 24px rgba(3,22,50,0.12), 0 -1px 0 rgba(3,22,50,0.06)",

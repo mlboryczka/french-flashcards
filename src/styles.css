@@ -78,6 +78,35 @@ textarea:focus-visible {
 }
 
 /* ───────────────────────────────────────────────────────────────────────
+   A chip row that scrolls instead of wrapping.
+
+   The top bar and the sub-toolbar are single rows of chips above the card.
+   They used to wrap, and wrapping is a STEP: the row is 58px tall, then one
+   chip no longer fits and it is 97px tall, with nothing in between. That step
+   landed in the middle of a panel reflow — the content column narrows
+   continuously over 420ms, crosses the wrap threshold, and the whole card
+   area below it jumps 39px in a single frame, taking the card's height with
+   it. Measured at 1400x700: card 460x288 -> 398x249, one frame, no easing.
+
+   Scrolling keeps the row exactly one line tall at every width, so nothing
+   below it ever moves. The scrollbar is hidden because a visible one is
+   itself a height change, which would reintroduce the same step it fixes.
+   ─────────────────────────────────────────────────────────────────────── */
+.chip-row {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.chip-row::-webkit-scrollbar {
+  display: none;
+}
+/* Chips keep their size; the row scrolls rather than squeezing them. */
+.chip-row > * {
+  flex-shrink: 0;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
    Keyframes (required by the pronunciation panel — do not remove)
    ─────────────────────────────────────────────────────────────────────── */
 @keyframes pulse {

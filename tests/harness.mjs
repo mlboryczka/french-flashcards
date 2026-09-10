@@ -73,7 +73,9 @@ export async function servedDeck() {
 }
 
 export async function finish(browser, ck) {
-  await browser.close();
+  // Suites that open a browser per case have already closed theirs and pass
+  // null; the tally below is the part they still want.
+  if (browser) await browser.close();
   const n = ck.fails();
   console.log(n ? `\n  FAILED: ${n}` : "\n  all checks passed");
   process.exit(n ? 1 : 0);

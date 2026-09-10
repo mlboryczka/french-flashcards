@@ -19,7 +19,7 @@ still open.
 | Frontend | Vite + React 18, no router, no CSS framework — styles are inline objects in a `S` / `T` theme constant |
 | Scheduling | `ts-fsrs` 5.4.2 |
 | Auth + data | Supabase (Postgres, magic-link email, RLS), free tier |
-| AI | Anthropic SDK, model `claude-opus-5`, called only from serverless functions. **Each user brings their own API key** (see Who pays for Claude) |
+| AI | Anthropic SDK, called only from serverless functions. Model is per route — see the table under Serverless functions. **Each user brings their own API key** (see Who pays for Claude) |
 | Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
 
 **Free-tier gotcha:** Supabase pauses a project after ~7 days idle, and
@@ -166,13 +166,26 @@ The parser prompt also forbids producing these in the first place.
 | Route | Does |
 |---|---|
 | `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, polysemy-aware dedupe |
-| `chat.js` | Tutor chat. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
+| `chat.js` | Tutor chat. Streams (SSE), Sonnet 5 at effort `low`, sent a slice of the deck as context. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
 | `split-senses.js` | Audits candidate multi-sense cards. Read-only |
 | `apply-splits.js` | Applies approved splits. Service role + manual ownership checks |
 | `admin-update-card.js` | Single-card edit. Service role, because RLS was silently returning success with zero rows affected from the client |
 | `review-answer.js` | Adjudicates "my answer should have been accepted". Honours `force` without a model call; alternates are per-user |
 | ~~`tts.js` / `pronounce.js`~~ | **Deleted.** Unauthenticated proxies to the owner's Azure Speech account. `src/audio.js` now uses the browser's own `speechSynthesis` only |
 | `admin-users.js`, `parse-corrections.js`, `upload-batches.js`, `cahier-parse.js` | Admin and upload plumbing |
+
+### Which model each route runs
+
+The model is a constant per file, chosen for that file's job — not something a
+router picks per request. The endpoint boundaries already sort the traffic by
+kind, so this needs no classifier.
+
+| Route | Model | Why |
+|---|---|---|
+| `chat.js` | `claude-sonnet-5`, effort `low` | On the latency path; a vocabulary lookup is not hard inference |
+| `review-answer.js` | `claude-opus-5` | Rare, and it writes to `card_alternates` and to scheduling. Cost of error is real, so it keeps the strongest model |
+| `split-senses.js` | `claude-opus-5` | Batch classification against written-out rules. **Overkill; Sonnet would do**, and being offline it could go through the Batch API at half price |
+| `parse-cahier.js`, `cahier-parse.js` | `claude-haiku-4-5` | Structured extraction from a regular format. Correct as-is |
 
 `api/_lib/` is skipped by Vercel's function discovery (underscore prefix), so
 it is import-only.
@@ -314,6 +327,61 @@ These look arbitrary and are not:
 - **Nav markers use CSS longhands**, not the `borderRight` shorthand. React
   diffs per property, so a shorthand base plus a longhand override leaves a
   stale value when the item deactivates — both nav items showed a marker.
+- **The chip rows scroll; they never wrap.** The top bar and the sub-toolbar
+  are single rows of chips above the card, and wrapping is a *step*: 58px tall,
+  then one chip no longer fits and it is 97px, with nothing in between. A panel
+  reflow narrows the column continuously over 420ms, so it crossed that
+  threshold mid-animation and shoved the whole card area down 39px in one
+  frame, taking 39px of card height with it (measured at 1400x700 — the single
+  worst reflow artefact in the app). `MIN_REFLOW_CONTENT` was supposed to
+  prevent this and could not: it guards the column's FINAL width, and the wrap
+  threshold sits around 777px, well above the 680 floor. `.chip-row` in
+  styles.css keeps both rows one line at every width and scrolls the overflow,
+  so the chrome above the card has a constant height and nothing below it
+  moves. The scrollbar is hidden because a visible one is itself a height
+  change.
+- **The feedback sheet sizes itself from `left`/`right`, never `width: 100%`.**
+  It is `position: fixed` with an inline `left` of `SIDEBAR_WIDTH`, and a
+  percentage width on a fixed element resolves against the VIEWPORT rather than
+  the span it occupies. Below a 1176px window (256 + 920) the width won,
+  `margin: 0 auto` had no free space left to centre with, and the sheet hung
+  off the right edge — 256px of it at a 900px window, carrying its own Minimize
+  and Close buttons off-screen. The only way out of the panel was an outside
+  click, which nothing advertises. `width: auto` lets left/right size it and
+  `maxWidth: 920` still caps it. The minimized bar had the identical bug.
+- **`cardWrap` has a definite flex basis (`0 1 375px`), not `1 1 auto`.** It
+  used to grow to swallow every spare pixel of `cardArea`, and that slack split
+  a reflow into two separate motions: the slack went first, so the card slid
+  upward at full size, and only once it ran out did the card stop sliding and
+  start shrinking. One 420ms animation, two behaviours, with a hard switchover
+  ~80% through — and on the way back the easing crossed the handover in about
+  two frames, so the card recovered 12 of its 19px in a single one. A definite
+  basis leaves no slack to spend first. The basis must stay definite: `auto` is
+  circular against the card's `height: 100%` and collapses it to its 170px
+  floor. This also made the card *larger* on short windows (at 700px tall,
+  461x288 -> 491x307) because the old `auto` basis was over-shrinking it.
+- **The card caps its height against its WIDTH, via a container query.**
+  `aspect-ratio` only holds while one axis is free to follow the other, and the
+  card had its height driven by the flex column and its width capped by
+  `max-width: 100%` — so once the column was the tight axis both were pinned
+  and the ratio lost. At an 800px window the card was 464x375, near enough a
+  square; at 900 it was 1.5:1. Long-standing, and invisible to a suite that
+  varied only the window height. `cardWrap` is now a `container-type:
+  inline-size` container and the card's `maxHeight` is `min(375px, 62.5cqw)` —
+  62.5 being 100/1.6 — so whichever cap binds first it stays 1.6:1. It must be
+  INLINE-size: size containment on an ancestor of the rotating card is the same
+  hazard as putting it on the card, and the flip was re-verified by sampling
+  the transform mid-rotation.
+- **`cardTopSpacer` shrinks at factor 8, not 1.** Flex shrinks weighted by
+  factor x basis, so against cardWrap's 375 the old factor of 1 had the spacer
+  absorbing only 106/481 of a squeeze and handing the card the other 78% — when
+  the whole point of the spacer is to give its space up *first*. At 8 the card
+  gives up about a third as much and the worst frame of a reflow drops from
+  12.2px to 4.8px. It only bites under pressure; resting geometry is untouched.
+- **The layout suite varies the window's WIDTH as well as its height.** The
+  height-only loop it had could only ever catch the card being squeezed
+  vertically, and the squarish-card bug above lived through it untouched — then
+  a later change made it worse before there was a check to say so.
 - **`shellNarrow` clips one axis, `shell` clips both.** The card area's two
   decorative blur circles are positioned outside their container on purpose
   (`left:-60` / `right:-60`); the desktop shell's `overflow:hidden` hid that
@@ -326,10 +394,17 @@ These look arbitrary and are not:
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Eight suites: two pure-logic, seven driving
-the real app in headless Chromium against a mock Supabase, asserting on
-**measured** values (geometry, computed styles, request payloads) rather than
-on intent.
+`npm test` — see `tests/README.md`. Fifteen suites: four needing no browser,
+the rest driving the real app in headless Chromium against a mock Supabase,
+asserting on **measured** values (geometry, computed styles, request payloads)
+rather than on intent.
+
+`reflow` is the one to reach for when a panel looks wrong: it samples geometry
+every frame through a whole open and close, at several window sizes, and fails
+on anything that jumps rather than travels. Every reflow bug this app has had
+was something downstream of the animating padding moving in a single frame
+while the padding itself moved smoothly over twenty-five — invisible to any
+check that measures only before and after.
 
 If you change layout, measure it in a browser. Several bugs in this project's
 history were "fixed" against an assumption and shipped broken. Two rules the
@@ -392,9 +467,26 @@ The shape of it:
 - **Static in the app, copied into the deck.** The lesson is shared; adding it
   copies its cards into `user_cards`, and that copy is what makes the
   scheduling personal, since FSRS state lives on the row.
-- **Tagged `source = "lesson:<id>"`.** That column already existed — the cahier
-  parser writes `cahier-upload`, the tutor writes `tutor-chat` — so lessons
-  needed no migration.
+- **Tagged `source = "lesson:<id>#<cardKey>"`.** That column already existed —
+  the cahier parser writes `cahier-upload`, the tutor writes `tutor-chat` — so
+  lessons needed no migration. The key hashes the front the LESSON ships
+  (`src/lib/lessonSource.js`) and is the card's identity. Identity used to be
+  the stored front, which meant correcting a typo on a lesson card made the
+  sync unable to recognise it: the row was retired as "no longer in the
+  lesson", taking its FSRS history, and the uncorrected original was inserted
+  in its place. Rows written before keys existed are matched by front and
+  re-keyed on the next sync.
+- **The sync itself is covered by `lesson-sync`, separately from `lessons`.**
+  The `lessons` suite serves the lesson's own cards AS the deck, so the sync it
+  triggers finds nothing missing and writes nothing — the path that matters for
+  a new account was invisible to it. Worse, the shared mock answers every
+  non-GET on `user_cards` with `200 []` and then goes on serving the same fixed
+  deck, so an insert that never happened and one that silently failed looked
+  identical. `lesson-sync` gives `user_cards` a real in-memory store (GET,
+  upsert, delete) and asserts on what the student ends up with: 108 cards, each
+  keyed, studiable, with all four note sections rendering; a second visit
+  writing nothing at all; and an existing deck keeping its own cards and their
+  FSRS state.
 - **Synced on load, once per mount.** A student finds L'impératif in their deck
   without pressing anything. The lesson is the authority, so the sync also
   *retires* cards it no longer contains: that is how the eight abandoned "state
@@ -473,6 +565,115 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
 
 ---
 
+## Recent work (branch `claude/tutor-functionality-improvements-wa5wa8`)
+
+The tutor, which was slow, generic, and hard to get a good card out of.
+
+### The latency was a default that changed underneath the file
+
+`api/chat.js` passed no `thinking` and no `output_config`. That was written
+when omitting `thinking` meant *no thinking*. On Opus 5 an omitted `thinking`
+runs **adaptive**, and an omitted effort defaults to **`high`** — so every
+two-word lookup was getting a maximum-depth reasoning pass from the most
+expensive model, non-streamed, inside Vercel's default 10s function budget.
+That is the whole of "the tutor is slow", and none of it was visible in the
+code, only in what the code didn't say.
+
+Now: `claude-sonnet-5`, `thinking: {type: "adaptive"}` stated explicitly, and
+`output_config: {effort: "low"}`.
+
+**Effort is a ceiling; adaptive thinking is the allocation underneath it.** At
+effort `low` a lookup costs almost nothing and a nuance question still gets
+more thought than the lookup did. That is per-question compute allocation
+decided by something that has read the question — which is the reason there is
+no model router here. Routing by question type has to decide before the answer
+exists, and in French the difficulty isn't in the surface form: *si* is five
+characters and one of the hardest words in the language, and "how do I say I
+miss you" looks like translation right up until the inversion. A classifier
+good enough to route those correctly would have to know French as well as the
+model it was trying to avoid calling.
+
+### Everything else it needed
+
+- **It streams.** SSE, one JSON event per `data:` line (`text` / `cards` /
+  `done` / `error`). Failures *before* the stream opens still answer in JSON,
+  so the client's existing error path survives. `maxDuration` is 60.
+- **It knows what you're studying.** It used to be sent `deckFronts.slice(0, 60)`
+  — sixty fronts by array position, no backs, no history. `src/lib/deckContext.js`
+  now picks the cards that bear on the question (scored on shared content words,
+  French side weighted double), the cards you recently got wrong, and the card
+  on screen. All of it is a filter over an array already in browser memory.
+- **`openChat(card)` takes an argument**, and a wrong typed answer offers "Ask
+  the tutor" beside the dispute link — in the *same row*, because `belowCard` is
+  a measured 170px well and a new line would move the card off its one position.
+- **Proposed cards are editable before they are added.** This is what makes the
+  cheaper model safe: card quality stops being load-bearing when correcting a
+  front costs a keystroke. Fronts are also run through `cleanFrenchPrompt`.
+- **A tutor card no longer stamps `dates: [today]`.** Those are the *lesson*
+  dates a word appeared on; a card invented in a chat appeared on none, and the
+  stamp made tutor cards outrank real ones in the frequency sort.
+- **The system prompt stopped lecturing.** It used to require register, gender,
+  an example sentence and a false-friend warning on *every* answer. A checklist
+  cannot be proportional to the question, which is why a two-word lookup came
+  back as five bullets. It is now cached (`cache_control` on the system block),
+  which is also why per-request deck context goes in the **user turn**: caching
+  is a prefix match, and the old code concatenated the deck onto the end of
+  `SYSTEM_PROMPT`, which would have invalidated the cache on every turn.
+- **Closing the panel aborts the request** instead of letting the answer land in
+  a panel nobody is looking at.
+
+### Two bugs found by driving it, not by running the suite
+
+- **Editing a card before adding it never showed as added.** `addCard` keyed the
+  added-set on the *edited* front while the chip checked the *original*
+  proposal, so the two never matched and you could add the same card
+  repeatedly. The check now lives inside `ProposedCard`, against its own state.
+- Writing the suite: `button:has-text("Send")` also matches **"Send feedback"**,
+  which closed the tutor and opened the feedback sheet. `:text-is()` for both
+  that and Add, since "Added" contains "Add" too.
+
+### The SDK, since it came up
+
+The tutor's parameters — `output_config`, adaptive thinking, GA prompt caching
+— all postdate `@anthropic-ai/sdk` 0.27.3, which this project was pinned to
+when the work started. They reached the API anyway, because that SDK forwards
+unknown body keys verbatim (verified by capturing the request it builds, not
+assumed). Moot now: `main` bumped the SDK to **^0.124.0** in the same window,
+so the parameters are supported rather than merely tolerated.
+
+## Recent work: bugs around the tutor branch
+
+Found by a review pass over the whole branch, not by the tutor work itself.
+
+- **Editing a lesson card destroyed it and its scheduling.** The sync
+  reconciled by front text, so a corrected front read as "the lesson dropped
+  this" — delete the row, re-insert the original, start from New. Identity is
+  now a key hashed from the lesson's own front; see the Lessons section.
+  `reconcileLessons` (`src/lib/lessonSync.js`) is pure and tested, including
+  the case that motivated it. Legacy un-keyed rows matching nothing are now
+  **left alone rather than deleted**: they are either a card the lesson retired
+  or one the user corrected, and there is no way to tell, so the safe side wins
+  and the sync logs them.
+- **The keyboard graded the card behind the lesson panel.** `showLessonPanel`
+  was missing from `overlayOpen`, so Space flipped and Enter graded a hidden
+  card — a real FSRS review for something never seen. Exactly the failure the
+  comment above that line documents; the lesson panel was added afterwards and
+  never joined the list.
+- **The score jumped backwards.** A cached copy counts as loaded, so the app is
+  answerable while the real fetch runs. `setProgress(obj)` then overwrote the
+  optimistic update with a snapshot taken before it. Local writes since mount
+  are now merged over the server rows, and `resetAll` clears the cache — without
+  that, a reload undid the reset.
+- **A network blip blanked a painted deck.** The error path did `setCards([])`
+  over a deck already on screen from cache, which then convinced the lesson sync
+  the user owned none of their lesson cards.
+- **Both caches survived sign-out.** `deck-cache:<id>` and `progress-cache:<id>`
+  sat in localStorage with one person's whole vocabulary and score history.
+  Cleared in `handleSignOut`, before the sign-out itself.
+- **Dead code in `useUserDeck`** — an unreachable duplicate of the cache write,
+  lacking the quota guard the live one has, kept quiet with an
+  `eslint-disable no-unreachable`. Deleted.
+
 ## Open items
 
 - **`^0.x` dependency versions can never update themselves.** The Anthropic
@@ -509,11 +710,45 @@ above 2.5MB, since a deck in the thousands does not fit the quota.
   module — a student can meet `Donne-les-leur` before `Regarde`. Interleaving on
   review and sequencing on first exposure are not in conflict.
 - **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
-  hypotheses tested and falsified; see the history in git. Separately, the card
-  DOES resize on ~16 of 25 frames during a panel reflow, because `padding-bottom`
-  is a layout property and the card's `cqh` text re-resolves each time. Measured
-  under CPU throttling. Animating `transform` instead would fix it, and would
-  change what the layout and motion suites assert.
+  hypotheses tested and falsified; see the history in git. Note that the
+  *reflow* half of this complaint turned out to be four separate, measurable
+  bugs, all now fixed and covered by the `reflow` suite — see the chip-row,
+  feedback-sheet and `cardWrap` notes above. Whether anything remains wrong
+  with the FLIP itself is still open, and should be measured separately from
+  the reflow now that the reflow is quiet.
+
+  The last of the jerkiness was a chain of HANDOVERS. The card's size is the
+  last thing to absorb a squeeze, behind cardArea's centring slack, cardWrap's
+  slack above the card's cap, and cardTopSpacer — and each of those has a
+  finite capacity, so each one running out changed the card's speed mid-move.
+  Measured as the card's share of each pixel the page gives up, it grew at
+  1.00px per px for four frames with the spacer pinned at 0, then dropped to
+  0.31 the moment the spacer came off the floor. Removing the slack (cardWrap
+  capped to the card's own height, and its flex BASIS set to that cap so flex
+  never freezes it) and setting the spacer's shrink factor to 2 leaves one
+  constant rate: 0.58px per px from the first frame at 800x700.
+
+  Judge this on the card's EDGES, not its height. Height is derived, and its
+  rate can shift with nothing visibly jumping — the top edge slows while the
+  bottom carries on. Worst edge-rate spread is 2.0x, against 3.0x before.
+  Animating `transform` instead of layout would remove the per-frame layout
+  work altogether, and would change what the layout, motion and reflow suites
+  assert.
+- **The tutor's model change is unmeasured.** `chat.js` moved from Opus 5 to
+  Sonnet 5 on reasoning about the task, not on evidence that quality holds for
+  French specifically — nuance questions are exactly where a lighter model
+  gives a confident wrong answer. The mitigation is that proposed cards are now
+  editable, so a bad card costs a keystroke rather than months of reviews. A
+  real answer needs ~30-40 real questions with checked answers, run against both
+  at a couple of effort levels. Until then: use it, and switch back if it is
+  visibly worse.
+- **The tutor's cache breakpoint may be a no-op.** The system prompt plus tool
+  schema is roughly 900 tokens and the minimum cacheable prefix is
+  model-dependent; below it, `cache_control` silently does nothing. One
+  `count_tokens` call against the real prompt would settle it.
+- **`split-senses.js` still runs Opus 5** for what is batch classification
+  against written-out rules — see the table under Serverless functions. It is
+  offline, so it could also go through the Batch API at half price.
 - **Answers in the impératif module were written by Claude, not by Laura.** Her
   exercise sheet ships no answer key. Worth a pass from her before it goes to
   students.
