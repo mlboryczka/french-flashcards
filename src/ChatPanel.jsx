@@ -53,6 +53,18 @@ const CATEGORY_LABEL = {
 // How far the composer may grow before it scrolls instead.
 const COMPOSER_MAX_HEIGHT = 132;
 
+// Smoothing the stream out.
+//
+// Deltas arrive in uneven lumps — sometimes a fragment, sometimes half a
+// sentence — and rendering each one as it lands makes the text jump rather
+// than flow. So arrival and display are decoupled: deltas go into a buffer,
+// and a rAF loop drains it at a steady rate.
+//
+// The rate is proportional to how far behind the display is, so a burst is
+// caught up on rather than queued, while a trickle still advances every frame.
+const REVEAL_MIN_CHARS = 2;   // per frame, so it never visibly stalls
+const REVEAL_CATCHUP = 10;    // take a tenth of the backlog each frame
+
 const SUGGESTIONS = [
   "What's the difference between amener and apporter?",
   "How do I say \"I'm looking forward to it\"?",
@@ -190,6 +202,7 @@ export default function ChatPanel({
     setEntered(false);
     // Whatever was being generated is no longer wanted.
     abortRef.current?.abort();
+    stopDrain();
     const t = setTimeout(() => setMounted(false), CHAT_ANIM_MS);
     return () => clearTimeout(t);
   }, [open]);
@@ -278,6 +291,46 @@ export default function ChatPanel({
     });
   }, []);
 
+  // Text that has arrived but not yet been shown.
+  const bufferRef = useRef("");
+  const rafRef = useRef(0);
+
+  const drain = useCallback(() => {
+    if (rafRef.current) return; // already running
+    const step = () => {
+      const buf = bufferRef.current;
+      if (!buf) {
+        rafRef.current = 0;
+        return;
+      }
+      const take = Math.max(REVEAL_MIN_CHARS, Math.ceil(buf.length / REVEAL_CATCHUP));
+      bufferRef.current = buf.slice(take);
+      updateLast((m) => ({ ...m, content: m.content + buf.slice(0, take) }));
+      rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+  }, [updateLast]);
+
+  // Resolve once everything buffered has actually been shown, so the caret
+  // isn't taken away with text still to come.
+  const drained = useCallback(
+    () =>
+      new Promise((resolve) => {
+        const check = () =>
+          bufferRef.current ? requestAnimationFrame(check) : resolve();
+        check();
+      }),
+    []
+  );
+
+  const stopDrain = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    bufferRef.current = "";
+  }, []);
+
+  useEffect(() => stopDrain, [stopDrain]);
+
   const send = useCallback(
     async (text) => {
       const trimmed = (text ?? input).trim();
@@ -297,6 +350,7 @@ export default function ChatPanel({
 
       const controller = new AbortController();
       abortRef.current = controller;
+      bufferRef.current = "";
       let gotText = false;
 
       try {
@@ -369,7 +423,8 @@ export default function ChatPanel({
             }
             if (event.type === "text") {
               gotText = true;
-              updateLast((m) => ({ ...m, content: m.content + event.delta }));
+              bufferRef.current += event.delta;
+              drain();
             } else if (event.type === "cards") {
               updateLast((m) => ({ ...m, cards: event.cards || [] }));
             } else if (event.type === "error") {
@@ -378,6 +433,7 @@ export default function ChatPanel({
           }
         }
 
+        await drained();
         updateLast((m) => ({ ...m, streaming: false }));
         if (streamError) {
           // A key Anthropic rejects can only surface once generation has
@@ -394,10 +450,12 @@ export default function ChatPanel({
         // a half-answer blinking its caret forever and put an empty assistant
         // turn into the next request's history.
         if (e.name === "AbortError") {
+          stopDrain();
           if (gotText) updateLast((m) => ({ ...m, streaming: false }));
           else setMessages(messages);
           return;
         }
+        stopDrain();
         setError(e.message || "Something went wrong.");
         setErrorCode(e.code || "");
         if (gotText) {
@@ -415,7 +473,7 @@ export default function ChatPanel({
         abortRef.current = null;
       }
     },
-    [input, sending, messages, cards, currentCard, user, updateLast]
+    [input, sending, messages, cards, currentCard, user, updateLast, drain, drained, stopDrain]
   );
 
   const addCard = useCallback(
@@ -525,10 +583,24 @@ export default function ChatPanel({
           {messages.map((m, i) => (
             <div key={i} style={m.role === "user" ? S.userRow : S.botRow}>
               <div style={m.role === "user" ? S.userBubble : S.botBubble}>
-                {m.content}
-                {/* A caret while text is still arriving, so an answer
-                    mid-generation doesn't read as one that has finished. */}
-                {m.streaming && <span style={S.caret}>▌</span>}
+                {m.streaming && !m.content ? (
+                  <span style={S.thinking} aria-label="Thinking">
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="tutor-dot"
+                        style={{ ...S.thinkingDot, animationDelay: `${i * 0.16}s` }}
+                      />
+                    ))}
+                  </span>
+                ) : (
+                  <>
+                    {m.content}
+                    {/* A caret while text is still arriving, so an answer
+                        mid-generation doesn't read as one that has finished. */}
+                    {m.streaming && <span style={S.caret}>▌</span>}
+                  </>
+                )}
               </div>
               {m.cards?.length > 0 && (
                 <div style={S.cardList}>
@@ -687,6 +759,14 @@ const S = {
     boxShadow: T.shadow.card,
   },
   caret: { opacity: 0.45, marginLeft: 1 },
+  thinking: { display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 0" },
+  thinkingDot: {
+    width: 5,
+    height: 5,
+    borderRadius: "50%",
+    background: T.color.onSurfaceVariant,
+    display: "inline-block",
+  },
   cardList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 10, width: "92%" },
   cardChip: {
     display: "flex",

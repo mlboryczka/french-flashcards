@@ -16,6 +16,12 @@ const deck = await servedDeck();
 const target = deck.find((c) => /^une colline$/i.test(c.front)) || deck[0];
 const ASK = `is ${target.front.replace(/^(une|le|la|les|un)\s+/i, "")} feminine?`;
 
+// Long enough that revealing it in one paint would be obvious.
+const LUMP =
+  "Amener is for people and apporter is for objects, and the split runs all " +
+  "the way through the family: mener and porter underneath, emmener and " +
+  "emporter on the way back out. The test is whether the thing walks.";
+
 const PROPOSED = {
   front: "un coteau",
   back: "a hillside",
@@ -50,12 +56,24 @@ const server = createServer(async (req, res) => {
   });
   const send = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
 
-  send({ type: "text", delta: "Yes — colline is feminine. " });
-  await gate;
-  send({ type: "text", delta: "You already have it in your deck." });
-  send({ type: "cards", cards: [PROPOSED] });
-  send({ type: "done" });
-  res.end();
+  if (requests.length === 1) {
+    send({ type: "text", delta: "Yes — colline is feminine. " });
+    await gate;
+    send({ type: "text", delta: "You already have it in your deck." });
+    send({ type: "cards", cards: [PROPOSED] });
+    send({ type: "done" });
+    res.end();
+    return;
+  }
+
+  // Second exchange: everything in one lump, after a pause. Real deltas arrive
+  // unevenly and adaptive thinking delays the first one, so this is the shape
+  // the reveal buffer exists for.
+  setTimeout(() => {
+    send({ type: "text", delta: LUMP });
+    send({ type: "done" });
+    res.end();
+  }, 600);
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PORT = server.address().port;
@@ -157,6 +175,58 @@ ck(
   JSON.stringify(written.dates)
 );
 ck("it is tagged as coming from the tutor", written.source === "tutor-chat", written.source);
+
+// ── The wait, and the shape of the reveal ──────────────────────────────────
+// Two requirements: the answer bubble shows it is working rather than sitting
+// empty while the model thinks, and the text that follows arrives evenly
+// rather than in the lumps the network delivered.
+await page.fill("textarea[placeholder*='Ask about']", "and emmener?");
+await page.click("button:text-is('Send')");
+
+await page.waitForSelector(".tutor-dot", { timeout: 4000 });
+const dotsBeforeText = await page.evaluate(() => {
+  const dots = document.querySelectorAll(".tutor-dot").length;
+  return { dots, lumpShowing: /the thing walks/.test(document.body.innerText) };
+});
+ck(
+  "while the model is thinking the bubble shows activity, not an empty box",
+  dotsBeforeText.dots === 3 && !dotsBeforeText.lumpShowing,
+  JSON.stringify(dotsBeforeText)
+);
+
+// Sample the bubble as it fills and record how much appears between frames.
+const jumps = await page.evaluate(() => {
+  return new Promise((resolve) => {
+    const steps = [];
+    let last = 0;
+    const started = Date.now();
+    const tick = () => {
+      const el = [...document.querySelectorAll("div")]
+        .filter((d) => /Amener is for people/.test(d.textContent) && d.children.length <= 2)
+        .pop();
+      const n = el ? el.textContent.length : 0;
+      if (n !== last) { steps.push(n - last); last = n; }
+      if (/the thing walks/.test(document.body.innerText) || Date.now() - started > 8000) {
+        return resolve({ steps, total: last });
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+});
+const biggest = Math.max(...jumps.steps, 0);
+ck(
+  "the answer is revealed over many frames, not pasted in at once",
+  jumps.steps.length >= 8,
+  `${jumps.steps.length} steps for ${jumps.total} chars`
+);
+// The buffer takes a tenth of its backlog per frame, so the first step off a
+// full lump is the largest; nothing should ever land as one paint.
+ck(
+  "no single frame dumps the whole answer",
+  biggest < jumps.total * 0.5,
+  `biggest step ${biggest} of ${jumps.total}`
+);
 
 server.close();
 await finish(browser, ck);
