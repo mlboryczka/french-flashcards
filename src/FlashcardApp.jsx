@@ -353,6 +353,16 @@ export default function FlashcardApp({ user, onSignOut }) {
     setLessonFilter("all");
     setShowLessonPanel(false);
   }, []);
+
+  // Entering one. The type chips are hidden inside a lesson, so a filter left
+  // over from the wider deck would go on narrowing the session with nothing on
+  // screen to say so and no way to clear it. One function, so a third caller
+  // can't reintroduce that.
+  const enterLesson = useCallback((id) => {
+    setTypeFilter("all");
+    setLessonFilter(id);
+    setMode("study");
+  }, []);
   // "Connect your Claude account". Everything that calls Claude bills the
   // caller's own Anthropic key now, so there has to be somewhere to put one.
   const [showKeyModal, setShowKeyModal] = useState(false);
@@ -1481,7 +1491,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   <button
                     key={lesson.id}
                     style={on ? {...S.sideSubItem, ...S.sideSubItemActive} : S.sideSubItem}
-                    onClick={() => { setLessonFilter(lesson.id); setMode("study"); }}
+                    onClick={() => enterLesson(lesson.id)}
                     title={`Study ${lesson.title}`}
                   >
                     {lesson.title}
@@ -1751,7 +1761,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     <button
                       style={S.lessonStudyBtn}
                       disabled={!added}
-                      onClick={() => { setLessonFilter(lesson.id); setMode("study"); }}
+                      onClick={() => enterLesson(lesson.id)}
                     >
                       {added ? "Study" : "Adding…"}
                     </button>
@@ -2010,6 +2020,14 @@ export default function FlashcardApp({ user, onSignOut }) {
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
           <div style={S.topBarInner} className="chip-row">
+          {/* The type filter is a whole-deck control and it does not survive
+              contact with a lesson: of the 108 impératif cards, 80 classify as
+              grammar and 28 as phrase, so Vocab hands you an empty session and
+              the other two collapse to "drills or sentences" — a distinction
+              the lesson's own sections make far better. Hidden inside a
+              lesson; enterLesson() clears it so nothing narrows the deck
+              invisibly while the control that would show it is gone. */}
+          {lessonFilter === "all" && (
           <div style={S.typeGroup}>
             {[["all", "All"], ...CARD_TYPES.map((t) => [t, TYPE_LABEL[t] === "Phrase" ? "Phrases" : TYPE_LABEL[t]])]
               .map(([k, label]) => {
@@ -2028,18 +2046,16 @@ export default function FlashcardApp({ user, onSignOut }) {
                 );
               })}
           </div>
-          {/* Studying one lesson is a narrowed deck, and the only clue would
-              otherwise be a smaller session count. Name it, and make leaving
-              it one click. */}
+          )}
+          {/* Which lesson you are in — a label, not a control. It sat beside
+              the "Lesson notes" toggle as an identically shaped pill with an ×
+              on it, so the two read as a pair of switches when only one is.
+              Leaving a lesson is the Cards nav item, which is where going back
+              to the whole deck belongs. */}
           {lessonFilter !== "all" && (
-            <button
-              style={S.lessonChip}
-              onClick={leaveLesson}
-              title="Back to the whole deck"
-            >
+            <div style={S.lessonName}>
               {LESSONS.find((l) => l.id === lessonFilter)?.title || lessonFilter}
-              <span style={S.lessonChipX}>×</span>
-            </button>
+            </div>
           )}
           {lessonFilter !== "all" && (
             <button
@@ -3314,8 +3330,9 @@ const S = {
   btnWrong: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.color.secondary, color:T.color.onSecondary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   btnRight: { flex:1, padding:"15px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:T.font.sans, display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:T.shadow.button, letterSpacing:"0.01em" },
   shortcuts: { textAlign:"center", fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7, letterSpacing:"0.03em" },
-  lessonChip: { display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px 6px 12px", borderRadius:999, border:"none", background:T.color.primary, color:"#fff", fontSize:12, fontWeight:600, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", letterSpacing:"0.01em" },
-  lessonChipX: { fontSize:14, lineHeight:1, opacity:0.75 },
+  // The lesson you are in, set as a title rather than a pill: it names where
+  // you are, and the only pill-shaped things in this row are controls.
+  lessonName: { fontFamily:T.font.serif, fontSize:15, fontWeight:600, color:T.color.primary, whiteSpace:"nowrap", letterSpacing:"-0.01em", flexShrink:0 },
   lessonIntro: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, maxWidth:560, lineHeight:1.55, marginBottom:24 },
   lessonCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card, maxWidth:720 },
   lessonHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16 },
