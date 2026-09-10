@@ -695,6 +695,21 @@ Found by a review pass over the whole branch, not by the tutor work itself.
   `src/lib/multiSense.js`, and the `apply-splits` suite. Nothing invokes them
   now, so running the cleanup needs a deliberate call. The Claude audit step
   has still never run against the live deck.
+- **The lesson bar should be built on the lesson's own sections.** Agreed but
+  not built. Every card carries a section (`forms`, `irregular`, `ind2imp`,
+  `negative`, `pronominal`, `ex1`…`ex8`, `phrase`) that both readers still
+  destructure away as `[f, b, c]`. The 14 group into the four the notes panel
+  already uses — Forms 30, Pronouns 46, Reflexive 15, Phrases 17 — so the bar
+  and the notes would share one vocabulary, and tapping a chip could open the
+  notes at the matching tab. Default stays `All` and mixed: your own doc's
+  point that blocked practice tests worse applies here too, and the resolution
+  is also already in it — interleaving on review and sequencing on first
+  exposure are not in conflict.
+
+  **The decision that has to land with it:** a section drill must not write
+  FSRS reviews. Ten minutes on the 8 negative cards is dozens of reviews on 8
+  cards in one sitting, which is the 45-reviews-in-a-minute bug wearing a new
+  hat.
 - **A second lesson has not been attempted.** The generator idea — parsing
   Laura's PDFs into cards automatically — was scoped but not built, and
   designing it from one example would be a mistake. Her materials look
@@ -787,3 +802,43 @@ Also: French spacing before `!` `?` `;` `:` and inside `« »` is applied at
 display time as U+202F, so punctuation cannot wrap onto its own line; and lesson
 titles render as written — the card badge and filter chip case-folded them,
 which loses the name and mangles the accented capital.
+
+### The notes stay up while you work the card
+
+Only the ✕ and the "Lesson notes" toggle close the panel. The outside-click
+handler closed it the moment you clicked into the answer box, and Escape closed
+it on the reflex of clearing a field mid-answer; the scrim still dims an
+overlay-mode panel but no longer dismisses. That is what separates this panel
+from the other two sharing the right-hand slot: the tutor and the feedback
+sheet you open, use and put away, so an outside click meaning "done" is right
+for them. Notes are reference material you keep beside the work.
+
+Nothing was needed for the keyboard — `overlayOpen` already excluded the lesson
+panel, so card shortcuts have always reached the card with it open.
+
+### A lesson gets its own top bar
+
+The type filter is a whole-deck control that does not survive contact with a
+lesson. Of the 108 impératif cards, **80 classify as grammar and 28 as phrase**,
+so `Vocab` hands you an empty session and the other two collapse to "drills or
+sentences". Hidden inside a lesson.
+
+`enterLesson()` clears `typeFilter` on the way in. Without that, a `Grammar`
+selection made on the wider deck goes on narrowing the session with nothing on
+screen to say so and no control left to clear it.
+
+The lesson name is a label now, not a button. It sat beside the "Lesson notes"
+toggle as an identically shaped pill wearing an ×, so the two read as a pair of
+switches when only one is. **Leaving a lesson is the Cards nav item** — the
+regression check for the dead 460px strip used to click that ×, so it was
+rewired to the surviving route.
+
+Measured at 1400 / 1100 / 900 / 760 / 500 / 390: one row at every width, the
+page never scrolls sideways, and the row scrolls internally when tight.
+
+### The direction toggle is next
+
+`FR→EN / EN→FR / Mixed` steers 28 of the 108 cards — direction only applies to
+`flippable` ones (cat vocab or expr), and 80 are grammar, pinned front-as-
+written. Three chips, the widest group in the bar, governing a quarter of the
+module, and meaningless on `finir → nous`.
