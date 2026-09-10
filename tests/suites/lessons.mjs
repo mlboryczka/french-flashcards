@@ -184,10 +184,35 @@ const spacing = await page.evaluate(() => {
 });
 ck("the space before ! is a narrow no-break space", spacing === "U+202F", spacing);
 
-// ── Escape closes it ──────────────────────────────────────────────────
+// ── The panel stays up while you work the card ────────────────────────
+//
+// Requirement: the notes are reference material you keep beside the work, so
+// nothing ambient may put them away. Written as the things a person actually
+// does mid-answer — click the card, click into the answer box, type, press
+// Escape to clear a field — not as "the dismiss handler is gone".
+const stillOpen = async (what) =>
+  ck(`${what} leaves the notes open`, (await page.$("[data-lesson-panel]")) !== null);
+
+await page.evaluate(() => {
+  const card = [...document.querySelectorAll("div")].find(
+    (d) => d.getBoundingClientRect().width > 300 && /→|Tap to reveal/.test(d.innerText || "")
+  );
+  (card || document.querySelector("main")).click();
+});
+await page.waitForTimeout(400);
+await stillOpen("clicking the card");
+
 await page.keyboard.press("Escape");
+await page.waitForTimeout(400);
+await stillOpen("pressing Escape");
+
+// ── ...and the ✕ does close it ────────────────────────────────────────
+await page.evaluate(() => {
+  const panel = document.querySelector("[data-lesson-panel]");
+  [...panel.querySelectorAll("button")].find((b) => b.textContent.trim() === "✕").click();
+});
 await page.waitForTimeout(700);
-ck("Escape closes the panel", (await page.$("[data-lesson-panel]")) === null);
+ck("the ✕ closes the panel", (await page.$("[data-lesson-panel]")) === null);
 
 // The fixture is the lesson, so the sync had nothing to do. Confirm it did not
 // quietly rewrite the deck behind us.

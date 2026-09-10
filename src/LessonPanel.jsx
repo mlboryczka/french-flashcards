@@ -54,25 +54,17 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
     };
   }, [mounted, open]);
 
-  // In reflow mode there is no scrim to catch an outside click, so this is the
-  // only thing that closes it. The toggle opts out via data-lesson-toggle:
-  // otherwise this would close on mousedown and the button's own click would
-  // reopen it immediately.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e) => {
-      if (panelRef.current?.contains(e.target)) return;
-      if (e.target.closest?.("[data-lesson-toggle]")) return;
-      onClose?.();
-    };
-    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
-    document.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open, onClose]);
+  // NOTHING ELSE CLOSES THIS PANEL. Only the ✕ and the "Lesson notes" toggle.
+  //
+  // The notes are meant to be up WHILE you work the card — that is the whole
+  // point of a panel rather than a modal. Every ambient dismissal fights that:
+  // an outside click closed it the moment you clicked into the answer box, and
+  // Escape closed it on the reflex of clearing a field mid-answer. Both read as
+  // the panel refusing to stay open.
+  //
+  // This is why the tutor and the feedback sheet are different: those you open,
+  // use, and put away, so an outside click meaning "done" is right for them.
+  // The lesson notes are reference material you keep beside the work.
 
 
   // Which section is on screen. Reset when the panel closes so reopening
@@ -96,8 +88,10 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
   // mechanism, no trap.
   return createPortal(
     <div style={S.wrap} data-lesson-panel>
+      {/* Dims the app behind an overlay-mode panel. Not a dismissal: see the
+          note above — the ✕ and the toggle are the only ways out. */}
       {!activeReflow && (
-        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} onClick={onClose} />
+        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} />
       )}
       <div
         ref={panelRef}
