@@ -29,28 +29,29 @@ const ck = checker();
     ck("the notes panel makes room for itself", (await padRight()) > 400,
        `${await padRight()}px`);
 
-    // Leave via the chip's ×, notes still open.
+    // Leave the lesson with the notes still open. This used to be reachable
+    // two ways — the lesson chip's × and the Cards nav item — and the × has
+    // since gone: the chip was a label sitting beside the notes toggle looking
+    // like a second switch. Cards is now the way back, so it is what this
+    // guards. The requirement never changed: no dead strip afterwards.
     await page.evaluate(() => {
-      [...document.querySelectorAll("button")]
-        .find((b) => b.getAttribute("title") === "Back to the whole deck")?.click();
+      [...document.querySelectorAll("aside button")]
+        .find((b) => b.textContent.trim() === "Cards")?.click();
     });
     await settled(page);
     ck("leaving the lesson gives the column back",
        (await padRight()) < 1 && !(await panelInDom()),
        `padding ${await padRight()}px, panel in DOM: ${await panelInDom()}`);
 
-    // And again via the Cards nav item, which clears the same state.
+    // And the lesson name is not a control any more — nothing in the bar
+    // offers to take you out of the lesson, so nothing can half-do it.
     await page.locator('aside button[title^="Study "]').first().click();
     await settled(page);
-    await page.locator("[data-lesson-toggle]").click();
-    await settled(page);
-    await page.evaluate(() => {
-      [...document.querySelectorAll("aside button")]
-        .find((b) => b.textContent.trim() === "Cards")?.click();
-    });
-    await settled(page);
-    ck("and the same when you leave via Cards", (await padRight()) < 1,
-       `${await padRight()}px`);
+    const exits = await page.evaluate(() =>
+      [...document.querySelectorAll(".chip-row button")]
+        .filter((b) => /^(×|✕)$/.test(b.textContent.trim())).length);
+    ck("the lesson name in the bar is a label, not an exit", exits === 0,
+       `${exits} dismiss controls in the bar`);
   } else {
     ck("a lesson exists to test with", false, "no lesson sub-items in the sidebar");
   }
