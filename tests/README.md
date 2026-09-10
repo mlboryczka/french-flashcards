@@ -26,6 +26,8 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `session` | working a queue to the end, and what the keyboard is allowed to touch | yes |
 | `tutor` | the answer rendering as it streams, the deck context the endpoint is sent, editing a proposed card before it is written | yes |
 
+**Markers:** `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`. Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
+
 ## Five rules, all learned from checks that lied
 
 **Write the assertion from the requirement, not from the implementation.**
