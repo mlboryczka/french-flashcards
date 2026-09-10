@@ -8,3 +8,6 @@ dist-ssr
 .DS_Store
 .vscode
 .idea
+
+# Screenshots taken while driving the app. Scratch output, never a deliverable.
+shot-*.png
