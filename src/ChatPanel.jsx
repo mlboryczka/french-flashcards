@@ -50,6 +50,9 @@ const CATEGORY_LABEL = {
   pron: "Pronunciation",
 };
 
+// How far the composer may grow before it scrolls instead.
+const COMPOSER_MAX_HEIGHT = 132;
+
 const SUGGESTIONS = [
   "What's the difference between amener and apporter?",
   "How do I say \"I'm looking forward to it\"?",
@@ -446,6 +449,20 @@ export default function ChatPanel({
     [user, onCardsAdded]
   );
 
+  // The box starts at one line and grows with what you type, to a cap. It was
+  // a fixed two rows, which left it a good 20px taller than the Send button
+  // beside it — the two read as different controls rather than one row.
+  const grow = (el) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  };
+
+  // Sending empties the box, which has to shrink back with it.
+  useEffect(() => {
+    if (!input && inputRef.current) grow(inputRef.current);
+  }, [input]);
+
   const onKeyDown = (e) => {
     // Enter sends, Shift+Enter makes a newline.
     if (e.key === "Enter" && !e.shiftKey) {
@@ -470,15 +487,19 @@ export default function ChatPanel({
         }}
         role="dialog"
         aria-label="Ask the tutor"
+        data-tutor-panel
       >
         <header style={S.head}>
-          <div>
+          <div style={S.headMain}>
             <div style={S.title}>Ask the tutor</div>
-            <div style={S.sub}>
-              {currentCard?.f
-                ? `Looking at: ${cleanFrenchPrompt(currentCard.f, currentCard.b)}`
-                : "Look something up, then add it to your deck."}
-            </div>
+            {/* The card in view, named rather than described. This is the
+                thing that makes the answers specific, so it gets a chip
+                instead of a line of grey micro-copy. */}
+            {currentCard?.f && (
+              <div style={S.contextChip} data-tutor-context>
+                {cleanFrenchPrompt(currentCard.f, currentCard.b)}
+              </div>
+            )}
           </div>
           <button style={S.close} onClick={onClose} aria-label="Close">
             ✕
@@ -486,12 +507,13 @@ export default function ChatPanel({
         </header>
 
         <div style={S.scroll} ref={scrollRef}>
+          {/* marginTop:auto on the content, rather than justify-content on the
+              scroller: the latter makes the overflowing top unreachable in
+              some browsers. This pushes a short thread down to meet the
+              composer and behaves normally once it is long enough to scroll. */}
+          <div style={S.threadFoot}>
           {messages.length === 0 && (
             <div style={S.empty}>
-              <p style={S.emptyText}>
-                Ask about a word, a phrase, or a grammar point. If there's something
-                worth drilling, you'll get cards you can edit and add.
-              </p>
               {SUGGESTIONS.map((s) => (
                 <button key={s} style={S.suggestion} onClick={() => send(s)}>
                   {s}
@@ -517,6 +539,7 @@ export default function ChatPanel({
               )}
             </div>
           ))}
+          </div>
         </div>
 
         {error && (
@@ -535,10 +558,10 @@ export default function ChatPanel({
             ref={inputRef}
             style={S.input}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { setInput(e.target.value); grow(e.target); }}
             onKeyDown={onKeyDown}
             placeholder="Ask about a word or phrase…"
-            rows={2}
+            rows={1}
             disabled={sending}
           />
           <button
@@ -589,8 +612,25 @@ const S = {
     padding: "20px 20px 14px",
     borderBottom: "1px solid rgba(3,22,50,0.06)",
   },
+  headMain: { minWidth: 0 },
   title: { fontFamily: T.font.serif, fontSize: 18, fontWeight: 600, color: T.color.onSurface },
-  sub: { fontSize: 12, color: T.color.onSurfaceVariant, marginTop: 3 },
+  // The card in view. Set in the serif the app uses for card content
+  // everywhere else, which is what identifies it as a card without a label —
+  // and a label was worse: "ON  la moitié" read as an on/off state.
+  contextChip: {
+    display: "block",
+    marginTop: 7,
+    padding: "3px 11px 4px",
+    background: T.color.surfaceHigh,
+    borderRadius: T.radius.full,
+    fontFamily: T.font.serif,
+    fontSize: 13,
+    color: T.color.onSurface,
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   close: {
     background: "transparent",
     border: "none",
@@ -600,9 +640,12 @@ const S = {
     padding: 4,
     lineHeight: 1,
   },
-  scroll: { flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 },
-  empty: { display: "flex", flexDirection: "column", gap: 8, paddingTop: 8 },
-  emptyText: { fontSize: 13, lineHeight: 1.6, color: T.color.onSurfaceVariant, margin: "0 0 6px" },
+  scroll: { flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column" },
+  // Everything in the thread, pushed to the bottom of the scroller so a short
+  // conversation sits just above the composer instead of stranded at the top
+  // of a 1000px panel with the answer and the input box a mile apart.
+  threadFoot: { marginTop: "auto", display: "flex", flexDirection: "column", gap: 14 },
+  empty: { display: "flex", flexDirection: "column", gap: 8 },
   suggestion: {
     textAlign: "left",
     padding: "10px 12px",
@@ -616,14 +659,17 @@ const S = {
   },
   userRow: { display: "flex", flexDirection: "column", alignItems: "flex-end" },
   botRow: { display: "flex", flexDirection: "column", alignItems: "flex-start" },
+  // Your own question, set quietly. It used to be a dark ink pill — the app's
+  // CTA treatment — which made the thing you already know shout louder than
+  // the answer you came for.
   userBubble: {
     maxWidth: "85%",
-    padding: "10px 14px",
-    background: T.gradient.ink,
-    color: T.color.onPrimary,
+    padding: "8px 13px",
+    background: T.color.surfaceHigh,
+    color: T.color.onSurfaceVariant,
     borderRadius: T.radius.md,
-    fontSize: 13.5,
-    lineHeight: 1.55,
+    fontSize: 13,
+    lineHeight: 1.5,
     whiteSpace: "pre-wrap",
   },
   botBubble: {
@@ -690,7 +736,11 @@ const S = {
     alignItems: "stretch",
   },
   chipEditToggle: {
-    padding: "4px 14px",
+    // Same box as the Add button above it, so the two stack as a pair rather
+    // than a button with a caption drifting beneath it.
+    padding: "4px 0",
+    width: "100%",
+    textAlign: "center",
     background: "transparent",
     color: T.color.onSurfaceVariant,
     border: "none",
@@ -751,11 +801,16 @@ const S = {
     gap: 8,
     padding: "12px 20px 20px",
     borderTop: "1px solid rgba(3,22,50,0.06)",
-    alignItems: "flex-end",
+    // stretch, not flex-end: the button takes the textarea's height rather
+    // than sitting short beside it, so the two read as one control.
+    alignItems: "stretch",
   },
   input: {
     flex: 1,
+    minHeight: 40,
+    maxHeight: COMPOSER_MAX_HEIGHT,
     padding: "10px 12px",
+    lineHeight: 1.4,
     background: T.color.surfaceHigh,
     border: "1px solid rgba(3,22,50,0.08)",
     borderRadius: T.radius.md,
@@ -766,7 +821,10 @@ const S = {
     outline: "none",
   },
   send: {
-    padding: "11px 18px",
+    display: "flex",
+    alignItems: "center",
+    padding: "0 18px",
+    flexShrink: 0,
     background: T.gradient.ink,
     color: T.color.onPrimary,
     border: "none",
@@ -777,7 +835,10 @@ const S = {
     cursor: "pointer",
   },
   sendDisabled: {
-    padding: "11px 18px",
+    display: "flex",
+    alignItems: "center",
+    padding: "0 18px",
+    flexShrink: 0,
     background: T.color.surfaceHighest,
     color: T.color.onSurfaceVariant,
     border: "none",

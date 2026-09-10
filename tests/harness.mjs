@@ -128,7 +128,10 @@ export function layoutProbe(page) {
       sheet: r
         ? { height: Math.round(r.height), width: Math.round(r.width), top: Math.round(r.top), left: Math.round(r.left) }
         : null,
-      tutorOpen: /Ask about a word/i.test(document.body.innerText),
+      // By a marker the component owns, not by its copy. This used to match a
+      // line of the tutor's intro paragraph, so deleting that paragraph made
+      // every check that asks "is the tutor open" answer no.
+      tutorOpen: !!document.querySelector("[data-tutor-panel]"),
       viewport: window.innerHeight,
     };
   });

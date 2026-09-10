@@ -163,12 +163,12 @@ await page.waitForTimeout(400);
 // visible — which is exactly why a stray grade here is invisible.
 await page.click("aside button[data-tutor-toggle]");
 await settled(page);
-ck("the tutor is open", await bodyHas(/Ask about a word/i));
+ck("the tutor is open", await page.evaluate(() => !!document.querySelector("[data-tutor-panel]")));
 {
   const before = writes.length;
   await pressInto(/^Ask the tutor$/);
   ck("the tutor is open: the card beside it is not graded", writes.length === before, `${writes.length - before} stray writes`);
-  ck("and the tutor is still open, so that proved something", await bodyHas(/Ask about a word/i));
+  ck("and the tutor is still open, so that proved something", await page.evaluate(() => !!document.querySelector("[data-tutor-panel]")));
 }
 // Leave the app in a known state for the next section.
 await page.click("aside button[data-tutor-toggle]");
