@@ -75,3 +75,14 @@ exists for (the page starting two frames early, which separates the edges on
 `tests/mock-supabase.mjs` serves the deck. Suites derive their expectations
 from it (`servedDeck()`, and `classifyCard` in the `types` suite), so adding a
 card doesn't require touching assertions.
+
+## Maintenance runners (`scripts/`)
+
+Not tests. One-off jobs against a real deck, dry-run by default, `--apply` to
+write. They read `.env.local` and need `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY` and `ANTHROPIC_API_KEY`.
+
+| Script | Does |
+|---|---|
+| `fix-multi-sense.mjs` | Scans the whole deck for cards teaching two headwords (`les frais` = costs AND fresh), asks Claude split-or-keep, rewrites the original as the first sense keeping its FSRS history and inserts the rest as new cards. Shares the prompt and schema with `api/split-senses.js` rather than forking them. |
+| `resolve-disputes.mjs` | Works the unresolved backlog in `feedback_submissions`: adjudicates each, adds accepted answers to `card_alternates`, marks the row. Anything it calls "uncertain" is left alone. Detects whether the table marks completion with `reviewed`/`action` or `status`, because the app and `schema.sql` disagree. |

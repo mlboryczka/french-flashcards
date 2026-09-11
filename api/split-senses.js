@@ -25,12 +25,12 @@ import Anthropic from "@anthropic-ai/sdk";
 import { requireUser } from "./_lib/auth.js";
 import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 
-const MODEL = "claude-opus-5";
-const MAX_CARDS = 25;
+export const MODEL = "claude-opus-5";
+export const MAX_CARDS = 25;
 
 export const config = { api: { bodyParser: { sizeLimit: "1mb" } } };
 
-const SYSTEM_PROMPT = `You are auditing a French flashcard deck built from a learner's class notebook. Each card has a French front and an English back.
+export const SYSTEM_PROMPT = `You are auditing a French flashcard deck built from a learner's class notebook. Each card has a French front and an English back.
 
 Some cards conflate two DIFFERENT French headwords that happen to share a spelling. The classic case:
 
@@ -66,7 +66,7 @@ Category: keep the original card's category unless the split clearly changes it 
 
 Call report_splits exactly once, with one entry for every card you were given, in the order given.`;
 
-const REPORT_TOOL = {
+export const REPORT_TOOL = {
   name: "report_splits",
   description:
     "Report, for every card you were given, whether it should be split into separate headwords and what those cards should be.",
