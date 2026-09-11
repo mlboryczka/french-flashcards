@@ -62,9 +62,10 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
   // Escape closed it on the reflex of clearing a field mid-answer. Both read as
   // the panel refusing to stay open.
   //
-  // This is why the tutor and the feedback sheet are different: those you open,
-  // use, and put away, so an outside click meaning "done" is right for them.
-  // The lesson notes are reference material you keep beside the work.
+  // The tutor works the same way for the same reason — you ask it about the
+  // card in front of you, so clicking back onto that card must not take the
+  // answer away. The feedback sheet is the one that still dismisses on an
+  // outside click: that one you open, fill in, and send.
 
 
   // Which section is on screen. Reset when the panel closes so reopening

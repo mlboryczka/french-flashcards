@@ -1,4 +1,5 @@
-// The tutor and feedback panels: mutually exclusive, dismissed by an outside
+// The tutor and feedback panels: mutually exclusive, and what does and does
+// not dismiss each. The feedback sheet goes on an outside
 // click, and each reflowing the page along its own axis.
 import { openApp, finish, checker, layoutProbe } from "../harness.mjs";
 
@@ -82,8 +83,36 @@ ck(
   `right ${tutor.padRight}, bottom ${tutor.padBottom}`
 );
 
-// This click used to do nothing: ChatPanel swallows the click that dismisses
-// it, so the card underneath doesn't flip — and that was eating the button.
+// The requirement the tutor exists for: you ask it about the card in front of
+// you, so clicking back onto that card must NOT take the answer away. It used
+// to close on any outside click, and on Escape.
+await page.click("body", { position: { x: 400, y: 450 } });
+await page.waitForTimeout(500);
+ck(
+  "clicking the card behind it leaves the tutor open",
+  (await layoutProbe(page)).tutorOpen
+);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+ck("Escape leaves the tutor open", (await layoutProbe(page)).tutorOpen);
+
+// Closing it deliberately still works, both ways in.
+await page.click("[data-tutor-toggle]");
+await page.waitForTimeout(800);
+ck("the nav toggle closes it", !(await layoutProbe(page)).tutorOpen);
+
+await page.click("[data-tutor-toggle]");
+await page.waitForTimeout(800);
+await page.click('[data-tutor-panel] button[aria-label="Close"]');
+await page.waitForTimeout(800);
+ck("the ✕ closes it", !(await layoutProbe(page)).tutorOpen);
+
+// Reopen for the mutual-exclusion check below.
+await page.click("[data-tutor-toggle]");
+await page.waitForTimeout(800);
+
+// Opening another panel is a deliberate act, not an ambient dismissal, so it
+// still puts the tutor away.
 await page.click('button:has-text("Send feedback")');
 await page.waitForTimeout(800);
 const back = await layoutProbe(page);

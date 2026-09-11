@@ -14,7 +14,8 @@ import { buildTutorContext } from "./lib/deckContext";
 // Design notes:
 //   • Right-hand slide-over rather than a centered modal — the card behind
 //     stays visible, so you can look something up mid-session without
-//     losing your place.
+//     losing your place. Only the ✕ and the TUTOR nav item close it; see the
+//     note on that below.
 //   • The answer STREAMS. It used to arrive as one blocking JSON response,
 //     which meant staring at "Thinking…" for the whole generation.
 //   • Proposed cards are never auto-added, and they are EDITABLE before you
@@ -234,51 +235,19 @@ export default function ChatPanel({
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  // Click anywhere outside to close. In reflow mode there is no scrim to catch
-  // the click, so this listener is the only thing that does it. The tutor
-  // toggles opt out via data-tutor-toggle: otherwise this would close the
-  // panel on mousedown and the button's own click would immediately reopen it.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e) => {
-      if (panelRef.current?.contains(e.target)) return;
-      if (e.target.closest?.("[data-tutor-toggle]")) return;
-      // Swallow the click this mousedown is about to produce. Without it the
-      // dismissing click also lands on whatever sits underneath — flipping the
-      // card, revealing an answer, switching view — which is what looked like
-      // the screen flashing on exit.
-      //
-      // Deliberate controls are exempt: clicking "Send feedback" while the
-      // tutor is open should close the tutor AND open feedback, not be eaten.
-      // Only accidental hits on inert surfaces need swallowing.
-      const onControl = !!e.target.closest?.(
-        "button, a, input, textarea, select, label, [role='button']"
-      );
-      if (onControl) { onClose?.(); return; }
-      const swallow = (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-      };
-      document.addEventListener("click", swallow, { capture: true, once: true });
-      setTimeout(
-        () => document.removeEventListener("click", swallow, { capture: true }),
-        400
-      );
-      onClose?.();
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open, onClose]);
-
-  // Escape closes — matches the rest of the app's overlays.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose?.();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  // NOTHING ELSE CLOSES THIS PANEL. Only the ✕ and the TUTOR nav item.
+  //
+  // It used to close on any click outside it and on Escape. Both fought the
+  // point of a panel: you look something up WHILE working a card, so clicking
+  // back onto the card — or hitting Escape to clear the answer box — took the
+  // answer away mid-read. An outside click meaning "done" is a modal's
+  // convention, and this is not a modal.
+  //
+  // Removing it also retired a whole apparatus that existed only to serve it:
+  // the listener had to swallow the click its own mousedown was about to
+  // produce, or the dismissing click landed on the card underneath and flipped
+  // it, while exempting real controls so "Send feedback" still worked through
+  // the swallow. None of that is needed now.
 
   // Rewrite the last message in place. Streaming only touches the tail of the
   // thread, so everything above it keeps its identity and doesn't re-render.
@@ -533,8 +502,10 @@ export default function ChatPanel({
 
   return createPortal(
     <div style={S.wrap}>
+      {/* Dims the app behind an overlay-mode panel. Not a dismissal: see the
+          note above — the ✕ and the nav toggle are the only ways out. */}
       {!activeReflow && (
-        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} onClick={onClose} />
+        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} />
       )}
       <aside
         ref={panelRef}
