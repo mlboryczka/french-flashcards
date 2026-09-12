@@ -2661,24 +2661,42 @@ const EM = {
 
 // ─── FEEDBACK ADMIN VIEW ─────────────────────────────────────────────────
 // Shows pending feedback submissions with the LLM's verdict. Admin can
-// approve (adds answer as a card alternate) or reject (marks reviewed).
+// approve (adds answer as a card alternate) or reject.
+//
+// This whole view was dead until 2026-09-12, and dead SILENTLY, which is the
+// part worth remembering. It queried `feedback_submissions` for a column named
+// `reviewed` and wrote `reviewed` and `action`; the table has `status` and
+// `reviewed_at` and never had the others. It also rendered `item.french`,
+// `item.english` and `item.expected_answer` against a table whose columns are
+// `card_front` and `card_back`.
+//
+// So: the list's own query errored, the error went to console.error, the catch
+// set items to [] — and an empty list is exactly what "no disputes waiting"
+// looks like. Approve and reject failed the same quiet way. The backlog the
+// doc describes as "nobody looking at it" was a backlog nobody COULD look at.
+//
+// Hence loadError below. A fetch that fails now says so on the page. Anything
+// that can silently render as "nothing to do" has to be able to say "I broke".
 function FeedbackAdminView({ user, setMode, resetSession }) {
   const [items, setItems] = useState([]);
   const [betaItems, setBetaItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [acting, setActing] = useState(null); // id being acted on
 
   const load = async () => {
     setLoading(true);
     // Load card answer disputes
+    setLoadError("");
     const { data, error } = await supabase
       .from("feedback_submissions")
       .select("*")
-      .eq("reviewed", false)
+      .eq("status", "pending")
       .order("created_at", { ascending: false });
     if (error) {
       console.error("Failed to load feedback:", error);
       setItems([]);
+      setLoadError(error.message || "Could not load the disputes.");
     } else {
       setItems(data || []);
     }
@@ -2744,15 +2762,15 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
       action: CORRECTION_ACTIONS.APPROVE_ALTERNATE,
       card_id: resolvedCardId,
       batch_id: resolvedBatchId,
-      original_front: item.french || null,
-      original_back: item.english || item.expected_answer || null,
+      original_front: item.card_front || null,
+      original_back: item.card_back || null,
       corrected_back: item.user_answer,
       notes: `direction=${item.direction}`,
     });
 
     const { error: upErr } = await supabase
       .from("feedback_submissions")
-      .update({ reviewed: true, reviewed_at: new Date().toISOString(), action: "approved" })
+      .update({ status: "approved", reviewed_at: new Date().toISOString() })
       .eq("id", item.id);
     if (upErr) console.error("Review mark failed:", upErr);
     await load();
@@ -2763,7 +2781,7 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
     setActing(item.id);
     const { error } = await supabase
       .from("feedback_submissions")
-      .update({ reviewed: true, reviewed_at: new Date().toISOString(), action: "rejected" })
+      .update({ status: "rejected", reviewed_at: new Date().toISOString() })
       .eq("id", item.id);
     if (error) console.error("Reject failed:", error);
     await load();
@@ -2784,6 +2802,12 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
       <h3 style={S.statsSectionTitle}>Answer disputes</h3>
       {loading ? (
         <div style={S.empty}>Loading…</div>
+      ) : loadError ? (
+        // Never collapse a failure into the empty state: "no disputes" and
+        // "the query broke" looked identical here for months.
+        <p style={S.statsSectionSub}>
+          Couldn't load the disputes — {loadError}
+        </p>
       ) : items.length === 0 ? (
         <p style={S.statsSectionSub}>No pending answer disputes.</p>
       ) : (
@@ -2795,12 +2819,12 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
                   <span style={S.feedbackDir}>{item.direction === "fr" ? "FR → EN" : "EN → FR"}</span>
                   <span style={S.feedbackDate}>{new Date(item.created_at).toLocaleDateString()}</span>
                 </div>
-                <div style={S.feedbackPrompt}>{item.direction === "fr" ? item.french : item.english}</div>
+                <div style={S.feedbackPrompt}>{item.direction === "fr" ? item.card_front : item.card_back}</div>
               </div>
               <div style={S.feedbackAnswers}>
                 <div style={S.feedbackAnsRow}>
                   <span style={S.feedbackAnsLabel}>Expected:</span>
-                  <span style={S.feedbackExpected}>{item.expected_answer}</span>
+                  <span style={S.feedbackExpected}>{item.direction === "fr" ? item.card_back : item.card_front}</span>
                 </div>
                 <div style={S.feedbackAnsRow}>
                   <span style={S.feedbackAnsLabel}>User typed:</span>

@@ -118,12 +118,17 @@ async function adjudicate(row) {
   return call?.input || null;
 }
 
-// The live table and supabase/schema.sql disagree about how a dispute is
-// marked done: the schema declares `status` ('pending'|'approved'|'rejected'),
-// while the admin view in FlashcardApp filters on `reviewed = false` and writes
-// `action`. One of them is stale and there is no way to tell which from here,
-// so the shape is read off an actual row rather than assumed — and if neither
-// pair is present, this stops instead of PATCHing columns that don't exist.
+// SETTLED, 2026-09-12: the live table has `status`
+// ('pending'|'approved'|'rejected') and `reviewed_at`, exactly as
+// supabase/schema.sql declares. It has never had `reviewed` or `action` — the
+// admin view in FlashcardApp was the wrong one, and had been failing silently
+// since it was written. That is fixed.
+//
+// The detection below is KEPT anyway, because it costs one row and it is what
+// turned a guess into an answer: this script refuses to PATCH columns it has
+// not seen on a real row. Any deployment whose table differs stops here with
+// its actual columns printed, rather than writing into the void the way the
+// admin view did.
 let SHAPE = null;
 
 async function detectShape() {

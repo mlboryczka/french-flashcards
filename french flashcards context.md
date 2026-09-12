@@ -1248,6 +1248,40 @@ Six things in the app, with the cleanup that was asked for alongside the doc:
 `npm test` green before and after, 15 suites. Nothing about the app's
 behaviour changed except the rejected-key button.
 
+#### The dispute view was dead, and dead silently
+
+Settled the same day by querying the live table, which is the only thing that
+could settle it. `feedback_submissions` has **`status`** and **`reviewed_at`**,
+exactly as `supabase/schema.sql` declares. It has never had `reviewed` or
+`action`. So the schema file was right and the app was wrong — the opposite of
+a stale schema, which is what a mismatch like this usually is.
+
+`FeedbackAdminView` was broken in five places, all against columns that do not
+exist:
+
+| It did | The table has |
+|---|---|
+| filtered `reviewed = false` | `status = 'pending'` |
+| wrote `reviewed` + `action` on approve | `status` + `reviewed_at` |
+| wrote `reviewed` + `action` on reject | same |
+| rendered `item.french` / `item.english` | `card_front` / `card_back` |
+| rendered `item.expected_answer` | the other side of the card |
+
+**Why it survived so long is the lesson, not the column names.** The failing
+query's error went to `console.error`, the catch set the list to `[]`, and an
+empty list is indistinguishable from "no disputes waiting". Approve and reject
+failed the same quiet way. So the backlog this document describes as one
+"nobody has looked at" was a backlog nobody *could* look at: the screen said
+there was nothing there. The view now renders the failure instead of
+collapsing it into the empty state.
+
+Nothing has inserted into `feedback_submissions` since `/api/review-answer`
+took over — it decides and writes `card_alternates` on the spot — so what the
+repaired view reads is purely the historical backlog, which is what
+`scripts/resolve-disputes.mjs` exists to work through. That script was never
+broken: it reads the shape off a real row and refuses to PATCH columns it has
+not seen, which is exactly the check the admin view lacked.
+
 ---
 
 ## Open items
@@ -1298,15 +1332,6 @@ behaviour changed except the rejected-key button.
   "the costs; the expenses; fresh". The audit step has never made a single real
   API call. It needs the owner's key, a dry run read end to end, and then the
   decision to write.
-- **`supabase/schema.sql` and the app disagree about
-  `feedback_submissions`.** The schema declares `status`
-  (`pending`/`approved`/`rejected`) and a `reviewed_at`; the admin view in
-  `FlashcardApp.jsx` filters on `reviewed = false` and writes `reviewed` and
-  `action`. One of the two is stale and there is no telling which without the
-  live database, so neither has been changed — `scripts/resolve-disputes.mjs`
-  reads the shape off a real row and refuses if it finds neither. Settle it by
-  looking at the live table, then fix whichever is wrong. Until then a fresh
-  deploy built from `schema.sql` has an admin dispute view that cannot work.
 - **The lesson bar should be built on the lesson's own sections.** Agreed but
   not built. Every card carries a section (`forms`, `irregular`, `ind2imp`,
   `negative`, `pronominal`, `ex1`…`ex8`, `phrase`) and nothing reads it. The
