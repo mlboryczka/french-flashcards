@@ -44,10 +44,21 @@ forever. Resuming the project in the Supabase dashboard is still the fix.
 
 ## Working protocol
 
-**Commit straight to `main`.** Vercel deploys from `main`, so a change is not
-real until it lands there — a feature branch is invisible to the live app and
-to anyone looking at it. Work has been going to `main` directly since the
-2026-09-07 session and that is the convention.
+**Every change is made to the local files first.** The working copy is
+`~/Desktop/projects/french-flashcards` on the owner's Mac, on `main`. Edit it
+there, run it there, and only then merge to `main` on GitHub. Not in a cloud
+container and not straight onto GitHub. Since 2026-09-12 the local copy is
+where the next change starts, and GitHub is where finished changes land.
+
+Before starting, check that the local copy has caught up: `git fetch` and
+confirm `main` is not behind `origin/main`. Fast-forward it if it is. The
+first time this was checked it was 229 commits behind, and one more commit
+landed on GitHub within the same session.
+
+**`main` on GitHub is still the only branch that matters.** Vercel deploys
+from it, so a change is not live until it is merged there. A feature branch is
+invisible to the live app and to anyone looking at it. Local first, then
+`main`. There is no stop on a side branch in between.
 
 An agent session may arrive pre-configured with its own feature branch and an
 instruction not to push anywhere else. That configuration does not know about
