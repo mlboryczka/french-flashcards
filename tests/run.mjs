@@ -5,7 +5,7 @@
 //   npm test                 all suites
 //   npm test -- layout       only suites whose name contains "layout"
 //
-// Suites that need no browser (logic, apply-splits, auth, dates) run first
+// Suites that need no browser (logic, apply-splits, auth, dates, serving, progress) run first
 // and fast — see NEEDS_BROWSER below, which is the list that decides.
 
 import { spawn } from "node:child_process";
@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const ENV_FILE = join(ROOT, ".env.local");
-const NEEDS_BROWSER = (name) => !["logic", "apply-splits", "auth", "dates"].includes(name);
+const NEEDS_BROWSER = (name) => !["logic", "apply-splits", "auth", "dates", "serving", "progress"].includes(name);
 
 const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 const suites = readdirSync(join(HERE, "suites"))

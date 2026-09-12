@@ -44,3 +44,20 @@ export function reviewedToday(lastReview, now = new Date()) {
   if (Number.isNaN(t.getTime())) return false;
   return localISODate(t) === localISODate(now);
 }
+
+// The last millisecond of the student's day. A card due any time before this
+// is due TODAY: the day's work is known in the morning, rather than growing
+// through the afternoon as cards cross their exact due time.
+export function endOfLocalDay(now = new Date()) {
+  const d = new Date(now);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
+// The student's local date `days` before `now`, as YYYY-MM-DD — the same
+// shape class dates are stored in, so the two compare as strings.
+export function localISODateDaysAgo(days, now = new Date()) {
+  const d = new Date(now);
+  d.setDate(d.getDate() - days);
+  return localISODate(d);
+}

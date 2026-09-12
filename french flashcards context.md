@@ -88,56 +88,55 @@ underneath a test that is mid-assertion.
 
 ## How a session is built
 
-`src/lib/sessionQueue.js` → `buildSession(cards, opts)`.
+`src/lib/sessionQueue.js` → `buildSession(cards, opts)` deals one **block** of
+up to 50 cards. FSRS decides when a seen card comes back; which new card comes
+next, and when, is decided here. The rules were agreed with the owner on
+2026-09-12 — see that History entry for the reasoning and what was rejected.
 
 Selection is by priority, then **order is randomised**. Those are two separate
 decisions and it matters:
 
-1. **Lapses** — missed last time, due now
-2. **Reviews** — due now, oldest-due first
-3. **New** — never answered, capped at `newCap` (20)
-4. **Spot-checks** — a random sample of well-known cards (stability ≥ 60d),
-   ignoring due date; insurance against FSRS being over-confident. That
-   threshold is the whole of what "mastered" means — see **Progress, and the
-   "mastered" relic**
+1. **Lapses** — missed last time, due today
+2. **Reviews** — due today, most overdue first
+3. **New** — **only once the due cards run out**, in the order below
+4. **Spot-checks** — two well-known cards (stability ≥ 60d), ignoring due
+   date; insurance against FSRS being over-confident. Only alongside real
+   work, never a card already answered today. That threshold is the whole of
+   what "mastered" means — see **Progress, and the "mastered" relic**
 
-New and spot-check slots are **reserved before** the target is spent on due
-work. Without that, a review backlog larger than the target starves new
-material completely — with ~1,300 cards due and a target of 75, you would not
-meet a new word for weeks.
+**Due today** is due any time before the end of the student's local day
+(`endOfLocalDay`), so the day's work doesn't grow while they study.
 
-The queue is then shuffled. Presenting fixed blocks (all lapses, then all
+**There is no new-card limit other than rule 3.** A student behind on reviews
+gets review-only blocks until caught up; one who learns a lot of new cards in
+a day gets a few review-heavy days after. This reverses the earlier rule that
+reserved new-card slots *before* due work so a 1,300-card backlog couldn't
+starve new material — the owner's call is that a backlog is exactly when new
+material should wait. `buildSession` returns `dueRemaining` so the checkpoint
+can say the next blocks are reviews only.
+
+**The order new cards come in** (`orderNewCards`):
+
+- **Inside a lesson** (`lessonMode`): the lesson's `teachingOrder` of sections,
+  then the card's place in the lesson array, via `lessonRank` in
+  `src/data/lessons/index.js`. The array lists every rule before any exercise;
+  `teachingOrder` puts each exercise straight after its rule.
+- **Otherwise, from the student's notes:** recent classes first (latest class
+  date within 14 days), newest class first; then earlier notes, most classes
+  first (`dates.length`), older first class on a tie; then undated cards.
+  Tutor chat cards have no class, so `classDaysOf` dates them by
+  `created_at` — recent for two weeks, then a word seen once.
+- **Then unseen lesson cards**, in lesson order. A student with notes rarely
+  gets this far; one with no notes yet gets the lesson rather than an empty
+  screen.
+- Ties are shuffled, then stable-sorted, so they fall randomly.
+
+The block is then shuffled. Presenting fixed runs (all lapses, then all
 reviews) is *blocked practice*, which feels easier during the session and
 tests worse afterwards. Mixing is *interleaved practice* — about g = 0.42 in
 Brunmair & Richter's (2019) meta-analysis of 59 studies.
 
-### `target` is a ceiling, not a length — and there are no modules
-
-`target: 75` is the most a session may contain, not what it fills to. You get
-however many cards genuinely qualify, which is a different number every time
-and is invisible before you start. The first pass at a fresh lesson is
-**exactly `newCap`**: nothing is due yet, and nothing has 60 days of stability
-for a spot-check, so the queue is 20 cards and no more. Come back once those
-are due and lapses and reviews have something in them, so the same lesson
-serves up to 75.
-
-This is correct behaviour that reads as a bug, and it has been reported as
-one. Two things cause that:
-
-- **The completion screen says "Session complete!"**, with a *New Session*
-  button, whether you are studying the whole deck or one lesson. It means "the
-  queue for the current filter is empty". It is read as "you have finished
-  L'impératif" — a fair reading of that sentence, and wrong. Nothing is ever
-  finished in FSRS; intervals just get longer.
-- **Nothing anywhere tracks progress through a lesson.** The lesson bar shows
-  the title. The counter (`Card 12 of 20`) is your position in *today's queue*.
-  Stats breaks down by card type. So with 108 impératif cards there is no way
-  to tell whether you have met 20 of them or 90.
-
-Fixed-length modules would be the wrong fix — they fight the scheduler, whose
-whole job is to decide what you see. What is missing is honest reporting: an
-end screen that distinguishes "nothing due right now" from "done", and a
-per-lesson progress figure. See **Progress, and the "mastered" relic** below.
+Guarded by the `serving` suite (no browser), one check per rule.
 
 `applyAnswer(card, got)` maps the binary typed result onto two of FSRS's four
 ratings — `Again` for a miss, `Good` for a hit. `Hard`/`Easy` exist for apps
@@ -1377,7 +1376,7 @@ of cards due on each of the next seven days; "By type" keeps accuracy and drops
    and `session` (miss a card, answer its retry, step back and answer again:
    one PATCH per card).
 2. The block builder in `sessionQueue.js`: 50, due-then-new, the new-card
-   order. Pure, tested without a browser.
+   order. **Built** — see *How a session is built*.
 3. One progress calculation (seen / about remembered / not yet seen, grouped),
    shared by the checkpoint, the lesson bar and Stats.
 4. The checkpoint screen and the "12 of 50" counter.

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
-import { LESSONS, lessonIdOf } from "./data/lessons";
+import { LESSONS, lessonIdOf, lessonRank } from "./data/lessons";
 import { reconcileLessons } from "./lib/lessonSync";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
@@ -545,7 +545,12 @@ export default function FlashcardApp({ user, onSignOut }) {
 
     // Full rebuild: initial mount, filter/direction change, or resetSession
     // (which clears deck so the next refetch takes this branch).
-    const { queue, counts } = buildSession(candidates);
+    // Inside a lesson, new cards come in the lesson's teaching order; outside,
+    // from the student's notes, recent classes first. See orderNewCards.
+    const { queue, counts } = buildSession(candidates, {
+      lessonMode: lessonFilter !== "all",
+      lessonRank,
+    });
 
     // Assign a per-card direction (stable within session). Grammar &
     // pronunciation cards are rules with examples, not translations —

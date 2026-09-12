@@ -363,6 +363,19 @@ export const LESSON = {
   source: "LFL METHOD by Laura Caufour",
   cards: CARDS,
   notes: NOTES,
+  // The order a student meets NEW cards in. The array above lists every rule
+  // before any exercise, which would teach all of forms, pronouns and
+  // reflexives before practising the first of them. This puts each exercise
+  // straight after the rule it drills, grouped the way the notes tabs are:
+  // Forms, then Pronouns, then Reflexive, then the phrases. Within a section,
+  // cards keep their order in the array. A section missing from this list
+  // goes after all of these. Reviews are unaffected — FSRS schedules those.
+  teachingOrder: [
+    "forms", "irregular", "ex1", "ex2",
+    "ind2imp", "negative", "ex3", "ex4", "ex6", "ex7",
+    "pronominal", "ex5",
+    "phrase", "ex8",
+  ],
 };
 
 export default LESSON;

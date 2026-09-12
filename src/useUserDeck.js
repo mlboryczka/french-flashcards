@@ -129,7 +129,7 @@ export function useUserDeck(user) {
           .select(
             "id, front, back, category, dates, flagged_for_review, batch_id, source, " +
               "next_due_at, lapses, stability, difficulty, fsrs_state, reps, " +
-              "last_review, last_answer_correct"
+              "last_review, last_answer_correct, created_at"
           )
           .eq("user_id", userId)
           // ORDER BY is not decoration here. A deck of several thousand cards
@@ -175,6 +175,9 @@ export function useUserDeck(user) {
           // Where the card came from: "cahier-upload", "tutor-chat", or
           // "lesson:<id>" for a card added from the Lessons catalogue.
           source: row.source || null,
+          // When the card was added. Only read for tutor chat cards, which
+          // came up in no class and are dated by this instead.
+          created_at: row.created_at || null,
           // FSRS scheduling state (migration_006). Nulls are legitimate:
           // a never-reviewed card has no stability and no last review.
           next_due_at: row.next_due_at || null,

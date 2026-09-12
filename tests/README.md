@@ -19,6 +19,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `apply-splits` | the write endpoint: ownership, malformed splits, which row keeps its scheduling history | no |
 | `auth` | the guard on every endpoint that spends money: no verified session, no Anthropic request | no |
 | `dates` | which day a review counts towards, and whether a card has already had today's review, run under a pinned timezone so the bug isn't invisible from the one it was written in | no |
+| `serving` | which cards make a block of 50: due today first, new cards only once those run out, and the order new cards arrive in — lessons by teaching order, notes by recent classes then most-repeated words | no |
 | `layout` | card fits the window at 7 heights; a panel moves the content column and **not** the sidebar, on Cards and on Stats | yes |
 | `panels` | tutor/feedback mutual exclusion, outside-click dismissal, reflow axis | yes |
 | `lesson-sync` | a new account ends up with L'impératif in its deck: every card, correctly keyed, studiable, notes readable — and a second visit writes nothing | yes |

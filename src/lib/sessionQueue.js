@@ -1,25 +1,40 @@
-// Spaced-repetition session builder. Pure: no React, no Supabase.
+// Spaced-repetition block builder. Pure: no React, no Supabase.
 //
-// Inputs are the user's full deck (from useUserDeck) plus tuning knobs.
-// Output is a tagged queue of cards to study this session.
+// Inputs are the candidate cards (the whole deck, or one lesson's or one
+// type's cards when the student has narrowed it) plus tuning knobs. Output is
+// one BLOCK: up to 50 cards, after which the student sees how it went and can
+// carry on with the next.
 //
-// Selection is by priority, in this order:
-//   1. Lapses       cards you're relearning after a miss, due now.
-//   2. Reviews      cards in normal rotation, due now, oldest-due first.
-//   3. New          never-seen cards, capped at newCap.
-//   4. Spot-checks  a random sample of well-known cards, ignoring due date —
-//                   cheap insurance against FSRS being over-confident.
+// FSRS decides when a card the student has seen comes back. It has no opinion
+// on which new card comes next or how many — those are this file's decisions,
+// agreed with the owner on 2026-09-12 (see the context doc's History).
 //
-// ORDER is then randomised. Those are two different decisions and it matters
-// that they're separate: priority decides *which* cards you see when the
-// queue is longer than the target, but presenting them in fixed blocks
-// (all lapses, then all reviews, then all new) is blocked practice, which
-// tests worse than interleaved practice for long-term retention. So we pick
-// by priority, then shuffle the result.
+// What goes in, in this order:
+//   1. Lapses       missed last time, due today.
+//   2. Reviews      due today, most overdue first.
+//   3. New          ONLY once the due cards run out. A student who isn't
+//                   keeping up with reviews gets no new cards on top; one
+//                   who learned a lot yesterday gets review-heavy blocks
+//                   until those are done. That is the whole of the new-card
+//                   limit — no daily number, no forecast.
+//   4. Spot-checks  two well-known cards, ignoring due date — cheap
+//                   insurance against FSRS being over-confident.
+//
+// "Due today" means due any time before the end of the student's own day, so
+// the day's work doesn't grow while they study.
+//
+// This replaces the old rule of reserving new-card slots BEFORE due work.
+// That rule existed so a 1,300-card backlog wouldn't starve new material; the
+// owner's call is that a backlog is exactly when new material should wait.
+//
+// ORDER within the block is then randomised. Priority decides *which* cards
+// make the block; presenting them in fixed runs (all lapses, then all new) is
+// blocked practice, which tests worse than interleaved practice for long-term
+// retention. So: pick by priority, then shuffle.
 //
 // Each entry is { ...card, _bucket: "lapse" | "review" | "new" | "spot" }.
-// FlashcardApp uses _bucket only for the session-counter UI; scoring logic
-// is bucket-independent (driven entirely by FSRS state in applyAnswer()).
+// FlashcardApp uses _bucket only for the counter; scoring is driven entirely
+// by FSRS state in applyAnswer().
 
 import {
   scheduler,
@@ -28,12 +43,16 @@ import {
   State,
   Rating,
   MASTERED_STABILITY_DAYS,
-} from "./spacedRepetition";
+} from "./spacedRepetition.js";
+import { endOfLocalDay, localISODate, localISODateDaysAgo, reviewedToday } from "./studyDay.js";
+import { lessonIdOf } from "./lessonSource.js";
 
 const DEFAULTS = Object.freeze({
-  target: 75,
-  newCap: 20,
-  spotCheckSlots: 5,
+  target: 50,
+  spotCheckSlots: 2,
+  // A class within this many days is "recent": what the student is being
+  // taught right now, so its words come before the older pile.
+  recentDays: 14,
 });
 
 function isNewCard(card) {
@@ -42,8 +61,7 @@ function isNewCard(card) {
   // This used to also require an empty `dates` array, on the assumption that
   // dates recorded past reviews. They don't — they're the LESSON dates a word
   // appeared on in the cahier, so every parsed card has them and no card ever
-  // qualified as new. The new-card cap below silently never applied.
-  // migration_007 fixes the stored data; this fixes the reader.
+  // qualified as new. migration_007 fixes the stored data; this fixes the reader.
   return (card.fsrs_state ?? State.New) === State.New;
 }
 
@@ -57,17 +75,90 @@ function isMastered(card) {
   return (card.stability ?? 0) >= MASTERED_STABILITY_DAYS;
 }
 
-function shuffleInPlace(arr) {
+function shuffleInPlace(arr, rng = Math.random) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
 }
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// The classes a card came up in, as YYYY-MM-DD strings.
+//
+// Notes cards carry them in `dates`. A card the student added from the tutor
+// chat came up in no class, so it is dated by the day it was added: it counts
+// as recent for two weeks, then joins the older pile as a word seen once.
+export function classDaysOf(card) {
+  if (card?.source === "tutor-chat" && card.created_at) {
+    const t = new Date(card.created_at);
+    if (!Number.isNaN(t.getTime())) return [localISODate(t)];
+  }
+  return (Array.isArray(card?.dates) ? card.dates : []).filter(
+    (d) => typeof d === "string" && ISO_DAY.test(d)
+  );
+}
+
+// The order a student meets never-seen cards in.
+//
+// Inside a lesson: the lesson's teaching order, via `lessonRank`.
+//
+// Otherwise, from their notes:
+//   1. Recent classes (the last `recentDays`), newest class first — this
+//      week's words are the most useful now, and will come up again in class.
+//   2. Earlier notes, the words that came up in the most classes first, the
+//      older class first on a tie. Undated cards last.
+//   3. Then unseen lesson cards, in lesson order. A student with notes will
+//      rarely get this far; one with no notes yet still has something to
+//      learn in normal study instead of an empty screen.
+//
+// Cards still tied after that are in random order (shuffled, then a stable
+// sort), so two words from the same class don't always arrive in the same
+// sequence.
+export function orderNewCards(fresh, {
+  now = Date.now(),
+  lessonMode = false,
+  lessonRank = () => null,
+  recentDays = DEFAULTS.recentDays,
+  rng = Math.random,
+} = {}) {
+  const pool = shuffleInPlace([...fresh], rng);
+  const rankOf = (c) => {
+    const r = lessonRank(c);
+    return Number.isFinite(r) ? r : Infinity;
+  };
+  if (lessonMode) return pool.sort((a, b) => rankOf(a) - rankOf(b));
+
+  const cutoff = localISODateDaysAgo(recentDays, new Date(now));
+  const recent = [];
+  const earlier = [];
+  const undated = [];
+  const lessons = [];
+  for (const c of pool) {
+    if (lessonIdOf(c)) { lessons.push(c); continue; }
+    const days = classDaysOf(c);
+    if (days.length === 0) { undated.push(c); continue; }
+    const sorted = [...days].sort();
+    const entry = { c, first: sorted[0], latest: sorted[sorted.length - 1], count: days.length };
+    (entry.latest >= cutoff ? recent : earlier).push(entry);
+  }
+  recent.sort((a, b) => (a.latest < b.latest ? 1 : a.latest > b.latest ? -1 : b.count - a.count));
+  earlier.sort((a, b) => b.count - a.count || (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
+  lessons.sort((a, b) => rankOf(a) - rankOf(b));
+  return [
+    ...recent.map((e) => e.c),
+    ...earlier.map((e) => e.c),
+    ...undated,
+    ...lessons,
+  ];
+}
+
 export function buildSession(cards, opts = {}) {
-  const { target, newCap, spotCheckSlots } = { ...DEFAULTS, ...opts };
-  const now = Date.now();
+  const { target, spotCheckSlots, recentDays } = { ...DEFAULTS, ...opts };
+  const now = opts.now ?? Date.now();
+  const rng = opts.rng ?? Math.random;
+  const endOfToday = endOfLocalDay(new Date(now));
 
   const lapses = [];
   const reviews = [];
@@ -78,7 +169,7 @@ export function buildSession(cards, opts = {}) {
     const state = c.fsrs_state ?? State.New;
     if (isNewCard(c)) {
       fresh.push(c);
-    } else if (dueMs(c) <= now) {
+    } else if (dueMs(c) <= endOfToday) {
       // A card you missed last time. FSRS's Relearning state would say this
       // for us, but it only exists with minute-scale relearning steps turned
       // on, which this app doesn't use — so applyAnswer records the miss on
@@ -90,43 +181,59 @@ export function buildSession(cards, opts = {}) {
         state === State.Learning;
       if (missedLastTime) lapses.push(c);
       else reviews.push(c);
-    } else if (isMastered(c)) {
-      // Not due, but known well enough that we can afford to sample it.
+    } else if (isMastered(c) && !reviewedToday(c.last_review, new Date(now))) {
+      // Not due, but known well enough that we can afford to sample it. Not
+      // one already answered today: FSRS would not record the answer.
       mastered.push(c);
     }
   }
 
-  // Oldest-due first, so the most overdue reviews survive the target cut.
+  // Most overdue first, so the oldest reviews survive the cut.
   reviews.sort((a, b) => dueMs(a) - dueMs(b));
-  shuffleInPlace(fresh);
-  shuffleInPlace(mastered);
-
-  // Reserve slots for new cards and spot-checks before spending the rest of
-  // the target on due work. Without this, a review backlog larger than the
-  // target starves new material completely — with ~1,300 cards due and a
-  // target of 75, you would not meet a new word for weeks.
-  const newSlots = Math.min(newCap, fresh.length);
-  const spotSlots = Math.min(spotCheckSlots, mastered.length);
-  const dueBudget = Math.max(0, target - newSlots - spotSlots);
+  shuffleInPlace(mastered, rng);
 
   const due = [
     ...lapses.map((c) => ({ ...c, _bucket: "lapse" })),
     ...reviews.map((c) => ({ ...c, _bucket: "review" })),
-  ].slice(0, dueBudget);
-
-  const tagged = [
-    ...due,
-    ...fresh.slice(0, newSlots).map((c) => ({ ...c, _bucket: "new" })),
-    ...mastered.slice(0, spotSlots).map((c) => ({ ...c, _bucket: "spot" })),
   ];
+  const spotSlots = Math.min(spotCheckSlots, mastered.length);
+  const dueTaken = due.slice(0, Math.max(0, target - spotSlots));
+
+  // New cards only in the room the due cards left.
+  const newSlots = Math.max(0, target - spotSlots - dueTaken.length);
+  const newTaken = newSlots > 0
+    ? orderNewCards(fresh, {
+        now,
+        lessonMode: !!opts.lessonMode,
+        lessonRank: opts.lessonRank,
+        recentDays,
+        rng,
+      }).slice(0, newSlots).map((c) => ({ ...c, _bucket: "new" }))
+    : [];
+
+  // Spot-checks ride along with real work. With nothing due and nothing new
+  // the student is caught up, and a block of two random known cards would
+  // only be noise.
+  const spots = dueTaken.length + newTaken.length > 0
+    ? mastered.slice(0, spotSlots).map((c) => ({ ...c, _bucket: "spot" }))
+    : [];
+
+  const tagged = [...dueTaken, ...newTaken, ...spots];
 
   // Interleave: selection above was by priority, presentation is mixed.
-  shuffleInPlace(tagged);
+  shuffleInPlace(tagged, rng);
 
   const counts = { lapse: 0, review: 0, new: 0, spot: 0 };
   for (const c of tagged) counts[c._bucket]++;
 
-  return { queue: tagged, counts };
+  return {
+    queue: tagged,
+    counts,
+    // How much due work is left beyond this block. The checkpoint (stage 4)
+    // uses it to say "the next blocks are reviews only".
+    dueRemaining: due.length - dueTaken.length,
+    newAvailable: fresh.length,
+  };
 }
 
 // Compute the new scheduling state for a card after an answer.
