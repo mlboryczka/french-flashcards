@@ -9,7 +9,7 @@
 // gave up its padding over 200ms with a third, and the sheet had no exit
 // animation at all — it vanished in a single frame while the page took 420ms
 // to close the gap behind it.
-import { openApp, finish, checker } from "../harness.mjs";
+import { openApp, finish, checker, settled } from "../harness.mjs";
 
 const ck = checker();
 const { browser, page } = await openApp();
@@ -93,27 +93,57 @@ ck("the page keeps pace with the panel", close.typicalDrift <= 24, `${Math.round
 ck("and never falls badly behind it", close.biggestGapDrift <= 48, `${Math.round(close.biggestGapDrift)}px worst frame`);
 
 console.log("\n  one duration and one curve everywhere");
+// Measured on the two things that actually MOVE: the sheet's own transform and
+// the padding the page makes room with.
+//
+// This check used to find "the element under `main` whose transition mentions
+// padding-bottom", which was `cardArea` — whose padding-bottom had been a
+// constant 0 ever since `cardTopSpacer` took that job over. So it confirmed a
+// DECLARATION rather than a movement: it would have passed just as happily
+// with the property deleted, and it did pass for as long as the dead
+// declaration sat there. The declaration is now gone and this asks the
+// question it was meant to ask.
+await page.click('button:has-text("Send feedback")');
+await page.waitForSelector("[data-feedback-sheet]");
+await settled(page);
 const timings = await page.evaluate(() => {
-  const main = document.querySelector("main");
-  const area = [...document.querySelectorAll("main *")].find((d) =>
-    /padding-bottom/.test(getComputedStyle(d).transitionProperty)
-  );
-  const pick = (el) => {
+  const pick = (el, want) => {
     if (!el) return null;
     const cs = getComputedStyle(el);
     // Split on commas OUTSIDE the cubic-bezier parentheses.
+    const props = cs.transitionProperty.split(",").map((x) => x.trim());
     const fns = cs.transitionTimingFunction.split(/,(?![^(]*\))/).map((x) => x.trim());
     const durs = cs.transitionDuration.split(",").map((x) => x.trim());
-    return { dur: durs[0], fn: fns[0], allSame: new Set(fns).size === 1 && new Set(durs).size === 1 };
+    const i = props.indexOf(want);
+    return {
+      found: i !== -1,
+      prop: want,
+      dur: durs[i] ?? durs[0],
+      fn: fns[i] ?? fns[0],
+      allSame: new Set(fns).size === 1 && new Set(durs).size === 1,
+    };
   };
-  return { main: pick(main), area: pick(area) };
+  return {
+    main: pick(document.querySelector("main"), "padding-bottom"),
+    sheet: pick(document.querySelector("[data-feedback-sheet]"), "transform"),
+  };
 });
 console.log(`  main ${JSON.stringify(timings.main)}`);
-console.log(`  card area ${JSON.stringify(timings.area)}`);
+console.log(`  sheet ${JSON.stringify(timings.sheet)}`);
 ck(
-  "the card area moves on the same clock as the page",
-  !!timings.area && timings.area.dur === timings.main.dur && timings.area.fn === timings.main.fn,
-  `area ${timings.area?.dur} ${timings.area?.fn} vs main ${timings.main?.dur} ${timings.main?.fn}`
+  "the page animates the padding it makes room with",
+  !!timings.main?.found,
+  `main transitions ${timings.main?.found ? timings.main.prop : "not padding-bottom"}`
+);
+ck(
+  "the panel animates the transform it moves on",
+  !!timings.sheet?.found,
+  `sheet transitions ${timings.sheet?.found ? timings.sheet.prop : "not transform"}`
+);
+ck(
+  "the panel moves on the same clock as the page",
+  !!timings.sheet && timings.sheet.dur === timings.main.dur && timings.sheet.fn === timings.main.fn,
+  `sheet ${timings.sheet?.dur} ${timings.sheet?.fn} vs main ${timings.main?.dur} ${timings.main?.fn}`
 );
 ck("the page's own transitions agree with each other", timings.main.allSame, JSON.stringify(timings.main));
 

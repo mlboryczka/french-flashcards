@@ -28,7 +28,7 @@ const SIDEBAR_WIDTH = 256;
 // one row and stacked — but they scroll now (.chip-row in styles.css), so the
 // card is the only thing this floor is protecting.
 const MIN_REFLOW_CONTENT = 680;
-import ChatPanel, { CHAT_PANEL_WIDTH, CHAT_ANIM_MS, CHAT_EASING } from "./ChatPanel";
+import ChatPanel, { CHAT_PANEL_WIDTH } from "./ChatPanel";
 import { T } from "./theme";
 import {
   speakFrench,
@@ -1458,7 +1458,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     paddingBottom: showFeedback ? feedbackHeight : 0,
     // Same duration and curve as the panel's own slide, so the page and the
     // panel move together instead of as two separate animations.
-    transition: `padding-right ${CHAT_ANIM_MS}ms ${CHAT_EASING}, padding-bottom ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
+    transition: `padding-right ${PANEL_ANIM_MS}ms ${PANEL_EASING}, padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
   };
   
   const sidebar = (
@@ -3109,7 +3109,12 @@ const S = {
   // viewport height. The fix is `cardTopSpacer` below; the bottom padding is
   // gone because it was the larger half of the same error, and the well
   // already leaves plenty of space beneath the card.
-  cardArea: { position:"relative", flex:1, minHeight:0, containerType:"inline-size", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center", paddingBottom:0, transition:`padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
+  //
+  // The `padding-bottom` transition that used to ride along with it is gone
+  // too. With the value pinned at 0 it could never fire, and the motion suite
+  // was pointed at it — checking a declaration rather than a movement, and
+  // passing whatever the declaration said.
+  cardArea: { position:"relative", flex:1, minHeight:0, containerType:"inline-size", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center" },
   // Mirrors what sits below the card, less the chrome that already sits above
   // cardArea, so the card's own midpoint lands on the window's midpoint:
   //

@@ -31,13 +31,16 @@ export function stopSpeaking() {
   } catch {}
 }
 
-// The browser's own speech synthesis, used when Azure is unavailable.
+// The browser's own speech synthesis — the only speech path there is now.
 //
-// Azure gives far better French, but it needs AZURE_SPEECH_KEY and
-// AZURE_SPEECH_REGION on the server. Without them /api/tts 500s and the
-// speaker button did nothing at all — no sound, no message, nothing to
-// distinguish "misconfigured" from "broken". Falling back means the button
-// always does something, and the only cost of a missing key is voice quality.
+// This was written as the FALLBACK for Azure: without AZURE_SPEECH_KEY and
+// AZURE_SPEECH_REGION, /api/tts answered 500 and the speaker button did
+// nothing at all — no sound, no message, nothing to distinguish
+// "misconfigured" from "broken" — so falling back meant the button always did
+// something and a missing key cost only voice quality. That endpoint no longer
+// exists (see the note at the top of this file), so there is nothing to fall
+// back FROM. The reasoning is kept because it is still the argument for
+// restoring Azure behind a fallback rather than in place of one.
 //
 // Resolves true if it actually spoke.
 function speakWithBrowser(text) {

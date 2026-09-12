@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
 import { T } from "./theme";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
-import { keyHeaders, BYOK_REQUIRED } from "./lib/anthropicKey";
+import { keyHeaders, BYOK_REQUIRED, BAD_KEY } from "./lib/anthropicKey";
 import { cleanFrenchPrompt } from "./lib/cardText";
 import { buildTutorContext } from "./lib/deckContext";
 
@@ -37,12 +37,15 @@ import { buildTutorContext } from "./lib/deckContext";
 // much when the panel is open on a wide screen, so the two must agree.
 export const CHAT_PANEL_WIDTH = 460;
 
-// Slide duration and curve. FlashcardApp animates the page's reflow with the
-// SAME pair, so the panel and the page it displaces move as one thing rather
-// than two — the panel appearing instantly against a sliding page was what
-// made this feel abrupt.
-export const CHAT_ANIM_MS = PANEL_ANIM_MS;
-export const CHAT_EASING = PANEL_EASING;
+// Slide duration and curve come from lib/motion, and FlashcardApp animates the
+// page's reflow from the SAME pair — so the panel and the page it displaces
+// move as one thing rather than two. A panel appearing instantly against a
+// sliding page was what made this feel abrupt.
+//
+// This file used to re-export them as CHAT_ANIM_MS / CHAT_EASING, and the page
+// drove its own reflow through that alias, which made a shared clock look like
+// the chat's private business. One clock, one name: PANEL_ANIM_MS and
+// PANEL_EASING, imported from lib/motion wherever they are needed.
 
 const CATEGORY_LABEL = {
   vocab: "Vocabulary",
@@ -166,8 +169,11 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  // "byok_required" when the server refused for want of a key, so the error
-  // can offer the fix instead of only naming the problem.
+  // "byok_required" when the server refused for want of a key, "bad_key" when
+  // the key it was given was rejected. Both are fixed in the same dialog, so
+  // both offer it: a rejected key is the case where the user most needs a way
+  // to replace it, and it used to be the one that named the problem and left
+  // them with nowhere to go.
   const [errorCode, setErrorCode] = useState("");
   // Fronts added this session, so the chip can flip to "Added" without a
   // full deck refetch on every click.
@@ -204,7 +210,7 @@ export default function ChatPanel({
     // Whatever was being generated is no longer wanted.
     abortRef.current?.abort();
     stopDrain();
-    const t = setTimeout(() => setMounted(false), CHAT_ANIM_MS);
+    const t = setTimeout(() => setMounted(false), PANEL_ANIM_MS);
     return () => clearTimeout(t);
   }, [open]);
 
@@ -588,9 +594,9 @@ export default function ChatPanel({
         {error && (
           <div style={S.error}>
             {error}
-            {errorCode === BYOK_REQUIRED && onNeedKey && (
+            {(errorCode === BYOK_REQUIRED || errorCode === BAD_KEY) && onNeedKey && (
               <button style={S.errorAction} onClick={onNeedKey}>
-                Connect Claude account
+                {errorCode === BAD_KEY ? "Update your key" : "Connect Claude account"}
               </button>
             )}
           </div>
@@ -630,7 +636,7 @@ const S = {
     inset: 0,
     background: "rgba(3,22,50,0.28)",
     pointerEvents: "auto",
-    transition: `opacity ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
+    transition: `opacity ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
   },
   panel: {
     position: "absolute",
@@ -641,7 +647,7 @@ const S = {
     pointerEvents: "auto",
     background: T.color.surface,
     boxShadow: "-8px 0 32px rgba(3,22,50,0.16)",
-    transition: `transform ${CHAT_ANIM_MS}ms ${CHAT_EASING}`,
+    transition: `transform ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
     willChange: "transform",
     display: "flex",
     flexDirection: "column",

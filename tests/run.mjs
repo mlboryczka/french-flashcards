@@ -5,7 +5,8 @@
 //   npm test                 all suites
 //   npm test -- layout       only suites whose name contains "layout"
 //
-// Suites that need no browser (logic, apply-splits) run first and fast.
+// Suites that need no browser (logic, apply-splits, auth, dates) run first
+// and fast — see NEEDS_BROWSER below, which is the list that decides.
 
 import { spawn } from "node:child_process";
 import { readdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
