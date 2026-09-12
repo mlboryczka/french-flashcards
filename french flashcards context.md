@@ -64,8 +64,10 @@ decisions and it matters:
 1. **Lapses** — missed last time, due now
 2. **Reviews** — due now, oldest-due first
 3. **New** — never answered, capped at `newCap` (20)
-4. **Spot-checks** — a random sample of mastered cards (stability ≥ 60d),
-   ignoring due date; insurance against FSRS being over-confident
+4. **Spot-checks** — a random sample of well-known cards (stability ≥ 60d),
+   ignoring due date; insurance against FSRS being over-confident. That
+   threshold is the whole of what "mastered" means — see **Progress, and the
+   "mastered" relic**
 
 New and spot-check slots are **reserved before** the target is spent on due
 work. Without that, a review backlog larger than the target starves new
@@ -76,6 +78,34 @@ The queue is then shuffled. Presenting fixed blocks (all lapses, then all
 reviews) is *blocked practice*, which feels easier during the session and
 tests worse afterwards. Mixing is *interleaved practice* — about g = 0.42 in
 Brunmair & Richter's (2019) meta-analysis of 59 studies.
+
+### `target` is a ceiling, not a length — and there are no modules
+
+`target: 75` is the most a session may contain, not what it fills to. You get
+however many cards genuinely qualify, which is a different number every time
+and is invisible before you start. The first pass at a fresh lesson is
+**exactly `newCap`**: nothing is due yet, and nothing has 60 days of stability
+for a spot-check, so the queue is 20 cards and no more. Come back once those
+are due and lapses and reviews have something in them, so the same lesson
+serves up to 75.
+
+This is correct behaviour that reads as a bug, and it has been reported as
+one. Two things cause that:
+
+- **The completion screen says "Session complete!"**, with a *New Session*
+  button, whether you are studying the whole deck or one lesson. It means "the
+  queue for the current filter is empty". It is read as "you have finished
+  L'impératif" — a fair reading of that sentence, and wrong. Nothing is ever
+  finished in FSRS; intervals just get longer.
+- **Nothing anywhere tracks progress through a lesson.** The lesson bar shows
+  the title. The counter (`Card 12 of 20`) is your position in *today's queue*.
+  Stats breaks down by card type. So with 108 impératif cards there is no way
+  to tell whether you have met 20 of them or 90.
+
+Fixed-length modules would be the wrong fix — they fight the scheduler, whose
+whole job is to decide what you see. What is missing is honest reporting: an
+end screen that distinguishes "nothing due right now" from "done", and a
+per-lesson progress figure. See **Progress, and the "mastered" relic** below.
 
 `applyAnswer(card, got)` maps the binary typed result onto two of FSRS's four
 ratings — `Again` for a miss, `Good` for a hit. `Hard`/`Easy` exist for apps
@@ -692,6 +722,131 @@ Found by a review pass over the whole branch, not by the tutor work itself.
   lacking the quota guard the live one has, kept quiet with an
   `eslint-disable no-unreachable`. Deleted.
 
+## Progress, and the "mastered" relic
+
+### Where "mastered" came from
+
+It is a **Leitner-era survivor**. In the box system (`7faa871`) there were five
+boxes and **box 5 was mastered** — a real terminal state that changed
+behaviour: a wrong answer reset you to box 1, "or box 2 if previously
+mastered". When FSRS replaced the ladder (`7a7ad36`) the boxes went and the
+word stayed, re-implemented as a threshold on a continuous variable
+(`MASTERED_STABILITY_DAYS = 60`) purely to keep the spot-check bucket working.
+
+So the number answers "which cards are safe to skip?" and is being read as
+"which cards have I learned?". Nobody ever picked a threshold for the second
+question.
+
+It is also not an FSRS concept. FSRS's states are New, Learning, Review and
+Relearning; there is no "mastered". And it is **irrelevant to scheduling** —
+nothing about when you next see a card depends on it. It does exactly two
+things: gates the spot-check pool, and prints a word on the Stats page.
+
+**Decision: drop it as a learner-facing idea.** Reasons, in order of weight:
+re-imposing a binary on a continuous variable throws away the thing FSRS
+improved over Leitner; the threshold was chosen for a different question; and
+it can be flatly wrong, because one stability covers both directions of a
+card, so 60 days can be reached having only ever been asked the easy way.
+Keep the threshold as an internal scheduling parameter under an honest name
+(`SPOT_CHECK_MIN_STABILITY`) and stop showing the word.
+
+Blast radius is small: `cardStage` feeds four places, all on the Stats page.
+
+### The number FSRS actually offers: retrievability
+
+FSRS models memory with **three** quantities. This app stores two of them and
+never computes the third.
+
+| | | |
+|---|---|---|
+| **Stability** | stored | days until recall decays to 90% |
+| **Difficulty** | stored | how hard this card is for you |
+| **Retrievability** | **never computed** | probability you would recall it *right now* |
+
+Retrievability is derived, not stored — a function of stability and elapsed
+time since the last review, so it changes continuously with nothing written.
+`ts-fsrs` exposes it and it works on this app's card shape unchanged:
+`scheduler.get_retrievability(toFsrsCard(card), now, false)`. Measured on
+synthetic rows, it behaves as documented — stability 60 last seen 60 days ago
+returns exactly 90.0%.
+
+**Summed across a set of cards, retrievability is the expected number you
+currently know.** "You know about 43 of the 108 impératif cards right now" —
+not a bucket, not a threshold, the model's own estimate in cards. It is the
+quantity FSRS optimises, and it is what the FSRS tooling ecosystem settled on
+(Anki's FSRS add-ons graph it as "memorised").
+
+**It decays.** Stop studying and the number falls, because that is what
+happened to your memory. That is the honest behaviour and it is what makes the
+number worth watching; it is also the one real design decision here, since a
+figure that can go down puts some people off.
+
+### The agreed design, not yet built
+
+**Two numbers, because either alone lies.** "Seen 61 of 108" says nothing
+about whether it stuck; "remember 43" says nothing about how much is left to
+meet. Together they are true and useful: you have seen 61, and 43 are
+currently in your head.
+
+- **Seen** — cards shown at least once. Counts up, never down. This is the
+  "have I worked through the material" question people actually ask.
+- **Remembered** — Σ retrievability, rounded to whole cards. Goes up when you
+  study, drifts down when you do not.
+
+**Wording matters here and took two passes.** "Mastered" overclaimed;
+"known"/"met" were the replacement and were also wrong — *met* is jargon, and
+*known* only reads well inside a sentence, not as a label. **Seen** and
+**remembered** are plain past participles, symmetric, and need no explanation.
+The word **"about"** is load bearing and not optional: `about 43 remembered`,
+never a bare `43`. It is an estimate and saying so is what stops this becoming
+the next "mastered".
+
+**One bar, three bands**, width = the lesson's card count:
+
+| Band | Fill | Meaning |
+|---|---|---|
+| Remembered | solid | 43 |
+| Seen but not currently remembered | light | 18 |
+| Never seen | outline | 47 |
+
+Labelled `61 seen · about 43 remembered · 108 cards`.
+
+**Three places:**
+
+1. **The lesson top bar, while studying** — one number only, since two compete
+   in a cramped space: `43 of 108 remembered`. It must not move or animate,
+   and it does **not** go on the card; nothing competes with the card.
+2. **The completion screen**, replacing "Session complete!" — said as a
+   sentence, which cannot be misread the way a one-word label can:
+
+   > **Nothing more due in L'impératif right now.**
+   > You've seen 61 of the 108 cards, and you'd remember about 43 of them
+   > today — **3 more than when you started.**
+   > Next cards due in about 6 hours.
+
+   The delta is the reward and belongs only here.
+3. **Stats**, the same three bands for the whole deck, replacing the
+   "mastered" wording.
+
+**Two deliberate choices.** Compute "remembered" when the lesson opens and
+again at the end, NOT on every answer — a number recomputing per card jitters,
+and jitter reads as noise rather than progress; the end-of-session delta is
+the payoff. And let it go down: three weeks away should lower it, because that
+is what happened to your memory. A bar that only rises is counting clicks.
+
+**Cost:** both numbers come from rows already in the browser — one
+`get_retrievability` call per card, no schema change, no new requests. "Next
+cards due" is a `min()` over `next_due_at`.
+
+**Also worth having, but blocked:** *true retention* — of the cards recently
+asked, the fraction you got right. Measured rather than modelled, and the real
+check on whether FSRS is calibrated for you. It exists per session as
+`stats.got / stats.seen`; across sessions it needs the review log the app does
+not keep.
+
+Retrievability inherits the direction problem: one number per card covering
+both FR→EN and EN→FR.
+
 ## Open items
 
 - **`^0.x` dependency versions can never update themselves.** The Anthropic
@@ -703,6 +858,24 @@ Found by a review pass over the whole branch, not by the tutor work itself.
 - **Speech is browser-only now.** The Azure endpoints were deleted rather than
   secured. Restoring them means putting them behind `requireUser` and, if the
   owner should not be paying, a per-user credential like the Anthropic one.
+- **Lesson progress, the "mastered" rename and retrievability are agreed but
+  not built.** The design is settled down to the wording — see **The agreed
+  design, not yet built** above: seen / about N remembered, one bar with three
+  bands, in the lesson top bar and on a rewritten completion screen. Also
+  unbuilt: that screen saying "nothing more due right now" instead of "Session
+  complete", and labelling the counter as this session's position. Picked up
+  in a later session.
+- **One FSRS state covers both directions of a card.** `shownDir` is assigned
+  per session, but stability and difficulty live on the row — so recognising
+  *une colline* and producing it from "a hill" feed one number. They are
+  different skills with different difficulty. This is why a card can read as
+  well-known and still ambush you, and it is a modelling gap rather than a
+  display one: fixing it properly means two FSRS states per card.
+- **No review log.** Only the current FSRS state is kept, not the history that
+  produced it. So there is no true-retention figure across sessions, no
+  progress-over-time graph, and no way to re-optimise FSRS parameters against
+  this learner's own answers — which is the feature that makes FSRS better
+  than its defaults.
 - **The feedback sheet has no Escape handler**, while the tutor and the lesson
   notes both close on Escape. Found while chasing its Close button off the
   right edge of the window. It is not a one-liner: closing has to go through
@@ -725,6 +898,21 @@ Found by a review pass over the whole branch, not by the tutor work itself.
   `src/lib/multiSense.js`, and the `apply-splits` suite. Nothing invokes them
   now, so running the cleanup needs a deliberate call. The Claude audit step
   has still never run against the live deck.
+- **The lesson bar should be built on the lesson's own sections.** Agreed but
+  not built. Every card carries a section (`forms`, `irregular`, `ind2imp`,
+  `negative`, `pronominal`, `ex1`…`ex8`, `phrase`) that both readers still
+  destructure away as `[f, b, c]`. The 14 group into the four the notes panel
+  already uses — Forms 30, Pronouns 46, Reflexive 15, Phrases 17 — so the bar
+  and the notes would share one vocabulary, and tapping a chip could open the
+  notes at the matching tab. Default stays `All` and mixed: your own doc's
+  point that blocked practice tests worse applies here too, and the resolution
+  is also already in it — interleaving on review and sequencing on first
+  exposure are not in conflict.
+
+  **The decision that has to land with it:** a section drill must not write
+  FSRS reviews. Ten minutes on the 8 negative cards is dozens of reviews on 8
+  cards in one sitting, which is the 45-reviews-in-a-minute bug wearing a new
+  hat.
 - **A second lesson has not been attempted.** The generator idea — parsing
   Laura's PDFs into cards automatically — was scoped but not built, and
   designing it from one example would be a mistake. Her materials look
@@ -813,11 +1001,60 @@ not have. The panel gives the order instead.
 Two sentences are **not hers** and carry rules her prose only implies through
 its tables: how the imperative is formed, and `me`/`te` → `moi`/`toi`.
 
+One claim of hers is dropped rather than corrected. She closes the `nous` block
+with *"Cependant la première personne est très peu utilisée. La traduction la
+plus commune pour « let's » + base verbale est « on » + présent de
+l'indicatif."* The first half does not survive the module — `Allons-y !` is card
+139, taught as a phrase worth memorising, and sits in her own by-heart list. The
+form is unproductive, not rare. So the frequency ranking goes, and the
+construction that sentence existed to introduce is shown instead: `On y va` /
+`On en parle`, against the same two meanings as the table above. Her sentence is
+recorded here if the ranking is ever wanted back.
+
 Also: French spacing before `!` `?` `;` `:` and inside `« »` is applied at
 display time as U+202F, so punctuation cannot wrap onto its own line; and lesson
 titles render as written — the card badge and filter chip case-folded them,
 which loses the name and mangles the accented capital.
 
+### The notes stay up while you work the card
+
+Only the ✕ and the "Lesson notes" toggle close the panel. The outside-click
+handler closed it the moment you clicked into the answer box, and Escape closed
+it on the reflex of clearing a field mid-answer; the scrim still dims an
+overlay-mode panel but no longer dismisses. That is what separates this panel
+from the other two sharing the right-hand slot: the tutor and the feedback
+sheet you open, use and put away, so an outside click meaning "done" is right
+for them. Notes are reference material you keep beside the work.
+
+Nothing was needed for the keyboard — `overlayOpen` already excluded the lesson
+panel, so card shortcuts have always reached the card with it open.
+
+### A lesson gets its own top bar
+
+The type filter is a whole-deck control that does not survive contact with a
+lesson. Of the 108 impératif cards, **80 classify as grammar and 28 as phrase**,
+so `Vocab` hands you an empty session and the other two collapse to "drills or
+sentences". Hidden inside a lesson.
+
+`enterLesson()` clears `typeFilter` on the way in. Without that, a `Grammar`
+selection made on the wider deck goes on narrowing the session with nothing on
+screen to say so and no control left to clear it.
+
+The lesson name is a label now, not a button. It sat beside the "Lesson notes"
+toggle as an identically shaped pill wearing an ×, so the two read as a pair of
+switches when only one is. **Leaving a lesson is the Cards nav item** — the
+regression check for the dead 460px strip used to click that ×, so it was
+rewired to the surviving route.
+
+Measured at 1400 / 1100 / 900 / 760 / 500 / 390: one row at every width, the
+page never scrolls sideways, and the row scrolls internally when tight.
+
+### The direction toggle is next
+
+`FR→EN / EN→FR / Mixed` steers 28 of the 108 cards — direction only applies to
+`flippable` ones (cat vocab or expr), and 80 are grammar, pinned front-as-
+written. Three chips, the widest group in the bar, governing a quarter of the
+module, and meaningless on `finir → nous`.
 ---
 
 ## Recent work (session of 2026-09-09, the reflow)

@@ -31,6 +31,8 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `session` | working a queue to the end, and what the keyboard is allowed to touch | yes |
 | `tutor` | the answer rendering as it streams, the deck context the endpoint is sent, editing a proposed card before it is written | yes |
 
+**Markers:** `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`. Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
+
 ## Five rules, all learned from checks that lied
 
 **Write the assertion from the requirement, not from the implementation.**
@@ -78,3 +80,14 @@ exists for (the page starting two frames early, which separates the edges on
 `tests/mock-supabase.mjs` serves the deck. Suites derive their expectations
 from it (`servedDeck()`, and `classifyCard` in the `types` suite), so adding a
 card doesn't require touching assertions.
+
+## Maintenance runners (`scripts/`)
+
+Not tests. One-off jobs against a real deck, dry-run by default, `--apply` to
+write. They read `.env.local` and need `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY` and `ANTHROPIC_API_KEY`.
+
+| Script | Does |
+|---|---|
+| `fix-multi-sense.mjs` | Scans the whole deck for cards teaching two headwords (`les frais` = costs AND fresh), asks Claude split-or-keep, rewrites the original as the first sense keeping its FSRS history and inserts the rest as new cards. Shares the prompt and schema with `api/split-senses.js` rather than forking them. |
+| `resolve-disputes.mjs` | Works the unresolved backlog in `feedback_submissions`: adjudicates each, adds accepted answers to `card_alternates`, marks the row. Anything it calls "uncertain" is left alone. Detects whether the table marks completion with `reviewed`/`action` or `status`, because the app and `schema.sql` disagree. |

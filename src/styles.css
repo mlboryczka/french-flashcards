@@ -118,3 +118,17 @@ textarea:focus-visible {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Tutor: the wait before the first token
+   ─────────────────────────────────────────────────────────────────────── */
+/* Adaptive thinking means the model reasons before it says anything, so the
+   answer bubble exists for a second or two with nothing in it. Three dots
+   breathing in sequence read as "working"; an empty box read as broken. */
+@keyframes tutor-dot {
+  0%, 60%, 100% { opacity: 0.22; }
+  30%           { opacity: 0.85; }
+}
+.tutor-dot {
+  animation: tutor-dot 1.25s ease-in-out infinite;
+}

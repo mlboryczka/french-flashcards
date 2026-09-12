@@ -222,7 +222,11 @@ export const NOTES = [
         ["Allons-y", "Let's go"],
         ["Parlons-en", "Let's talk about it"],
       ]},
-      { t: "note", v: "However, the first person is very little used. The most common translation for « let's » + base form is « on » + the present indicative." },
+      { t: "note", v: "« on » + the present indicative says the same thing." },
+      { t: "pairs", head: ["French", "English"], v: [
+        ["On y va", "Let's go"],
+        ["On en parle", "Let's talk about it"],
+      ]},
     ],
   },
   {

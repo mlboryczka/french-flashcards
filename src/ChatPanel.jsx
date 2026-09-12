@@ -14,7 +14,8 @@ import { buildTutorContext } from "./lib/deckContext";
 // Design notes:
 //   • Right-hand slide-over rather than a centered modal — the card behind
 //     stays visible, so you can look something up mid-session without
-//     losing your place.
+//     losing your place. Only the ✕ and the TUTOR nav item close it; see the
+//     note on that below.
 //   • The answer STREAMS. It used to arrive as one blocking JSON response,
 //     which meant staring at "Thinking…" for the whole generation.
 //   • Proposed cards are never auto-added, and they are EDITABLE before you
@@ -49,6 +50,21 @@ const CATEGORY_LABEL = {
   gram: "Grammar",
   pron: "Pronunciation",
 };
+
+// How far the composer may grow before it scrolls instead.
+const COMPOSER_MAX_HEIGHT = 132;
+
+// Smoothing the stream out.
+//
+// Deltas arrive in uneven lumps — sometimes a fragment, sometimes half a
+// sentence — and rendering each one as it lands makes the text jump rather
+// than flow. So arrival and display are decoupled: deltas go into a buffer,
+// and a rAF loop drains it at a steady rate.
+//
+// The rate is proportional to how far behind the display is, so a burst is
+// caught up on rather than queued, while a trickle still advances every frame.
+const REVEAL_MIN_CHARS = 2;   // per frame, so it never visibly stalls
+const REVEAL_CATCHUP = 10;    // take a tenth of the backlog each frame
 
 const SUGGESTIONS = [
   "What's the difference between amener and apporter?",
@@ -187,6 +203,7 @@ export default function ChatPanel({
     setEntered(false);
     // Whatever was being generated is no longer wanted.
     abortRef.current?.abort();
+    stopDrain();
     const t = setTimeout(() => setMounted(false), CHAT_ANIM_MS);
     return () => clearTimeout(t);
   }, [open]);
@@ -218,51 +235,19 @@ export default function ChatPanel({
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  // Click anywhere outside to close. In reflow mode there is no scrim to catch
-  // the click, so this listener is the only thing that does it. The tutor
-  // toggles opt out via data-tutor-toggle: otherwise this would close the
-  // panel on mousedown and the button's own click would immediately reopen it.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e) => {
-      if (panelRef.current?.contains(e.target)) return;
-      if (e.target.closest?.("[data-tutor-toggle]")) return;
-      // Swallow the click this mousedown is about to produce. Without it the
-      // dismissing click also lands on whatever sits underneath — flipping the
-      // card, revealing an answer, switching view — which is what looked like
-      // the screen flashing on exit.
-      //
-      // Deliberate controls are exempt: clicking "Send feedback" while the
-      // tutor is open should close the tutor AND open feedback, not be eaten.
-      // Only accidental hits on inert surfaces need swallowing.
-      const onControl = !!e.target.closest?.(
-        "button, a, input, textarea, select, label, [role='button']"
-      );
-      if (onControl) { onClose?.(); return; }
-      const swallow = (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-      };
-      document.addEventListener("click", swallow, { capture: true, once: true });
-      setTimeout(
-        () => document.removeEventListener("click", swallow, { capture: true }),
-        400
-      );
-      onClose?.();
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open, onClose]);
-
-  // Escape closes — matches the rest of the app's overlays.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose?.();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  // NOTHING ELSE CLOSES THIS PANEL. Only the ✕ and the TUTOR nav item.
+  //
+  // It used to close on any click outside it and on Escape. Both fought the
+  // point of a panel: you look something up WHILE working a card, so clicking
+  // back onto the card — or hitting Escape to clear the answer box — took the
+  // answer away mid-read. An outside click meaning "done" is a modal's
+  // convention, and this is not a modal.
+  //
+  // Removing it also retired a whole apparatus that existed only to serve it:
+  // the listener had to swallow the click its own mousedown was about to
+  // produce, or the dismissing click landed on the card underneath and flipped
+  // it, while exempting real controls so "Send feedback" still worked through
+  // the swallow. None of that is needed now.
 
   // Rewrite the last message in place. Streaming only touches the tail of the
   // thread, so everything above it keeps its identity and doesn't re-render.
@@ -274,6 +259,46 @@ export default function ChatPanel({
       return copy;
     });
   }, []);
+
+  // Text that has arrived but not yet been shown.
+  const bufferRef = useRef("");
+  const rafRef = useRef(0);
+
+  const drain = useCallback(() => {
+    if (rafRef.current) return; // already running
+    const step = () => {
+      const buf = bufferRef.current;
+      if (!buf) {
+        rafRef.current = 0;
+        return;
+      }
+      const take = Math.max(REVEAL_MIN_CHARS, Math.ceil(buf.length / REVEAL_CATCHUP));
+      bufferRef.current = buf.slice(take);
+      updateLast((m) => ({ ...m, content: m.content + buf.slice(0, take) }));
+      rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+  }, [updateLast]);
+
+  // Resolve once everything buffered has actually been shown, so the caret
+  // isn't taken away with text still to come.
+  const drained = useCallback(
+    () =>
+      new Promise((resolve) => {
+        const check = () =>
+          bufferRef.current ? requestAnimationFrame(check) : resolve();
+        check();
+      }),
+    []
+  );
+
+  const stopDrain = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    bufferRef.current = "";
+  }, []);
+
+  useEffect(() => stopDrain, [stopDrain]);
 
   const send = useCallback(
     async (text) => {
@@ -294,6 +319,7 @@ export default function ChatPanel({
 
       const controller = new AbortController();
       abortRef.current = controller;
+      bufferRef.current = "";
       let gotText = false;
 
       try {
@@ -366,7 +392,8 @@ export default function ChatPanel({
             }
             if (event.type === "text") {
               gotText = true;
-              updateLast((m) => ({ ...m, content: m.content + event.delta }));
+              bufferRef.current += event.delta;
+              drain();
             } else if (event.type === "cards") {
               updateLast((m) => ({ ...m, cards: event.cards || [] }));
             } else if (event.type === "error") {
@@ -375,6 +402,7 @@ export default function ChatPanel({
           }
         }
 
+        await drained();
         updateLast((m) => ({ ...m, streaming: false }));
         if (streamError) {
           // A key Anthropic rejects can only surface once generation has
@@ -391,10 +419,12 @@ export default function ChatPanel({
         // a half-answer blinking its caret forever and put an empty assistant
         // turn into the next request's history.
         if (e.name === "AbortError") {
+          stopDrain();
           if (gotText) updateLast((m) => ({ ...m, streaming: false }));
           else setMessages(messages);
           return;
         }
+        stopDrain();
         setError(e.message || "Something went wrong.");
         setErrorCode(e.code || "");
         if (gotText) {
@@ -412,7 +442,7 @@ export default function ChatPanel({
         abortRef.current = null;
       }
     },
-    [input, sending, messages, cards, currentCard, user, updateLast]
+    [input, sending, messages, cards, currentCard, user, updateLast, drain, drained, stopDrain]
   );
 
   const addCard = useCallback(
@@ -446,6 +476,20 @@ export default function ChatPanel({
     [user, onCardsAdded]
   );
 
+  // The box starts at one line and grows with what you type, to a cap. It was
+  // a fixed two rows, which left it a good 20px taller than the Send button
+  // beside it — the two read as different controls rather than one row.
+  const grow = (el) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  };
+
+  // Sending empties the box, which has to shrink back with it.
+  useEffect(() => {
+    if (!input && inputRef.current) grow(inputRef.current);
+  }, [input]);
+
   const onKeyDown = (e) => {
     // Enter sends, Shift+Enter makes a newline.
     if (e.key === "Enter" && !e.shiftKey) {
@@ -458,8 +502,10 @@ export default function ChatPanel({
 
   return createPortal(
     <div style={S.wrap}>
+      {/* Dims the app behind an overlay-mode panel. Not a dismissal: see the
+          note above — the ✕ and the nav toggle are the only ways out. */}
       {!activeReflow && (
-        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} onClick={onClose} />
+        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} />
       )}
       <aside
         ref={panelRef}
@@ -470,15 +516,19 @@ export default function ChatPanel({
         }}
         role="dialog"
         aria-label="Ask the tutor"
+        data-tutor-panel
       >
         <header style={S.head}>
-          <div>
+          <div style={S.headMain}>
             <div style={S.title}>Ask the tutor</div>
-            <div style={S.sub}>
-              {currentCard?.f
-                ? `Looking at: ${cleanFrenchPrompt(currentCard.f, currentCard.b)}`
-                : "Look something up, then add it to your deck."}
-            </div>
+            {/* The card in view, named rather than described. This is the
+                thing that makes the answers specific, so it gets a chip
+                instead of a line of grey micro-copy. */}
+            {currentCard?.f && (
+              <div style={S.contextChip} data-tutor-context>
+                {cleanFrenchPrompt(currentCard.f, currentCard.b)}
+              </div>
+            )}
           </div>
           <button style={S.close} onClick={onClose} aria-label="Close">
             ✕
@@ -486,12 +536,13 @@ export default function ChatPanel({
         </header>
 
         <div style={S.scroll} ref={scrollRef}>
+          {/* marginTop:auto on the content, rather than justify-content on the
+              scroller: the latter makes the overflowing top unreachable in
+              some browsers. This pushes a short thread down to meet the
+              composer and behaves normally once it is long enough to scroll. */}
+          <div style={S.threadFoot}>
           {messages.length === 0 && (
             <div style={S.empty}>
-              <p style={S.emptyText}>
-                Ask about a word, a phrase, or a grammar point. If there's something
-                worth drilling, you'll get cards you can edit and add.
-              </p>
               {SUGGESTIONS.map((s) => (
                 <button key={s} style={S.suggestion} onClick={() => send(s)}>
                   {s}
@@ -503,10 +554,24 @@ export default function ChatPanel({
           {messages.map((m, i) => (
             <div key={i} style={m.role === "user" ? S.userRow : S.botRow}>
               <div style={m.role === "user" ? S.userBubble : S.botBubble}>
-                {m.content}
-                {/* A caret while text is still arriving, so an answer
-                    mid-generation doesn't read as one that has finished. */}
-                {m.streaming && <span style={S.caret}>▌</span>}
+                {m.streaming && !m.content ? (
+                  <span style={S.thinking} aria-label="Thinking">
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="tutor-dot"
+                        style={{ ...S.thinkingDot, animationDelay: `${i * 0.16}s` }}
+                      />
+                    ))}
+                  </span>
+                ) : (
+                  <>
+                    {m.content}
+                    {/* A caret while text is still arriving, so an answer
+                        mid-generation doesn't read as one that has finished. */}
+                    {m.streaming && <span style={S.caret}>▌</span>}
+                  </>
+                )}
               </div>
               {m.cards?.length > 0 && (
                 <div style={S.cardList}>
@@ -517,6 +582,7 @@ export default function ChatPanel({
               )}
             </div>
           ))}
+          </div>
         </div>
 
         {error && (
@@ -535,10 +601,10 @@ export default function ChatPanel({
             ref={inputRef}
             style={S.input}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { setInput(e.target.value); grow(e.target); }}
             onKeyDown={onKeyDown}
             placeholder="Ask about a word or phrase…"
-            rows={2}
+            rows={1}
             disabled={sending}
           />
           <button
@@ -589,8 +655,25 @@ const S = {
     padding: "20px 20px 14px",
     borderBottom: "1px solid rgba(3,22,50,0.06)",
   },
+  headMain: { minWidth: 0 },
   title: { fontFamily: T.font.serif, fontSize: 18, fontWeight: 600, color: T.color.onSurface },
-  sub: { fontSize: 12, color: T.color.onSurfaceVariant, marginTop: 3 },
+  // The card in view. Set in the serif the app uses for card content
+  // everywhere else, which is what identifies it as a card without a label —
+  // and a label was worse: "ON  la moitié" read as an on/off state.
+  contextChip: {
+    display: "block",
+    marginTop: 7,
+    padding: "3px 11px 4px",
+    background: T.color.surfaceHigh,
+    borderRadius: T.radius.full,
+    fontFamily: T.font.serif,
+    fontSize: 13,
+    color: T.color.onSurface,
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   close: {
     background: "transparent",
     border: "none",
@@ -600,9 +683,12 @@ const S = {
     padding: 4,
     lineHeight: 1,
   },
-  scroll: { flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 },
-  empty: { display: "flex", flexDirection: "column", gap: 8, paddingTop: 8 },
-  emptyText: { fontSize: 13, lineHeight: 1.6, color: T.color.onSurfaceVariant, margin: "0 0 6px" },
+  scroll: { flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column" },
+  // Everything in the thread, pushed to the bottom of the scroller so a short
+  // conversation sits just above the composer instead of stranded at the top
+  // of a 1000px panel with the answer and the input box a mile apart.
+  threadFoot: { marginTop: "auto", display: "flex", flexDirection: "column", gap: 14 },
+  empty: { display: "flex", flexDirection: "column", gap: 8 },
   suggestion: {
     textAlign: "left",
     padding: "10px 12px",
@@ -616,14 +702,17 @@ const S = {
   },
   userRow: { display: "flex", flexDirection: "column", alignItems: "flex-end" },
   botRow: { display: "flex", flexDirection: "column", alignItems: "flex-start" },
+  // Your own question, set quietly. It used to be a dark ink pill — the app's
+  // CTA treatment — which made the thing you already know shout louder than
+  // the answer you came for.
   userBubble: {
     maxWidth: "85%",
-    padding: "10px 14px",
-    background: T.gradient.ink,
-    color: T.color.onPrimary,
+    padding: "8px 13px",
+    background: T.color.surfaceHigh,
+    color: T.color.onSurfaceVariant,
     borderRadius: T.radius.md,
-    fontSize: 13.5,
-    lineHeight: 1.55,
+    fontSize: 13,
+    lineHeight: 1.5,
     whiteSpace: "pre-wrap",
   },
   botBubble: {
@@ -641,6 +730,14 @@ const S = {
     boxShadow: T.shadow.card,
   },
   caret: { opacity: 0.45, marginLeft: 1 },
+  thinking: { display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 0" },
+  thinkingDot: {
+    width: 5,
+    height: 5,
+    borderRadius: "50%",
+    background: T.color.onSurfaceVariant,
+    display: "inline-block",
+  },
   cardList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 10, width: "92%" },
   cardChip: {
     display: "flex",
@@ -690,7 +787,11 @@ const S = {
     alignItems: "stretch",
   },
   chipEditToggle: {
-    padding: "4px 14px",
+    // Same box as the Add button above it, so the two stack as a pair rather
+    // than a button with a caption drifting beneath it.
+    padding: "4px 0",
+    width: "100%",
+    textAlign: "center",
     background: "transparent",
     color: T.color.onSurfaceVariant,
     border: "none",
@@ -751,11 +852,16 @@ const S = {
     gap: 8,
     padding: "12px 20px 20px",
     borderTop: "1px solid rgba(3,22,50,0.06)",
-    alignItems: "flex-end",
+    // stretch, not flex-end: the button takes the textarea's height rather
+    // than sitting short beside it, so the two read as one control.
+    alignItems: "stretch",
   },
   input: {
     flex: 1,
+    minHeight: 40,
+    maxHeight: COMPOSER_MAX_HEIGHT,
     padding: "10px 12px",
+    lineHeight: 1.4,
     background: T.color.surfaceHigh,
     border: "1px solid rgba(3,22,50,0.08)",
     borderRadius: T.radius.md,
@@ -766,7 +872,10 @@ const S = {
     outline: "none",
   },
   send: {
-    padding: "11px 18px",
+    display: "flex",
+    alignItems: "center",
+    padding: "0 18px",
+    flexShrink: 0,
     background: T.gradient.ink,
     color: T.color.onPrimary,
     border: "none",
@@ -777,7 +886,10 @@ const S = {
     cursor: "pointer",
   },
   sendDisabled: {
-    padding: "11px 18px",
+    display: "flex",
+    alignItems: "center",
+    padding: "0 18px",
+    flexShrink: 0,
     background: T.color.surfaceHighest,
     color: T.color.onSurfaceVariant,
     border: "none",
