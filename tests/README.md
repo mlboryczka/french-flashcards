@@ -29,11 +29,12 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `regressions` | bugs found by driving the app, each with the check that would have caught it | yes |
 | `reflow` | what the reflow drags with it: the chrome above the card holding still, the card animating rather than popping, the feedback sheet staying inside the window, and panel/page agreeing across the reflow floor | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
+| `stats` | the Stats page: today's answers, seen / about remembered / not yet seen for the deck and each area, cards coming up, and no "mastered" — every expected figure counted from its own fixture | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |
 | `session` | working a block to its checkpoint, Continue dealing the next block without repeating a card, what the keyboard is allowed to touch, and FSRS getting one answer per card per day | yes |
 | `tutor` | the answer rendering as it streams, the deck context the endpoint is sent, editing a proposed card before it is written | yes |
 
-**Markers:** `data-checkpoint` (the screen after a block), `data-lesson-progress` (the lesson's figure in the top bar), `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`. Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
+**Markers:** `data-checkpoint` (the screen after a block), `data-stats-all` / `data-stats-areas` / `data-stats-coming-up` (Stats sections), `data-lesson-progress` (the lesson's figure in the top bar), `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`. Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
 
 ## Five rules, all learned from checks that lied
 

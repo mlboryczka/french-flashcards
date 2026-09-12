@@ -18,9 +18,8 @@ still open.
 | **History** | One entry per working session, oldest first. Why things are the way they are, including the mistakes |
 | **Open items** | What is known to be wrong, missing, or agreed and unbuilt. Last section, so nothing hides after it |
 
-Two sections carry a design that is **agreed but not built** and say so at the
-top: *Progress, and the "mastered" relic*, and the lesson-bar open item. Don't
-read either as a description of the app.
+One open item carries a design that is **agreed but not built** and says so:
+the lesson-bar-by-section item. Don't read it as a description of the app.
 
 ---
 
@@ -722,10 +721,28 @@ The shape of it:
 
 ## Progress, and the "mastered" relic
 
-**Status: none of this is built.** What follows is a decision and a design, not
-a description of the app. The app still says "mastered" and still means
-`stability >= 60d`. Read this section as the brief for the work, and see the
-open item of the same name.
+**Status: built on 2026-09-12**, as part of the serving strategy (see that
+day's History entry). What was built differs from the design below in four
+ways, and where they disagree, this paragraph wins:
+
+- **The completion screen is a checkpoint after every block of 50**, not one
+  end-of-session screen. See *The checkpoint* under *How a session is built*.
+- **The lesson top bar reads "about 43 of 108 remembered"**, with the "about"
+  the wording rules below insist on.
+- **The Stats page** (`data-stats-all`, `data-stats-areas`,
+  `data-stats-coming-up`) has: Today and Right first time today, counted off
+  each card's `last_review` — exact, because FSRS gets one answer per card per
+  day; the streak; one three-band bar for the whole deck; *Your progress*, a
+  row per lesson, recent classes and earlier notes; *Coming up*, cards due on
+  each of the next seven days; *By type* with seen / about remembered in place
+  of "mastered"; Hardest cards and Reset unchanged. Guarded by the `stats`
+  suite, whose expected figures are counted from its own fixture.
+- **No finish estimates.** See the open item.
+
+The threshold is `SPOT_CHECK_MIN_STABILITY_DAYS` in `spacedRepetition.js`, and
+`cardStage` is gone. The one "Mastered" left is a column in the admin-only
+users table (`api/admin-users.js`), which counts `card_progress.score >= 3` —
+a different, legacy measure no student sees.
 
 ### Where "mastered" came from
 
@@ -1412,9 +1429,11 @@ of cards due on each of the next seven days; "By type" keeps accuracy and drops
    *The checkpoint* under *How a session is built*.
 5. The lesson top bar. **Built** — `data-lesson-progress`, "about 43 of 108
    remembered", read when a block is dealt and at its checkpoint.
-6. The Stats page.
+6. The Stats page. **Built**, without finish estimates — see *Progress, and
+   the "mastered" relic* and the open item.
 7. Tidy-up: drop "mastered" everywhere, remove the dead `freqOnly` filter (no
    control has ever set it), bring this document's reference sections in line.
+   **Done.**
 
 No database change is needed for any of it.
 
@@ -1431,13 +1450,13 @@ No database change is needed for any of it.
 - **Speech is browser-only now.** The Azure endpoints were deleted rather than
   secured. Restoring them means putting them behind `requireUser` and, if the
   owner should not be paying, a per-user credential like the Anthropic one.
-- **Lesson progress, the "mastered" rename and retrievability are agreed but
-  not built.** The design is settled down to the wording — see **The agreed
-  design, not yet built** above: seen / about N remembered, one bar with three
-  bands, in the lesson top bar and on a rewritten completion screen. Also
-  unbuilt: that screen saying "nothing more due right now" instead of "Session
-  complete", and labelling the counter as this session's position. Picked up
-  in a later session.
+- **Finish estimates on the Stats page are not built.** "At your current pace,
+  all seen by September 2028" was agreed, but pace needs to know how many new
+  cards a student meets per day, and nothing records when a card was first
+  seen: `last_review` moves on every review, `created_at` is when the card was
+  made, and there is no review log. The honest fix is a `first_seen_at` column
+  on `user_cards`, set by the first recorded answer — a migration, where the
+  rest of the strategy needed none. Needs the owner's say-so.
 - **One FSRS state covers both directions of a card.** `shownDir` is assigned
   per session, but stability and difficulty live on the row — so recognising
   *une colline* and producing it from "a hill" feed one number. They are

@@ -46,32 +46,9 @@ import {
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
 import { localISODate, reviewedToday, endOfLocalDay } from "./lib/studyDay";
-import { progressByArea, progressChanges, aboutRemembered } from "./lib/progress";
+import { progressByArea, progressChanges, aboutRemembered, summarize } from "./lib/progress";
 import { buildSession, applyAnswer } from "./lib/sessionQueue";
-import {
-  RE_QUEUE_OFFSET,
-  State,
-  MASTERED_STABILITY_DAYS,
-} from "./lib/spacedRepetition";
-
-// How the Stats page reads a card's progress.
-//
-// It used to read card_progress.score — a 0-to-5 ladder from the Leitner era
-// that migration_006 replaced with FSRS. Nothing updated the page, so it kept
-// answering a question the app had stopped asking: a card FSRS considered
-// solid for months could still appear under "new", because nothing had
-// touched its old score.
-//
-// These read the same fields the scheduler actually schedules on, so the page
-// and the queue can no longer disagree.
-//   new       — never answered
-//   mastered  — FSRS expects recall two months out (the spot-check threshold)
-//   learning  — answered, not there yet
-function cardStage(card) {
-  if ((card.fsrs_state ?? State.New) === State.New) return "new";
-  if ((card.stability ?? 0) >= MASTERED_STABILITY_DAYS) return "mastered";
-  return "learning";
-}
+import { RE_QUEUE_OFFSET, State } from "./lib/spacedRepetition";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -278,7 +255,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   // The queue has been worked to the end. Not derivable from `idx` alone:
   // idx sits on the last card both before and after that card is answered.
   const [sessionDone, setSessionDone] = useState(false);
-  const [freqOnly, setFreqOnly] = useState(false);
   // Study one type at a time. Off ("all") by default: mixing types is
   // interleaved practice and tests better than drilling one kind in a block.
   // But when you know your conjugations are the weak spot, being able to sit
@@ -512,7 +488,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // views (that used to reshuffle and snap back to card 0 mid-session).
   //
   // Selection is spaced-repetition driven: the working set comes from
-  // buildSession (lapses → due reviews → capped new → mastered spot-checks).
+  // buildSession (lapses → due reviews → new once those run out → spot-checks).
   //
   // There is deliberately no category filter. Studying one category at a time
   // is blocked practice, which feels easier during the session and tests worse
@@ -524,15 +500,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   // one type's when the student has narrowed it.
   const candidatesFrom = useCallback((cards) => {
     let candidates = cards;
-    if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
     if (typeFilter !== "all") candidates = candidates.filter(c => classifyCard(c) === typeFilter);
     if (lessonFilter !== "all") candidates = candidates.filter(c => lessonIdOf(c) === lessonFilter);
     return candidates;
-  }, [freqOnly, typeFilter, lessonFilter]);
+  }, [typeFilter, lessonFilter]);
 
   useEffect(() => {
     if (!loaded) return;
-    const filterSig = `${freqOnly}|${dir}|${typeFilter}|${lessonFilter}`;
+    const filterSig = `${dir}|${typeFilter}|${lessonFilter}`;
     const filterChanged = filterSigRef.current !== filterSig;
     filterSigRef.current = filterSig;
 
@@ -601,7 +576,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setSessionDone(false);
     setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freqOnly, loaded, dir, typeFilter, lessonFilter, userCards, blockSeq]);
+  }, [loaded, dir, typeFilter, lessonFilter, userCards, blockSeq]);
 
   const card = deck[idx];
 
@@ -1864,18 +1839,24 @@ export default function FlashcardApp({ user, onSignOut }) {
   }
 
   if (mode === "stats") {
-    const total = userCards.length;
-    let learned = 0, inProg = 0, newCount = 0;
+    const now = Date.now();
+    const todayISO = localISODate();
+    const endToday = endOfLocalDay(new Date(now));
+    const isSeenCard = (c) => (c.fsrs_state ?? State.New) !== State.New;
+
+    // Today. FSRS records one answer per card per day, so the cards whose last
+    // review falls today ARE today's answers, across every block, reload and
+    // device — and last_answer_correct on those is whether that first answer
+    // was right.
+    let answeredToday = 0, rightToday = 0;
     for (const c of userCards) {
-      const stage = cardStage(c);
-      if (stage === "mastered") learned++;
-      else if (stage === "learning") inProg++;
-      else newCount++;
+      if (!reviewedToday(c.last_review, new Date(now))) continue;
+      answeredToday++;
+      if (c.last_answer_correct === true) rightToday++;
     }
 
     // Streak: based on actual review days stored in Supabase
     // (loaded into reviewDates state on mount, appended to by answer()).
-    const todayISO = localISODate();
     let streak = 0;
     for (let i = 0; i < 365; i++) {
       const d = new Date();
@@ -1885,9 +1866,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       // Not having studied yet TODAY doesn't end a streak — the day isn't over.
       else if (iso !== todayISO) break;
     }
-
-    // Session accuracy
-    const sessionAcc = stats.seen > 0 ? Math.round((stats.got / stats.seen) * 100) : 0;
 
     // Hardest cards: the ones you have actually forgotten, most often.
     //
@@ -1901,34 +1879,69 @@ export default function FlashcardApp({ user, onSignOut }) {
       .sort((a, b) => b._lapses - a._lapses || (b.difficulty ?? 0) - (a.difficulty ?? 0))
       .slice(0, 4);
 
-    // Pipeline bar proportions
-    const pipeTotal = Math.max(total, 1);
+    // Seen / about remembered / not yet seen, for the whole deck and each area.
+    const areas = progressByArea(userCards, now);
+    const areaRows = [
+      ...LESSONS.filter((l) => areas.lessons[l.id]?.total > 0)
+        .map((l) => ({ key: `lesson:${l.id}`, label: l.title, sub: "Lesson", summary: areas.lessons[l.id] })),
+      { key: "recent", label: "Your recent classes", sub: "From the last two weeks of notes", summary: areas.recent },
+      { key: "earlier", label: "Your earlier notes", sub: "Everything older", summary: areas.earlier },
+    ].filter((r) => r.summary.total > 0);
+
+    // Coming up: cards due on each of the next seven days, starting tomorrow.
+    const dueToday = userCards.filter((c) =>
+      isSeenCard(c) && c.next_due_at && new Date(c.next_due_at).getTime() <= endToday
+    ).length;
+    const week = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() + i + 1);
+      return { iso: localISODate(d), label: d.toLocaleDateString(undefined, { weekday: "short" }), count: 0 };
+    });
+    const weekIndex = new Map(week.map((w, i) => [w.iso, i]));
+    for (const c of userCards) {
+      if (!isSeenCard(c) || !c.next_due_at) continue;
+      const i = weekIndex.get(localISODate(new Date(c.next_due_at)));
+      if (i !== undefined) week[i].count++;
+    }
+    const weekTotal = week.reduce((n, w) => n + w.count, 0);
+    const weekMax = Math.max(1, ...week.map((w) => w.count));
 
     // Breakdown by card type. Grammar, words and phrases are different kinds
     // of work and tend to sit at different levels — this is where you find out
     // that your vocabulary is fine and your conjugations are not.
     const byType = CARD_TYPES.map((type) => {
       const cards = userCards.filter((c) => classifyCard(c) === type);
-      let seen = 0, got = 0, mastered = 0, started = 0;
+      let seen = 0, got = 0;
       for (const c of cards) {
-        // Mastery comes from the scheduler. Accuracy still comes from
-        // card_progress, because the running right/wrong tally is the one
-        // thing FSRS doesn't keep — it models memory, not history.
-        if (cardStage(c) === "mastered") mastered++;
+        // Accuracy comes from card_progress, the running right/wrong tally,
+        // which is the one thing FSRS doesn't keep — it models memory, not
+        // history.
         const pr = progress[c.id];
         if (!pr || !pr.seen) continue;
-        started++;
         seen += pr.seen;
         got += pr.got ?? 0;
       }
       return {
         type,
-        total: cards.length,
-        started,
-        mastered,
+        summary: summarize(cards, now),
         accuracy: seen > 0 ? Math.round((got / seen) * 100) : null,
       };
-    }).filter((t) => t.total > 0);
+    }).filter((t) => t.summary.total > 0);
+
+    // One bar, three bands: remembered (solid), seen but not currently
+    // remembered (light), not yet seen (the empty track).
+    const bands = (summary, color, height) => {
+      const total = Math.max(summary.total, 1);
+      const rem = Math.min(summary.remembered, summary.seen);
+      return (
+        <div style={{ ...S.bandTrack, height }}>
+          <div style={{ width: `${(rem / total) * 100}%`, background: color }} />
+          <div style={{ width: `${((summary.seen - rem) / total) * 100}%`, background: color, opacity: 0.3 }} />
+        </div>
+      );
+    };
+    const figures = (summary) =>
+      `${summary.seen.toLocaleString()} seen · about ${aboutRemembered(summary).toLocaleString()} remembered · ${summary.total.toLocaleString()} cards`;
 
     return (
       <div style={shellStyle}>
@@ -1937,17 +1950,17 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div style={S.mainInnerScroll}>
             <h1 style={S.statsHeading}>Progress</h1>
 
-            {/* Row 1: This session · Accuracy · Streak */}
+            {/* Row 1: Today · Right first time today · Streak */}
             <div style={S.statsRow3}>
               <div style={S.metricCard}>
-                <div style={S.metricLabel}>This session</div>
-                <div style={S.metricVal}>{stats.seen}</div>
-                <div style={S.metricSub}>cards reviewed</div>
+                <div style={S.metricLabel}>Today</div>
+                <div style={S.metricVal}>{answeredToday.toLocaleString()}</div>
+                <div style={S.metricSub}>{answeredToday === 1 ? "card answered" : "cards answered"}</div>
               </div>
               <div style={S.metricCard}>
-                <div style={S.metricLabel}>Accuracy</div>
-                <div style={S.metricVal}>{stats.seen > 0 ? `${sessionAcc}%` : "—"}</div>
-                <div style={S.metricSub}>{stats.seen > 0 ? `${stats.got} of ${stats.seen} correct` : "study some cards first"}</div>
+                <div style={S.metricLabel}>Right first time today</div>
+                <div style={S.metricVal}>{answeredToday > 0 ? `${Math.round((rightToday / answeredToday) * 100)}%` : "—"}</div>
+                <div style={S.metricSub}>{answeredToday > 0 ? `${rightToday.toLocaleString()} of ${answeredToday.toLocaleString()}` : "nothing answered yet today"}</div>
               </div>
               <div style={S.streakCard}>
                 <div style={{fontSize:16}}>🔥</div>
@@ -1955,28 +1968,55 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <div style={S.streakSub}>day streak</div>
               </div>
             </div>
-            <div style={S.statsNote}>Stats only count answers typed with "Type answer" mode — flip-mode responses aren't tracked.</div>
 
-            {/* Pipeline: New → Learning → Mastered */}
-            <div style={S.pipelineCard}>
-              <div style={S.pipeTitle}>Your {total.toLocaleString()} cards</div>
-              <div style={S.pipeBarWrap}>
-                {newCount > 0 && <div style={{...S.pipeSeg, background:T.color.surfaceHigh, flex:newCount}} />}
-                {inProg > 0 && (
-                  <div style={{...S.pipeSeg, background:T.color.secondary, flex:inProg, color:"#fff", fontSize:11, fontWeight:600, minWidth:40}}>
-                    {inProg}
-                  </div>
-                )}
-                {learned > 0 && (
-                  <div style={{...S.pipeSeg, background:T.color.primary, flex:learned, color:T.color.onPrimary, fontSize:11, fontWeight:600, minWidth:40}}>
-                    {learned}
-                  </div>
-                )}
-              </div>
+            {/* All cards: seen / about remembered / not yet seen */}
+            <div style={S.pipelineCard} data-stats-all>
+              <div style={S.pipeTitle}>All your cards</div>
+              {bands(areas.all, T.color.primary, 28)}
               <div style={S.pipeLegend}>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:"rgba(3,22,50,0.12)"}} />{newCount.toLocaleString()} new</div>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.secondary}} />{inProg} learning</div>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />{learned} mastered</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />about {aboutRemembered(areas.all).toLocaleString()} remembered</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary, opacity:0.3}} />{Math.max(0, areas.all.seen - aboutRemembered(areas.all)).toLocaleString()} seen, not currently remembered</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.surfaceHigh}} />{areas.all.notSeen.toLocaleString()} not yet seen</div>
+              </div>
+              <p style={S.statsFootnote}>Remembered is an estimate: how many cards you would probably get right today. It rises when you study and drifts down when you don't.</p>
+            </div>
+
+            {/* Your progress: each lesson, recent classes, earlier notes */}
+            {areaRows.length > 0 && (
+              <div style={{marginTop:24}} data-stats-areas>
+                <h3 style={S.statsSectionTitle}>Your progress</h3>
+                <p style={S.statsSectionSub}>Lessons, and your own notes split by when the class was.</p>
+                <div style={S.areaList}>
+                  {areaRows.map((r) => (
+                    <div key={r.key} style={S.areaRow}>
+                      <div style={S.areaHead}>
+                        <span style={S.areaName}>{r.label}</span>
+                        <span style={S.areaSub}>{r.sub}</span>
+                      </div>
+                      {bands(r.summary, T.color.secondary, 10)}
+                      <div style={S.areaFigures}>{figures(r.summary)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Coming up: due cards on each of the next seven days */}
+            <div style={{marginTop:24}} data-stats-coming-up>
+              <h3 style={S.statsSectionTitle}>Coming up</h3>
+              <p style={S.statsSectionSub}>
+                {dueToday.toLocaleString()} due today. {week[0].count.toLocaleString()} due tomorrow, {weekTotal.toLocaleString()} over the next seven days.
+              </p>
+              <div style={S.weekChart}>
+                {week.map((w) => (
+                  <div key={w.iso} style={S.weekCol} title={`${w.count} due on ${w.iso}`}>
+                    <div style={S.weekCount}>{w.count.toLocaleString()}</div>
+                    <div style={S.weekBarSlot}>
+                      <div style={{ ...S.weekBar, height: `${(w.count / weekMax) * 100}%` }} />
+                    </div>
+                    <div style={S.weekLabel}>{w.label}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -1993,14 +2033,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </span>
                       <div style={S.typeVal}>{t.accuracy === null ? "—" : `${t.accuracy}%`}</div>
                       <div style={S.typeSub}>
-                        {t.accuracy === null
-                          ? `${t.total.toLocaleString()} card${t.total === 1 ? "" : "s"} · none studied yet`
-                          : `accuracy · ${t.mastered} of ${t.total.toLocaleString()} mastered`}
+                        {t.summary.seen === 0
+                          ? `${t.summary.total.toLocaleString()} card${t.summary.total === 1 ? "" : "s"} · none studied yet`
+                          : `${t.accuracy === null ? "" : "accuracy · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · about ${aboutRemembered(t.summary).toLocaleString()} remembered`}
                       </div>
-                      <div style={S.typeBarWrap}>
-                        <div style={{...S.typeBar, background: TYPE_COLOR[t.type],
-                          width: `${t.total ? Math.round((t.mastered / t.total) * 100) : 0}%`}} />
-                      </div>
+                      <div style={{marginTop:10}}>{bands(t.summary, TYPE_COLOR[t.type], 4)}</div>
                     </div>
                   ))}
                 </div>
@@ -2228,7 +2265,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                           sessionCounts.lapse > 0 && `${sessionCounts.lapse} relearning`,
                           sessionCounts.review > 0 && `${sessionCounts.review} review`,
                           sessionCounts.new > 0 && `${sessionCounts.new} new`,
-                          sessionCounts.spot > 0 && `${sessionCounts.spot} mastery check`,
+                          sessionCounts.spot > 0 && `${sessionCounts.spot} spot check`,
                         ].filter(Boolean).join(" · ")}
                       </span>
                     )}
@@ -3468,7 +3505,6 @@ const S = {
   cardBack: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
-  freqTag: { background:T.color.secondaryContainer, color:T.color.onSecondaryContainer, padding:"2px 7px", borderRadius:T.radius.full, fontSize:10, fontWeight:700 },
   dot: { width:7, height:7, borderRadius:"50%" },
   // Names the lesson a card belongs to, so the prompt itself does not have to.
   // Absolute rather than in flow: cardFront centres its children, and a badge
@@ -3542,10 +3578,24 @@ const S = {
   pipeTitle: { fontSize:14, fontFamily:T.font.sans, fontWeight:600, color:T.color.primary, marginBottom:14 },
   pipeBarWrap: { display:"flex", height:28, borderRadius:6, overflow:"hidden", background:T.color.surfaceHigh, marginBottom:10 },
   pipeSeg: { display:"flex", alignItems:"center", justifyContent:"center", fontFamily:T.font.sans },
-  pipeLegend: { display:"flex", gap:20 },
-  pipeLegItem: { display:"flex", alignItems:"center", gap:6, fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant },
+  pipeLegend: { display:"flex", flexWrap:"wrap", gap:"6px 20px" },
+  pipeLegItem: { display:"flex", alignItems:"center", gap:6, fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, whiteSpace:"nowrap" },
   pipeDot: { width:8, height:8, borderRadius:"50%", flexShrink:0 },
   // Section titles
+  bandTrack: { display:"flex", borderRadius:6, overflow:"hidden", background:T.color.surfaceHigh, marginBottom:10 },
+  statsFootnote: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"12px 0 0", lineHeight:1.5 },
+  areaList: { display:"flex", flexDirection:"column", gap:10 },
+  areaRow: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"14px 18px", border:"1px solid rgba(3,22,50,0.06)" },
+  areaHead: { display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:12, marginBottom:10, flexWrap:"wrap" },
+  areaName: { fontSize:15, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary },
+  areaSub: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant },
+  areaFigures: { fontSize:12.5, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontVariantNumeric:"tabular-nums", marginTop:-2 },
+  weekChart: { display:"grid", gridTemplateColumns:"repeat(7, minmax(0, 1fr))", gap:8, background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"16px 18px", border:"1px solid rgba(3,22,50,0.06)" },
+  weekCol: { display:"flex", flexDirection:"column", alignItems:"center", gap:6, minWidth:0 },
+  weekCount: { fontSize:12, fontFamily:T.font.sans, fontWeight:600, color:T.color.primary, fontVariantNumeric:"tabular-nums" },
+  weekBarSlot: { height:90, width:"100%", maxWidth:36, display:"flex", alignItems:"flex-end", background:T.color.surfaceLow, borderRadius:4, overflow:"hidden" },
+  weekBar: { width:"100%", background:T.color.secondary, borderRadius:"4px 4px 0 0", minHeight:0 },
+  weekLabel: { fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.04em" },
   statsSectionTitle: { fontSize:18, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, margin:"0 0 4px" },
   statsSectionSub: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"0 0 14px" },
   // Hardest cards

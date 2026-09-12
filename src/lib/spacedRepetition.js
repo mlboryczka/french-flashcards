@@ -60,7 +60,12 @@ export const RE_QUEUE_OFFSET = 20;
 
 // A card counts as "well known" for spot-check purposes once FSRS thinks
 // you'd still recall it well over two months from now.
-export const MASTERED_STABILITY_DAYS = 60;
+//
+// This used to be called MASTERED_STABILITY_DAYS, and the Stats page showed
+// cards past it as "mastered" — a Leitner-era word re-attached to a threshold
+// chosen for a different question (which cards are safe to skip). It is only a
+// scheduling parameter now; progress is seen / about remembered.
+export const SPOT_CHECK_MIN_STABILITY_DAYS = 60;
 
 // ── Conversion between the DB row shape and ts-fsrs's Card ─────────────
 //

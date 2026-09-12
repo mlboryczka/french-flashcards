@@ -42,7 +42,7 @@ import {
   fromFsrsCard,
   State,
   Rating,
-  MASTERED_STABILITY_DAYS,
+  SPOT_CHECK_MIN_STABILITY_DAYS,
 } from "./spacedRepetition.js";
 import { endOfLocalDay, localISODate, localISODateDaysAgo, reviewedToday } from "./studyDay.js";
 import { lessonIdOf } from "./lessonSource.js";
@@ -71,8 +71,8 @@ function dueMs(card) {
   return Number.isFinite(t) ? t : 0;
 }
 
-function isMastered(card) {
-  return (card.stability ?? 0) >= MASTERED_STABILITY_DAYS;
+function isWellKnown(card) {
+  return (card.stability ?? 0) >= SPOT_CHECK_MIN_STABILITY_DAYS;
 }
 
 function shuffleInPlace(arr, rng = Math.random) {
@@ -163,7 +163,7 @@ export function buildSession(cards, opts = {}) {
   const lapses = [];
   const reviews = [];
   const fresh = [];
-  const mastered = [];
+  const wellKnown = [];
 
   for (const c of cards) {
     const state = c.fsrs_state ?? State.New;
@@ -181,22 +181,22 @@ export function buildSession(cards, opts = {}) {
         state === State.Learning;
       if (missedLastTime) lapses.push(c);
       else reviews.push(c);
-    } else if (isMastered(c) && !reviewedToday(c.last_review, new Date(now))) {
+    } else if (isWellKnown(c) && !reviewedToday(c.last_review, new Date(now))) {
       // Not due, but known well enough that we can afford to sample it. Not
       // one already answered today: FSRS would not record the answer.
-      mastered.push(c);
+      wellKnown.push(c);
     }
   }
 
   // Most overdue first, so the oldest reviews survive the cut.
   reviews.sort((a, b) => dueMs(a) - dueMs(b));
-  shuffleInPlace(mastered, rng);
+  shuffleInPlace(wellKnown, rng);
 
   const due = [
     ...lapses.map((c) => ({ ...c, _bucket: "lapse" })),
     ...reviews.map((c) => ({ ...c, _bucket: "review" })),
   ];
-  const spotSlots = Math.min(spotCheckSlots, mastered.length);
+  const spotSlots = Math.min(spotCheckSlots, wellKnown.length);
   const dueTaken = due.slice(0, Math.max(0, target - spotSlots));
 
   // New cards only in the room the due cards left.
@@ -215,7 +215,7 @@ export function buildSession(cards, opts = {}) {
   // the student is caught up, and a block of two random known cards would
   // only be noise.
   const spots = dueTaken.length + newTaken.length > 0
-    ? mastered.slice(0, spotSlots).map((c) => ({ ...c, _bucket: "spot" }))
+    ? wellKnown.slice(0, spotSlots).map((c) => ({ ...c, _bucket: "spot" }))
     : [];
 
   const tagged = [...dueTaken, ...newTaken, ...spots];
