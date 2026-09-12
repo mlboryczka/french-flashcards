@@ -58,8 +58,10 @@ decisions and it matters:
 1. **Lapses** — missed last time, due now
 2. **Reviews** — due now, oldest-due first
 3. **New** — never answered, capped at `newCap` (20)
-4. **Spot-checks** — a random sample of mastered cards (stability ≥ 60d),
-   ignoring due date; insurance against FSRS being over-confident
+4. **Spot-checks** — a random sample of well-known cards (stability ≥ 60d),
+   ignoring due date; insurance against FSRS being over-confident. That
+   threshold is the whole of what "mastered" means — see **Progress, and the
+   "mastered" relic**
 
 New and spot-check slots are **reserved before** the target is spent on due
 work. Without that, a review backlog larger than the target starves new
@@ -70,6 +72,34 @@ The queue is then shuffled. Presenting fixed blocks (all lapses, then all
 reviews) is *blocked practice*, which feels easier during the session and
 tests worse afterwards. Mixing is *interleaved practice* — about g = 0.42 in
 Brunmair & Richter's (2019) meta-analysis of 59 studies.
+
+### `target` is a ceiling, not a length — and there are no modules
+
+`target: 75` is the most a session may contain, not what it fills to. You get
+however many cards genuinely qualify, which is a different number every time
+and is invisible before you start. The first pass at a fresh lesson is
+**exactly `newCap`**: nothing is due yet, and nothing has 60 days of stability
+for a spot-check, so the queue is 20 cards and no more. Come back once those
+are due and lapses and reviews have something in them, so the same lesson
+serves up to 75.
+
+This is correct behaviour that reads as a bug, and it has been reported as
+one. Two things cause that:
+
+- **The completion screen says "Session complete!"**, with a *New Session*
+  button, whether you are studying the whole deck or one lesson. It means "the
+  queue for the current filter is empty". It is read as "you have finished
+  L'impératif" — a fair reading of that sentence, and wrong. Nothing is ever
+  finished in FSRS; intervals just get longer.
+- **Nothing anywhere tracks progress through a lesson.** The lesson bar shows
+  the title. The counter (`Card 12 of 20`) is your position in *today's queue*.
+  Stats breaks down by card type. So with 108 impératif cards there is no way
+  to tell whether you have met 20 of them or 90.
+
+Fixed-length modules would be the wrong fix — they fight the scheduler, whose
+whole job is to decide what you see. What is missing is honest reporting: an
+end screen that distinguishes "nothing due right now" from "done", and a
+per-lesson progress figure. See **Progress, and the "mastered" relic** below.
 
 `applyAnswer(card, got)` maps the binary typed result onto two of FSRS's four
 ratings — `Again` for a miss, `Good` for a hit. `Hard`/`Easy` exist for apps
@@ -674,6 +704,80 @@ Found by a review pass over the whole branch, not by the tutor work itself.
   lacking the quota guard the live one has, kept quiet with an
   `eslint-disable no-unreachable`. Deleted.
 
+## Progress, and the "mastered" relic
+
+### Where "mastered" came from
+
+It is a **Leitner-era survivor**. In the box system (`7faa871`) there were five
+boxes and **box 5 was mastered** — a real terminal state that changed
+behaviour: a wrong answer reset you to box 1, "or box 2 if previously
+mastered". When FSRS replaced the ladder (`7a7ad36`) the boxes went and the
+word stayed, re-implemented as a threshold on a continuous variable
+(`MASTERED_STABILITY_DAYS = 60`) purely to keep the spot-check bucket working.
+
+So the number answers "which cards are safe to skip?" and is being read as
+"which cards have I learned?". Nobody ever picked a threshold for the second
+question.
+
+It is also not an FSRS concept. FSRS's states are New, Learning, Review and
+Relearning; there is no "mastered". And it is **irrelevant to scheduling** —
+nothing about when you next see a card depends on it. It does exactly two
+things: gates the spot-check pool, and prints a word on the Stats page.
+
+**Decision: drop it as a learner-facing idea.** Reasons, in order of weight:
+re-imposing a binary on a continuous variable throws away the thing FSRS
+improved over Leitner; the threshold was chosen for a different question; and
+it can be flatly wrong, because one stability covers both directions of a
+card, so 60 days can be reached having only ever been asked the easy way.
+Keep the threshold as an internal scheduling parameter under an honest name
+(`SPOT_CHECK_MIN_STABILITY`) and stop showing the word.
+
+Blast radius is small: `cardStage` feeds four places, all on the Stats page.
+
+### The number FSRS actually offers: retrievability
+
+FSRS models memory with **three** quantities. This app stores two of them and
+never computes the third.
+
+| | | |
+|---|---|---|
+| **Stability** | stored | days until recall decays to 90% |
+| **Difficulty** | stored | how hard this card is for you |
+| **Retrievability** | **never computed** | probability you would recall it *right now* |
+
+Retrievability is derived, not stored — a function of stability and elapsed
+time since the last review, so it changes continuously with nothing written.
+`ts-fsrs` exposes it and it works on this app's card shape unchanged:
+`scheduler.get_retrievability(toFsrsCard(card), now, false)`. Measured on
+synthetic rows, it behaves as documented — stability 60 last seen 60 days ago
+returns exactly 90.0%.
+
+**Summed across a set of cards, retrievability is the expected number you
+currently know.** "You know about 43 of the 108 impératif cards right now" —
+not a bucket, not a threshold, the model's own estimate in cards. It is the
+quantity FSRS optimises, and it is what the FSRS tooling ecosystem settled on
+(Anki's FSRS add-ons graph it as "memorised").
+
+**It decays.** Stop studying and the number falls, because that is what
+happened to your memory. That is the honest behaviour and it is what makes the
+number worth watching; it is also the one real design decision here, since a
+figure that can go down puts some people off.
+
+### What to show, when this gets built
+
+1. **Known now** — Σ retrievability over the lesson, out of its card count.
+   The headline. Free from data already in the browser.
+2. **Met** — how many cards you have been shown at all. Only goes up, and it
+   is the "have I worked through the module" question people actually ask.
+   Also free.
+3. **True retention** — of the cards recently asked, the fraction you got
+   right. Measured rather than modelled, and the check on whether FSRS is
+   calibrated for you. Exists per session as `stats.got / stats.seen`; across
+   sessions it needs a review log the app does not keep.
+
+Retrievability inherits the direction problem: one number per card covering
+both FR→EN and EN→FR.
+
 ## Open items
 
 - **`^0.x` dependency versions can never update themselves.** The Anthropic
@@ -685,6 +789,22 @@ Found by a review pass over the whole branch, not by the tutor work itself.
 - **Speech is browser-only now.** The Azure endpoints were deleted rather than
   secured. Restoring them means putting them behind `requireUser` and, if the
   owner should not be paying, a per-user credential like the Anthropic one.
+- **Lesson progress, the "mastered" rename and retrievability are agreed but
+  not built.** See **Progress, and the "mastered" relic** above for the
+  decision and the three figures to show. Also unbuilt: the completion screen
+  saying "nothing due right now" rather than "Session complete", and labelling
+  the counter as this session's position.
+- **One FSRS state covers both directions of a card.** `shownDir` is assigned
+  per session, but stability and difficulty live on the row — so recognising
+  *une colline* and producing it from "a hill" feed one number. They are
+  different skills with different difficulty. This is why a card can read as
+  well-known and still ambush you, and it is a modelling gap rather than a
+  display one: fixing it properly means two FSRS states per card.
+- **No review log.** Only the current FSRS state is kept, not the history that
+  produced it. So there is no true-retention figure across sessions, no
+  progress-over-time graph, and no way to re-optimise FSRS parameters against
+  this learner's own answers — which is the feature that makes FSRS better
+  than its defaults.
 - **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
   there is no install manifest or offline support.
 - **The multi-sense cleanup has no UI any more.** `SplitSensesModal` and its
