@@ -138,6 +138,33 @@ Brunmair & Richter's (2019) meta-analysis of 59 studies.
 
 Guarded by the `serving` suite (no browser), one check per rule.
 
+### The checkpoint
+
+After the last card of a block, `data-checkpoint` replaces the card (it
+replaced "Session complete!" and the New Session button). It says how the
+block went ("50 cards, 43 right first time" — first answers of the day, either
+mode), what each area moved (`progressChanges`: lesson, recent classes,
+earlier notes), and then one of:
+
+- **Continue**, which deals the next block;
+- **"You're in a review phase"**, when the next block would have no new cards
+  but new cards exist;
+- **"You're all caught up"**, with no Continue, when nothing is due and nothing
+  is unseen;
+
+plus, inside a lesson, how many cards from the rest of the deck are due.
+
+**Continue builds from the deck in memory, never a refetch.** Answers write to
+Supabase fire-and-forget, and `patch()` in `useUserDeck` applies each write to
+the local deck too. A refetch straight after the last answer can return that
+card's old state, deal it again as due, and record a second review. The
+`session` suite's 113-card backlog proves it: three blocks, 113 writes.
+
+**A full rebuild starts at card 1.** It used to keep the card on screen by
+jumping to wherever that card landed in the shuffled block — entering a lesson
+could start the student at card 35 of 50, skip 34 cards and end the block
+after 16 answers. The card on screen now moves to the front instead.
+
 `applyAnswer(card, got)` maps the binary typed result onto two of FSRS's four
 ratings — `Again` for a miss, `Good` for a hit. `Hard`/`Easy` exist for apps
 where the user self-rates; here the typing check *is* the grade, and inventing
@@ -1381,8 +1408,10 @@ of cards due on each of the next seven days; "By type" keeps accuracy and drops
    shared by the checkpoint, the lesson bar and Stats. **Built** —
    `src/lib/progress.js`, guarded by the `progress` suite. About 5ms over an
    8,700-card deck.
-4. The checkpoint screen and the "12 of 50" counter.
-5. The lesson top bar.
+4. The checkpoint screen and the "Card 12 of 50" counter. **Built** — see
+   *The checkpoint* under *How a session is built*.
+5. The lesson top bar. **Built** — `data-lesson-progress`, "about 43 of 108
+   remembered", read when a block is dealt and at its checkpoint.
 6. The Stats page.
 7. Tidy-up: drop "mastered" everywhere, remove the dead `freqOnly` filter (no
    control has ever set it), bring this document's reference sections in line.

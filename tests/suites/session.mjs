@@ -5,7 +5,8 @@
 // a dialog. The assertions are written from what the app owes the user, not
 // from how it happens to be implemented:
 //
-//   "a session that has been worked to the end says so and offers a new one"
+//   "a block that has been worked to the end says how it went, and offers the
+//    next block only when there is one"
 //   "a card is graded once per answer, and only when it is the card you are
 //    looking at"
 //
@@ -32,7 +33,9 @@ const { browser, page } = await openApp({
     }),
 });
 
-const bodyHas = (re) => page.evaluate((s) => new RegExp(s).test(document.body.innerText), re.source);
+const bodyHas = (re) => page.evaluate(([s, f]) => new RegExp(s, f).test(document.body.innerText), [re.source, re.flags]);
+const checkpointShown = () => page.evaluate(() => !!document.querySelector("[data-checkpoint]"));
+const continueButton = () => page.$('[data-checkpoint] button:has-text("Continue")');
 
 // Click a panel's own heading, drop focus, then press the study shortcuts.
 //
@@ -82,20 +85,23 @@ async function workTheQueue(limit = DECK_SIZE * 3) {
   return taps;
 }
 
-console.log("\n  a flip-mode session reaches an end");
+console.log("\n  a flip-mode block reaches an end");
 // Flip mode is the default — no typing — and it used to have no end at all:
 // the completion notice was gated on the count of TYPED answers, so it never
 // showed, and the last card stayed live under your cursor.
 const taps = await workTheQueue();
 ck("the queue ran out instead of looping", taps <= DECK_SIZE, `${taps} answers for ${DECK_SIZE} cards`);
-ck("it says the session is complete", await bodyHas(/Session complete/));
-ck("and offers a new one", !!(await page.$('button:has-text("New Session")')));
+ck("a checkpoint replaces the card", await checkpointShown());
 ck("the card is gone, not left sitting there", (await cardBox(page)) === null);
 ck(
-  "it reports what you did, without inventing an accuracy for untyped answers",
-  await bodyHas(new RegExp(`${DECK_SIZE} cards reviewed`)),
-  `expected "${DECK_SIZE} cards reviewed"`
+  "it says how the block went, counting first answers in either mode",
+  await bodyHas(new RegExp(`${DECK_SIZE} cards, ${DECK_SIZE} right first time`)),
+  `expected "${DECK_SIZE} cards, ${DECK_SIZE} right first time"`
 );
+// The fixture is smaller than a block, so working it through leaves nothing
+// due and nothing new. Offering another block would deal an empty one.
+ck("with everything done, it says so", await bodyHas(/all caught up/i));
+ck("and offers no Continue into an empty block", !(await continueButton()));
 ck(
   "one scheduler write per card, no more",
   writes.length === DECK_SIZE,
@@ -108,25 +114,18 @@ for (const key of ["Enter", "ArrowRight", "ArrowLeft", " "]) await page.keyboard
 await page.waitForTimeout(500);
 ck("keys do nothing once the queue is empty", writes.length === afterFinish, `${writes.length} vs ${afterFinish}`);
 
-console.log("\n  and you can start another, or step back into the last one");
-await page.click('button:has-text("New Session")');
-await page.waitForTimeout(1200);
-const restarted = await sessionCounter(page);
-ck("New Session deals a fresh queue", restarted?.index === 1, JSON.stringify(restarted));
-ck("with a card on screen", (await cardBox(page)) !== null);
-
-await workTheQueue();
-ck("second session ends too", await bodyHas(/Session complete/));
+console.log("\n  you can step back into the block you finished");
 await page.click('button:has-text("Previous card")');
 await page.waitForTimeout(500);
-ck("Previous card puts you back in the session", !(await bodyHas(/Session complete/)));
+ck("Previous card puts you back in the block", !(await checkpointShown()));
 ck("with the card back", (await cardBox(page)) !== null);
 
 console.log("\n  the keyboard reaches the card only when the card is what you're looking at");
-// Previous card left the session live again, so finish it before restarting.
+// Previous card left the block live again, so finish it, then reload: the
+// mock serves the fixture's original state, which is a fresh block.
 await workTheQueue();
-await page.click('button:has-text("New Session")');
-await page.waitForTimeout(1200);
+await page.reload();
+await page.waitForTimeout(2000);
 
 // Baseline: with nothing layered over the study view, the shortcuts work.
 // Without this the next two checks would pass on a broken app that had simply
@@ -231,7 +230,7 @@ console.log("\n  FSRS gets one answer per card per day");
   ck("every card so far written once", oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
 
   await press("ArrowRight"); // get the retry right
-  ck("answering the retry ends the session", await has(/Session complete/));
+  ck("answering the retry ends the block", !!(await page.$("[data-checkpoint]")));
   ck("and writes nothing: that card already had today's review",
      oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
 
@@ -240,12 +239,73 @@ console.log("\n  FSRS gets one answer per card per day");
   // reviewed today.
   await page.click('button:has-text("Previous card")');
   await page.waitForTimeout(400);
-  ck("Previous card puts an answered card back on screen", !(await has(/Session complete/)));
+  ck("Previous card puts an answered card back on screen", !(await page.$("[data-checkpoint]")));
   await press("ArrowRight");
   await press("ArrowRight");
-  ck("answering both again is graded on screen", await has(/Session complete/));
+  ck("answering both again is graded on screen", !!(await page.$("[data-checkpoint]")));
   ck("but writes nothing either", oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
 
+  await browser.close();
+}
+
+console.log("\n  Continue deals the next block, and never the same card twice");
+// A backlog bigger than two blocks: 110 due cards and 3 new ones. The mock is
+// told to serve these instead of its fixture; it still answers every write.
+{
+  const base = deck.find((r) => r.fsrs_state === 2 && r.last_answer_correct === true);
+  const fresh = deck.find((r) => r.fsrs_state === 0);
+  const big = [
+    ...Array.from({ length: 110 }, (_, i) => ({ ...base, id: 1000 + i, front: `carte ${i + 1}`, back: `card ${i + 1}` })),
+    ...Array.from({ length: 3 }, (_, i) => ({ ...fresh, id: 2000 + i, front: `nouveau ${i + 1}`, back: `new ${i + 1}` })),
+  ];
+  const written = [];
+  const { browser, page } = await openApp({
+    route: async (p) => {
+      await p.route("**/rest/v1/user_cards*", async (r) => {
+        const m = r.request().method();
+        if (m === "PATCH") { written.push(r.request().url()); return r.continue(); }
+        if (m !== "GET") return r.continue();
+        await r.fulfill({
+          status: 200, contentType: "application/json",
+          headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(big),
+        });
+      });
+    },
+  });
+  // Let the load-time lesson sync finish before answering: its reload would
+  // re-serve this fixture's original state over the answers.
+  await page.waitForTimeout(2500);
+  const press = async (key) => { await page.keyboard.press(key); await page.waitForTimeout(110); };
+  const has = (re) => page.evaluate(([s, f]) => new RegExp(s, f).test(document.body.innerText), [re.source, re.flags]);
+  const workBlock = async () => {
+    const c = await sessionCounter(page);
+    for (let i = 0; i < (c?.total || 0); i++) await press("ArrowRight");
+    return c;
+  };
+  const clickContinue = async () => {
+    const cont = await page.$('[data-checkpoint] button:has-text("Continue")');
+    if (cont) await cont.click();
+    await page.waitForTimeout(800);
+    return !!cont;
+  };
+
+  const b1 = await workBlock();
+  ck("a 110-card backlog deals a block of 50", b1?.total === 50, JSON.stringify(b1));
+  ck("after 50 answers, the checkpoint", !!(await page.$("[data-checkpoint]")));
+  ck("says how the block went", await has(/50 cards, 50 right first time/), "expected \"50 cards, 50 right first time\"");
+  ck("and what it moved", await has(/Your earlier notes/));
+  ck("60 still due, so it says the next blocks are reviews only", await has(/review phase/i) && await has(/60 cards/));
+  ck("and offers Continue", await clickContinue());
+
+  const b2 = await workBlock();
+  ck("Continue deals the next 50", b2?.index === 1 && b2?.total === 50, JSON.stringify(b2));
+  ck("10 due and 3 new left: new cards fit, so no review-phase message", !(await has(/review phase/i)));
+  await clickContinue();
+
+  const b3 = await workBlock();
+  ck("the last block is the 10 due plus the 3 new", b3?.total === 13, JSON.stringify(b3));
+  ck("working it ends in all caught up", await has(/all caught up/i));
+  ck("113 cards, 113 reviews: no card was dealt twice", written.length === 113, `${written.length} writes`);
   await browser.close();
 }
 

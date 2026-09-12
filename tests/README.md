@@ -24,16 +24,16 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `layout` | card fits the window at 7 heights; a panel moves the content column and **not** the sidebar, on Cards and on Stats | yes |
 | `panels` | tutor/feedback mutual exclusion, outside-click dismissal, reflow axis | yes |
 | `lesson-sync` | a new account ends up with L'impératif in its deck: every card, correctly keyed, studiable, notes readable — and a second visit writes nothing | yes |
-| `lessons` | the lesson notes panel: its tabs and the rules its layout keeps, all read back from the lesson data | yes |
+| `lessons` | the lesson notes panel: its tabs and the rules its layout keeps, all read back from the lesson data; the lesson's block starting at card 1, and its progress in the top bar | yes |
 | `motion` | a panel and the page it moves travel together — no frame leaping a large part of the distance, nothing left behind | yes |
 | `regressions` | bugs found by driving the app, each with the check that would have caught it | yes |
 | `reflow` | what the reflow drags with it: the chrome above the card holding still, the card animating rather than popping, the feedback sheet staying inside the window, and panel/page agreeing across the reflow floor | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |
-| `session` | working a queue to the end, what the keyboard is allowed to touch, and FSRS getting one answer per card per day | yes |
+| `session` | working a block to its checkpoint, Continue dealing the next block without repeating a card, what the keyboard is allowed to touch, and FSRS getting one answer per card per day | yes |
 | `tutor` | the answer rendering as it streams, the deck context the endpoint is sent, editing a proposed card before it is written | yes |
 
-**Markers:** `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`. Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
+**Markers:** `data-checkpoint` (the screen after a block), `data-lesson-progress` (the lesson's figure in the top bar), `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`. Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
 
 ## Five rules, all learned from checks that lied
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { LESSONS, lessonIdOf, lessonRank } from "./data/lessons";
@@ -45,7 +45,8 @@ import {
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
-import { localISODate, reviewedToday } from "./lib/studyDay";
+import { localISODate, reviewedToday, endOfLocalDay } from "./lib/studyDay";
+import { progressByArea, progressChanges, aboutRemembered } from "./lib/progress";
 import { buildSession, applyAnswer } from "./lib/sessionQueue";
 import {
   RE_QUEUE_OFFSET,
@@ -239,7 +240,7 @@ function typedGotIt(typeResult) {
 
 export default function FlashcardApp({ user, onSignOut }) {
   const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
-  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck } = useUserDeck(user);
+  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard } = useUserDeck(user);
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
   const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
@@ -265,7 +266,15 @@ export default function FlashcardApp({ user, onSignOut }) {
   // accuracy built from self-reported flips would be meaningless. `answered`
   // counts every graded card in either mode, so the end-of-session summary
   // has something true to say when nothing was typed.
-  const [stats, setStats] = useState({ seen:0, got:0, missed:0, answered:0 });
+  // firstAnswered/firstGot count each card's FIRST answer of the day, in
+  // either mode — what the checkpoint reports as "right first time". A retry
+  // or a card revisited with Previous card is not a first answer.
+  const [stats, setStats] = useState({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
+  // Bumped by Continue to deal the next block from the deck already in memory.
+  const [blockSeq, setBlockSeq] = useState(0);
+  // Progress when the current block was dealt, so the checkpoint can say what
+  // the block changed.
+  const blockStartRef = useRef(null);
   // The queue has been worked to the end. Not derivable from `idx` alone:
   // idx sits on the last card both before and after that card is answered.
   const [sessionDone, setSessionDone] = useState(false);
@@ -511,16 +520,23 @@ export default function FlashcardApp({ user, onSignOut }) {
   // in Brunmair & Richter's (2019) meta-analysis of 59 studies. FSRS has no
   // opinion on categories either — it schedules on memory state alone — so a
   // filter here could only make sessions worse.
+  // The cards a block may be drawn from: the whole deck, or one lesson's or
+  // one type's when the student has narrowed it.
+  const candidatesFrom = useCallback((cards) => {
+    let candidates = cards;
+    if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
+    if (typeFilter !== "all") candidates = candidates.filter(c => classifyCard(c) === typeFilter);
+    if (lessonFilter !== "all") candidates = candidates.filter(c => lessonIdOf(c) === lessonFilter);
+    return candidates;
+  }, [freqOnly, typeFilter, lessonFilter]);
+
   useEffect(() => {
     if (!loaded) return;
     const filterSig = `${freqOnly}|${dir}|${typeFilter}|${lessonFilter}`;
     const filterChanged = filterSigRef.current !== filterSig;
     filterSigRef.current = filterSig;
 
-    let candidates = userCards;
-    if (freqOnly) candidates = candidates.filter(c => c.freq >= 2);
-    if (typeFilter !== "all") candidates = candidates.filter(c => classifyCard(c) === typeFilter);
-    if (lessonFilter !== "all") candidates = candidates.filter(c => lessonIdOf(c) === lessonFilter);
+    const candidates = candidatesFrom(userCards);
 
     // Mid-session userCards refetch (card edit/delete, background reload,
     // Supabase token refresh). Rebuilding here would reshuffle the queue,
@@ -551,6 +567,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       lessonMode: lessonFilter !== "all",
       lessonRank,
     });
+    blockStartRef.current = progressByArea(userCards);
 
     // Assign a per-card direction (stable within session). Grammar &
     // pronunciation cards are rules with examples, not translations —
@@ -560,33 +577,58 @@ export default function FlashcardApp({ user, onSignOut }) {
       const shownDir = !flippable ? "fr" : (dir === "mix" ? (Math.random() < 0.5 ? "fr" : "en") : dir);
       return { ...c, shownDir, flippable };
     });
-    setDeck(cards);
-    setSessionCounts(counts);
-    setInitialDeckSize(cards.length);
-    // A rebuilt queue is unworked, whatever the last one's state was.
-    setSessionDone(false);
-    // Preserve the user's position if the current card still exists in the
-    // rebuilt deck — otherwise reset to the top. Tracked by row_id (DB pk)
-    // because card.id is derived from front text and changes whenever the
-    // admin edits the French side — which caused a post-save reload to
-    // snap to card 0 and look like the edit hadn't persisted.
+    // A full rebuild is a NEW block — first load, a filter or direction
+    // change, Continue — so it starts at card 1 with nothing counted yet.
+    //
+    // If the card on screen is in the new block, it moves to the front so it
+    // doesn't vanish from under the student. This used to jump to wherever
+    // that card landed in the shuffled block instead, which on entering a
+    // lesson could start the student at card 35 of 50: the first 34 were
+    // skipped, and the checkpoint came after 16 answers. Tracked by row_id
+    // (DB pk) because card.id is derived from front text and changes whenever
+    // the admin edits the French side.
     const preservedRowId = currentCardIdRef.current;
     const preservedIdx = preservedRowId != null
       ? cards.findIndex(c => c.row_id === preservedRowId)
       : -1;
-    if (preservedIdx >= 0) {
-      setIdx(preservedIdx);
-    } else {
-      // Current card vanished from the rebuilt deck (delete, filter change,
-      // etc). Stay at the same numerical position so the next card slides
-      // up to fill the slot, rather than snapping back to card 0.
-      setIdx(prev => Math.min(prev, Math.max(0, cards.length - 1)));
-      setFlipped(false);
-    }
+    if (preservedIdx > 0) cards.unshift(cards.splice(preservedIdx, 1)[0]);
+    else if (preservedIdx < 0) setFlipped(false);
+    setDeck(cards);
+    setSessionCounts(counts);
+    setInitialDeckSize(cards.length);
+    setIdx(0);
+    // A rebuilt queue is unworked, whatever the last one's state was.
+    setSessionDone(false);
+    setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freqOnly, loaded, dir, typeFilter, lessonFilter, userCards]);
+  }, [freqOnly, loaded, dir, typeFilter, lessonFilter, userCards, blockSeq]);
 
   const card = deck[idx];
+
+  // What the checkpoint after a block shows. Computed once when the block
+  // ends (and again if the deck changes under it), never per answer.
+  //   changes   the areas the block moved: seen and about-remembered deltas
+  //   next      the block Continue would deal, to say "reviews only" or
+  //             "all caught up" before the student presses anything
+  //   waiting   inside a lesson, cards due today elsewhere in the deck
+  const checkpoint = useMemo(() => {
+    if (!sessionDone) return null;
+    const now = Date.now();
+    const after = progressByArea(userCards, now);
+    const changes = blockStartRef.current ? progressChanges(blockStartRef.current, after) : [];
+    const next = buildSession(candidatesFrom(userCards), {
+      now,
+      lessonMode: lessonFilter !== "all",
+      lessonRank,
+    });
+    const endToday = endOfLocalDay(new Date(now));
+    const waiting = lessonFilter === "all" ? 0 : userCards.filter((c) =>
+      (c.fsrs_state ?? State.New) !== State.New &&
+      lessonIdOf(c) !== lessonFilter &&
+      c.next_due_at && new Date(c.next_due_at).getTime() <= endToday
+    ).length;
+    return { after, changes, next, waiting };
+  }, [sessionDone, userCards, candidatesFrom, lessonFilter]);
   // Keep the ref in sync so deck rebuilds can find the current card.
   useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
   // Drop the tutor's card override once you move on. It is a snapshot taken at
@@ -766,6 +808,8 @@ export default function FlashcardApp({ user, onSignOut }) {
       setDeck(prev => prev.map(c =>
         c.row_id === card.row_id ? { ...c, ...sr } : c
       ));
+      // And the deck the next block is built from — see patch() in useUserDeck.
+      patchDeckCard(card.row_id, sr);
       if (card.row_id != null) {
         supabase.from("user_cards").update(sr).eq("id", card.row_id)
           .then(({ error }) => { if (error) console.error("SR update failed:", error); });
@@ -798,6 +842,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     setStats(s => ({
       ...s,
       answered: s.answered + 1,
+      firstAnswered: s.firstAnswered + (recordsReview ? 1 : 0),
+      firstGot: s.firstGot + (recordsReview && got ? 1 : 0),
       ...(source === "typed"
         ? { seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }
         : null),
@@ -891,7 +937,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
     currentCardIdRef.current = null;
     setFlipped(false);
-    setStats({ seen:0, got:0, missed:0, answered:0 });
+    setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
     setSessionDone(false);
     setTypedAnswer("");
     setTypeResult(null);
@@ -899,6 +945,24 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Refetch user_cards so the new session sees fresh box / next_due_at
     // values written by the previous session's answer() updates.
     reloadDeck();
+  };
+
+  // Continue, from the checkpoint: deal the next block from the deck already in
+  // memory, which carries every answer just given. resetSession refetches
+  // instead, and a refetch can land before the last answers' writes do.
+  const startNextBlock = () => {
+    setIdx(0);
+    setDeck([]);
+    setInitialDeckSize(0);
+    setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
+    currentCardIdRef.current = null;
+    setFlipped(false);
+    setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
+    setSessionDone(false);
+    setTypedAnswer("");
+    setTypeResult(null);
+    setFeedbackState(null); setFeedbackVerdict(null);
+    setBlockSeq(n => n + 1);
   };
 
   // Keyboard shortcuts (study mode). Uses refs so the handler always
@@ -1995,9 +2059,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   // What the completion panel says it did. Accuracy needs a denominator you
   // can trust, so it is only offered when something was actually typed;
   // otherwise the honest report is a count of what you worked through.
-  const sessionSummary = stats.seen > 0
-    ? `${stats.got}/${stats.seen} typed correctly (${Math.round(stats.got / stats.seen * 100)}%)`
-    : `${stats.answered} ${stats.answered === 1 ? "card" : "cards"} reviewed`;
+  const blockSummary = stats.firstAnswered > 0
+    ? `${stats.firstAnswered} ${stats.firstAnswered === 1 ? "card" : "cards"}, ${stats.firstGot} right first time.`
+    : `${stats.answered} ${stats.answered === 1 ? "card" : "cards"}.`;
+  const areaLabel = (area) =>
+    area === "recent" ? "Your recent classes"
+      : area === "earlier" ? "Your earlier notes"
+      : LESSONS.find((l) => `lesson:${l.id}` === area)?.title || "Lesson";
+  const moreOrFewer = (n, word) => `about ${Math.abs(n)} ${n >= 0 ? "more" : "fewer"} ${word}`;
 
   // type mode tapping it has to run giveUpTyped. A bare flip() would turn the
   // card over while leaving typeResult null — the answer visible, but the app
@@ -2073,6 +2142,18 @@ export default function FlashcardApp({ user, onSignOut }) {
               {LESSONS.find((l) => l.id === lessonFilter)?.title || lessonFilter}
             </div>
           )}
+          {/* The lesson's progress. Read when the block was dealt and again at
+              its checkpoint — never per answer, because a figure that moves
+              on every card reads as noise rather than progress. "About",
+              because remembered is an estimate. */}
+          {lessonFilter !== "all" && (() => {
+            const snap = (sessionDone && checkpoint ? checkpoint.after : blockStartRef.current)?.lessons?.[lessonFilter];
+            return snap ? (
+              <div style={S.lessonProgress} data-lesson-progress>
+                about {aboutRemembered(snap).toLocaleString()} of {snap.total.toLocaleString()} remembered
+              </div>
+            ) : null;
+          })()}
           {lessonFilter !== "all" && (
             <button
               data-lesson-toggle
@@ -2130,7 +2211,9 @@ export default function FlashcardApp({ user, onSignOut }) {
                   Previous card
                 </button>
                 <div style={S.subToolbarRight}>
-                  <span style={S.counter}>
+                  {/* Where you are in the block. Gone at the checkpoint, where
+                      the last card's position means nothing. */}
+                  {!sessionDone && <span style={S.counter}>
                     {inOriginal
                       ? `Card ${idx+1} of ${initialDeckSize}`
                       // retriesPending IS the total number of re-queued cards.
@@ -2154,7 +2237,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         {` · ${retriesPending} retry pending`}
                       </span>
                     )}
-                  </span>
+                  </span>}
                 </div>
                 </>
               );
@@ -2167,10 +2250,47 @@ export default function FlashcardApp({ user, onSignOut }) {
             // Got It still live let you grade the same card over and over,
             // writing an FSRS review each time.
             <div style={S.cardArea}>
-              <div style={S.sessionDone}>
-                <div style={{fontSize:48}}>🎉</div>
-                <p style={S.doneText}>Session complete! {sessionSummary}</p>
-                <button style={S.resetSBtn} onClick={resetSession}>New Session</button>
+              <div style={S.sessionDone} data-checkpoint>
+                <p style={S.checkpointHead}>{blockSummary}</p>
+                {checkpoint?.changes.length > 0 && (
+                  <div style={S.checkpointAreas}>
+                    {checkpoint.changes.map((d) => (
+                      <div key={d.area} style={S.checkpointArea}>
+                        <div style={S.checkpointAreaName}>{areaLabel(d.area)}</div>
+                        <div style={S.checkpointAreaDelta}>
+                          {[
+                            d.seenDelta !== 0 && `${d.seenDelta} more seen`,
+                            d.rememberedDelta !== 0 && moreOrFewer(d.rememberedDelta, "remembered"),
+                          ].filter(Boolean).join(" · ")}
+                        </div>
+                        <div style={S.checkpointAreaTotal}>
+                          {d.after.seen.toLocaleString()} of {d.after.total.toLocaleString()} seen · about {aboutRemembered(d.after).toLocaleString()} remembered
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {checkpoint && checkpoint.next.queue.length === 0 ? (
+                  <p style={S.checkpointNote}>
+                    <strong>You're all caught up.</strong> Nothing is due, and there are no new cards
+                    {lessonFilter !== "all" ? " left in this lesson" : ""}.
+                  </p>
+                ) : checkpoint && checkpoint.next.counts.new === 0 && checkpoint.next.newAvailable > 0 ? (
+                  <p style={S.checkpointNote}>
+                    <strong>You're in a review phase.</strong>{" "}
+                    {(checkpoint.next.counts.lapse + checkpoint.next.counts.review + checkpoint.next.dueRemaining).toLocaleString()} cards
+                    are due, so the next blocks are reviews only. New cards come back once those are done.
+                  </p>
+                ) : null}
+                {checkpoint?.waiting > 0 && (
+                  <p style={S.checkpointNote}>
+                    {checkpoint.waiting.toLocaleString()} {checkpoint.waiting === 1 ? "card" : "cards"} from the rest of your deck {checkpoint.waiting === 1 ? "is" : "are"} due.
+                    They come first when you go back to all cards.
+                  </p>
+                )}
+                {checkpoint && checkpoint.next.queue.length > 0 && (
+                  <button style={S.resetSBtn} onClick={startNextBlock}>Continue</button>
+                )}
               </div>
             </div>
           ) : card ? (
@@ -2373,7 +2493,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
           ) : (
-            <div style={S.empty}><div style={{fontSize:48}}>🎉</div><p>No cards in this selection.</p><button style={S.resetSBtn} onClick={resetSession}>Start Over</button></div>
+            <div style={S.empty}><p><strong>You're all caught up.</strong> Nothing is due, and there are no new cards here.</p><button style={S.resetSBtn} onClick={resetSession}>Check again</button></div>
           )}
         </div>
 
@@ -3389,6 +3509,14 @@ const S = {
   empty: { textAlign:"center", padding:60, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
   sessionDone: { textAlign:"center", padding:24, background:T.color.surfaceLow, borderRadius:T.radius.xl, marginTop:12 },
   doneText: { fontSize:14, color:T.color.primary, fontFamily:T.font.sans, marginBottom:14, fontWeight:500 },
+  lessonProgress: { fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, whiteSpace:"nowrap", fontVariantNumeric:"tabular-nums", flexShrink:0 },
+  checkpointHead: { fontSize:22, color:T.color.primary, fontFamily:T.font.serif, fontWeight:600, margin:"0 0 16px" },
+  checkpointAreas: { display:"flex", flexDirection:"column", gap:10, margin:"0 auto 16px", maxWidth:420, textAlign:"left" },
+  checkpointArea: { background:T.color.surfaceLowest, borderRadius:T.radius.md, padding:"10px 14px" },
+  checkpointAreaName: { fontSize:13, fontWeight:700, color:T.color.primary, fontFamily:T.font.sans },
+  checkpointAreaDelta: { fontSize:13, color:T.color.secondary, fontFamily:T.font.sans, fontWeight:600, marginTop:2 },
+  checkpointAreaTotal: { fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, marginTop:2, fontVariantNumeric:"tabular-nums" },
+  checkpointNote: { fontSize:14, color:T.color.onSurface, fontFamily:T.font.sans, margin:"0 auto 14px", maxWidth:420, lineHeight:1.5 },
   resetSBtn: { padding:"11px 26px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceLowest, color:T.color.primary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, boxShadow:T.shadow.focus },
   // Stats — bento dashboard
   statsHeading: { fontSize:36, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.02em", margin:"8px 0 28px" },

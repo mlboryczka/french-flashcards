@@ -205,5 +205,18 @@ export function useUserDeck(user) {
 
   const reload = useCallback(() => setReloadCounter((n) => n + 1), []);
 
-  return { cards, loaded, reload };
+  // Apply a write the app has just sent to one card, without refetching.
+  //
+  // Grading a card writes its new FSRS state to Supabase fire-and-forget. The
+  // next block is built from this deck, straight after the last answer —
+  // before that write has necessarily landed — so refetching to build it could
+  // hand back the card's OLD state, deal it again as still due, and record a
+  // second review. Patching the local copy means the deck the app builds from
+  // is always at least as new as what it has written.
+  const patch = useCallback((rowId, fields) => {
+    if (rowId == null) return;
+    setCards((prev) => prev.map((c) => (c.row_id === rowId ? { ...c, ...fields } : c)));
+  }, []);
+
+  return { cards, loaded, reload, patch };
 }

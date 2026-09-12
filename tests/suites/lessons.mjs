@@ -6,7 +6,7 @@
 // once-per-mount sync finds nothing missing and writes nothing — the mock
 // serves GET and PATCH only.
 
-import { openApp, finish, checker, servedDeck } from "../harness.mjs";
+import { openApp, finish, checker, servedDeck, sessionCounter } from "../harness.mjs";
 import LESSON from "../../src/data/lessons/imperatif.js";
 
 const ck = checker();
@@ -213,6 +213,41 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(700);
 ck("the ✕ closes the panel", (await page.$("[data-lesson-panel]")) === null);
+
+// ── The lesson's progress in its top bar ─────────────────────────────
+// Requirement: inside a lesson, the bar says about how many of its cards are
+// remembered, out of the lesson's size. It is read when a block is dealt and
+// at the checkpoint, never after each answer.
+// Entering a lesson deals a new block, and a new block starts at its first
+// card. It used to keep the card on screen by jumping to wherever that card
+// landed in the shuffled block — card 35 of 50 on one run, skipping 34 cards
+// and ending the block after 16 answers.
+{
+  const c = await sessionCounter(page);
+  ck("the lesson's block starts at card 1", c?.index === 1 && c?.total === 50, JSON.stringify(c));
+}
+const barText = () => page.evaluate(() => document.querySelector("[data-lesson-progress]")?.textContent.trim() || null);
+const total = LESSON.cards.length;
+ck("the bar shows the lesson's progress", (await barText()) === `about 0 of ${total} remembered`, await barText());
+await page.keyboard.press("ArrowRight");
+await page.waitForTimeout(300);
+ck("an answer does not move it", (await barText()) === `about 0 of ${total} remembered`, await barText());
+{
+  // Work the rest of the block through to its checkpoint.
+  let guard = 0;
+  while (!(await page.$("[data-checkpoint]")) && guard++ < 120) {
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(110);
+  }
+}
+ck("the block ends in a checkpoint", !!(await page.$("[data-checkpoint]")));
+const shown = await barText();
+const n = Number(/about (\d+) of/.exec(shown || "")?.[1]);
+// 50 cards just answered right are each very likely recalled, so the sum
+// rounds to the block size.
+ck("at the checkpoint it moves to the block just learned", n === 50, shown);
+ck("and the checkpoint names the lesson as what moved", await page.evaluate((t) =>
+  document.querySelector("[data-checkpoint]").innerText.includes(t), LESSON.title));
 
 // The fixture is the lesson, so the sync had nothing to do. Confirm it did not
 // quietly rewrite the deck behind us.
