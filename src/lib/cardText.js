@@ -79,3 +79,32 @@ export function cleanFrenchPrompt(fr, en) {
   const tidied = out.replace(/\s{2,}/g, " ").replace(/\s+([,;.!?])/g, "$1").trim();
   return tidied || fr;
 }
+
+// The English side, when IT is the prompt, must not name the French answer.
+//
+// Cahier backs carry grammar notes like "to re-elect (past participle: réélu)".
+// Shown after the French they are useful; shown as the question they hand you
+// a French form of the word you are being asked to produce. Only notes of
+// that shape go: a form note naming the form. "(past participle)" on its own,
+// "(fam)" and "(of products)" are disambiguators and stay.
+const FORM_NOTE = /\s*\((?:past participle|p\.?p\.?|participe(?: passé)?)\s*:[^)]*\)?/gi;
+
+export function cleanEnglishPrompt(en) {
+  if (!en) return en;
+  const out = en.replace(FORM_NOTE, "").replace(/\s{2,}/g, " ").trim();
+  return out || en;
+}
+
+// Cards are headwords and phrases, not prose, so a sentence-final full stop is
+// noise — and an inconsistent one, since most cards never had it. Dropped at
+// display time for the same reason the gloss is: no migration, and a lesson
+// card's identity is a hash of its front, so editing the stored text would
+// retire the card. Ellipses, "etc." and ? / ! are left alone, and so is a
+// stop in the middle of a card.
+export function dropFinalPeriod(text) {
+  if (!text) return text;
+  return String(text)
+    .replace(/(?<![.…]|\betc)\.(?=\s*(?:\/|\(|$))/gi, "")
+    .replace(/\s+(?=\/)/g, " ")
+    .trim();
+}

@@ -1,7 +1,13 @@
 // L'impératif — built from Laura Caufour's LFL METHOD lesson and exercise
 // sheets (Le présent de l'impératif, EXERCICES).
 //
-// Each entry is [front, back, category, section].
+// Each entry is [front, back, category, section, previousFront?].
+//
+// previousFront is there only on a card whose front has been reworded. The
+// card's identity is a hash of its front, so a rewording would otherwise read
+// to the sync as "the lesson dropped this card": the row would be retired,
+// taking its FSRS history, and re-inserted as New. Carrying the old front keeps
+// the old identity, and the sync rewrites the stored text instead.
 //
 // front is ALWAYS the French side and back the English one, because that is
 // what the rest of the app assumes: speakFrench() reads card.f aloud and
@@ -10,11 +16,13 @@
 // exercise asks for English -> French; the direction toggle decides which
 // side you are shown.
 //
-// Fronts do NOT say "(impératif)". The card wears its lesson as a badge in
-// the corner instead, which carries the same context without spending the
-// prompt on it — and the prompt is the part you are meant to read. The badge
-// is what disambiguates "regarder -> tu" from a présent drill once these
-// cards are mixed into the wider deck.
+// The paradigm drills say "(impératif)" in the front, the same way the deck's
+// own conjugation drills say "(subjonctif)". They used not to, on the theory
+// that the lesson badge carried the mood. It did not: "finir → tu" reads as a
+// présent drill, and "finis" is the présent too, so the card was reported as
+// "not an imperative card" twice (finir → tu, avoir → vous) with the badge on
+// screen. A badge is context you glance past; the mood is part of the question.
+// The transformation cards ("Tu me dis → à l'impératif") already name it.
 //
 // EVERY card is a thing to produce, never a rule to recite. An earlier
 // version had cards like "impératif : -er et aller devant en / y" answered by
@@ -37,27 +45,27 @@
 //     would miss.
 
 export const CARDS = [
-  ["regarder → tu", "regarde", "G", "forms"],
-  ["regarder → nous", "regardons", "G", "forms"],
-  ["regarder → vous", "regardez", "G", "forms"],
-  ["finir → tu", "finis", "G", "forms"],
-  ["finir → nous", "finissons", "G", "forms"],
-  ["finir → vous", "finissez", "G", "forms"],
-  ["prendre → tu", "prends", "G", "forms"],
-  ["prendre → nous", "prenons", "G", "forms"],
-  ["prendre → vous", "prenez", "G", "forms"],
-  ["être → tu", "sois", "G", "irregular"],
-  ["être → nous", "soyons", "G", "irregular"],
-  ["être → vous", "soyez", "G", "irregular"],
-  ["avoir → tu", "aie", "G", "irregular"],
-  ["avoir → nous", "ayons", "G", "irregular"],
-  ["avoir → vous", "ayez", "G", "irregular"],
-  ["aller → tu", "va", "G", "irregular"],
-  ["aller → nous", "allons", "G", "irregular"],
-  ["aller → vous", "allez", "G", "irregular"],
-  ["savoir → tu", "sache", "G", "irregular"],
-  ["savoir → nous", "sachons", "G", "irregular"],
-  ["savoir → vous", "sachez", "G", "irregular"],
+  ["regarder (impératif) → tu", "regarde", "G", "forms", "regarder → tu"],
+  ["regarder (impératif) → nous", "regardons", "G", "forms", "regarder → nous"],
+  ["regarder (impératif) → vous", "regardez", "G", "forms", "regarder → vous"],
+  ["finir (impératif) → tu", "finis", "G", "forms", "finir → tu"],
+  ["finir (impératif) → nous", "finissons", "G", "forms", "finir → nous"],
+  ["finir (impératif) → vous", "finissez", "G", "forms", "finir → vous"],
+  ["prendre (impératif) → tu", "prends", "G", "forms", "prendre → tu"],
+  ["prendre (impératif) → nous", "prenons", "G", "forms", "prendre → nous"],
+  ["prendre (impératif) → vous", "prenez", "G", "forms", "prendre → vous"],
+  ["être (impératif) → tu", "sois", "G", "irregular", "être → tu"],
+  ["être (impératif) → nous", "soyons", "G", "irregular", "être → nous"],
+  ["être (impératif) → vous", "soyez", "G", "irregular", "être → vous"],
+  ["avoir (impératif) → tu", "aie", "G", "irregular", "avoir → tu"],
+  ["avoir (impératif) → nous", "ayons", "G", "irregular", "avoir → nous"],
+  ["avoir (impératif) → vous", "ayez", "G", "irregular", "avoir → vous"],
+  ["aller (impératif) → tu", "va", "G", "irregular", "aller → tu"],
+  ["aller (impératif) → nous", "allons", "G", "irregular", "aller → nous"],
+  ["aller (impératif) → vous", "allez", "G", "irregular", "aller → vous"],
+  ["savoir (impératif) → tu", "sache", "G", "irregular", "savoir → tu"],
+  ["savoir (impératif) → nous", "sachons", "G", "irregular", "savoir → nous"],
+  ["savoir (impératif) → vous", "sachez", "G", "irregular", "savoir → vous"],
   ["Tu me regardes → à l'impératif", "Regarde-moi", "G", "ind2imp"],
   ["Tu me dis → à l'impératif", "Dis-moi", "G", "ind2imp"],
   ["Tu y réfléchis → à l'impératif", "Réfléchis-y", "G", "ind2imp"],
@@ -74,12 +82,12 @@ export const CARDS = [
   ["Prends-en → au négatif", "N'en prends pas", "G", "negative"],
   ["Attendez-nous → au négatif", "Ne nous attendez pas", "G", "negative"],
   ["Parlons-en → au négatif", "N'en parlons plus", "G", "negative"],
-  ["se lever → tu", "Lève-toi", "G", "pronominal"],
-  ["se lever → nous", "Levons-nous", "G", "pronominal"],
-  ["se lever → vous", "Levez-vous", "G", "pronominal"],
-  ["se souvenir → tu", "Souviens-toi", "G", "pronominal"],
-  ["s'amuser → tu", "Amuse-toi", "G", "pronominal"],
-  ["se battre → tu", "Bats-toi", "G", "pronominal"],
+  ["se lever (impératif) → tu", "Lève-toi", "G", "pronominal", "se lever → tu"],
+  ["se lever (impératif) → nous", "Levons-nous", "G", "pronominal", "se lever → nous"],
+  ["se lever (impératif) → vous", "Levez-vous", "G", "pronominal", "se lever → vous"],
+  ["se souvenir (impératif) → tu", "Souviens-toi", "G", "pronominal", "se souvenir → tu"],
+  ["s'amuser (impératif) → tu", "Amuse-toi", "G", "pronominal", "s'amuser → tu"],
+  ["se battre (impératif) → tu", "Bats-toi", "G", "pronominal", "se battre → tu"],
   ["Lève-toi → au négatif", "Ne te lève pas", "G", "pronominal"],
   ["Amuse-toi → au négatif", "Ne t'amuse pas", "G", "pronominal"],
   ["Souvenons-nous → au négatif", "Ne nous souvenons pas", "G", "pronominal"],

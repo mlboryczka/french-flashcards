@@ -2,7 +2,7 @@
 // the cases that motivated them.
 import { classifyCard } from "../../src/lib/cardTypes.js";
 import { looksMultiSense } from "../../src/lib/multiSense.js";
-import { cleanFrenchPrompt } from "../../src/lib/cardText.js";
+import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "../../src/lib/cardText.js";
 import { findRelatedCards, recentMisses } from "../../src/lib/deckContext.js";
 import { reconcileLessons } from "../../src/lib/lessonSync.js";
 import { lessonSource, lessonCardKey } from "../../src/lib/lessonSource.js";
@@ -237,6 +237,47 @@ console.log("\n  reconcileLessons — the lesson is the authority, the edit is t
   ck("a legacy row matching nothing is never deleted",
      afterLegacy.stale.length === 0 && afterLegacy.unkeyed.length === 1,
      `stale ${afterLegacy.stale.join(",")}`);
+}
+
+// A lesson may reword a card. The reworded card must keep its row — and its
+// FSRS history — rather than being retired as dropped and re-inserted as New.
+console.log("\n  reconcileLessons — a reworded lesson card keeps its row");
+{
+  const LESSON = { id: "test", cards: [["finir (impératif) → tu", "finis", "G", "forms", "finir → tu"]] };
+  const key = lessonCardKey("finir → tu");
+  const row = (f, row_id) => ({ f, b: "finis", row_id, source: lessonSource("test", key) });
+
+  const r = reconcileLessons([LESSON], [row("finir → tu", 5)]);
+  ck("a renamed card is not retired", r.stale.length === 0, r.stale.join(","));
+  ck("a renamed card is not re-inserted", r.missing.length === 0, r.missing.map((c) => c.front).join(", "));
+  ck("the stored front is rewritten to the new wording",
+     r.retext.length === 1 && r.retext[0].row_id === 5 && r.retext[0].front === "finir (impératif) → tu",
+     JSON.stringify(r.retext));
+
+  const mine = reconcileLessons([LESSON], [row("finir → tu (my note)", 5)]);
+  ck("a front the user edited is not overwritten by the rename", mine.retext.length === 0, JSON.stringify(mine.retext));
+
+  const done = reconcileLessons([LESSON], [row("finir (impératif) → tu", 5)]);
+  ck("once renamed, nothing more is written",
+     !done.retext.length && !done.missing.length && !done.stale.length, JSON.stringify(done));
+}
+
+// From feedback: grammar drills filed as vocab, and prompts that give the
+// answer away or end in a stray full stop.
+console.log("\n  card text — what the prompt may not show");
+{
+  ck("pp drills are grammar", classifyCard({ f: "pp de devoir : dû", b: "past participle of devoir: had to / owed", cat: "gram" }) === "grammar");
+  ck("an English prompt drops a note naming the French form",
+     cleanEnglishPrompt("to re-elect (past participle: réélu)") === "to re-elect");
+  ck("a bare part-of-speech note stays",
+     cleanEnglishPrompt("interested (past participle)") === "interested (past participle)");
+  ck("other disambiguators stay",
+     cleanEnglishPrompt("a range, a line (of products)") === "a range, a line (of products)");
+  ck("a sentence-final full stop is dropped", dropFinalPeriod("Ne me dis pas ça.") === "Ne me dis pas ça");
+  ck("so is one before a slash", dropFinalPeriod("Je pense à mon projet. / J'y pense.") === "Je pense à mon projet / J'y pense");
+  ck("an ellipsis is not a full stop", dropFinalPeriod("c'est pour ça que...") === "c'est pour ça que...");
+  ck("nor is etc.", dropFinalPeriod("tout etc.") === "tout etc.");
+  ck("? and ! are untouched", dropFinalPeriod("Tu viens ?") === "Tu viens ?");
 }
 
 const n = ck.fails();

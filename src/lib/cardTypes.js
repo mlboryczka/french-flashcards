@@ -104,7 +104,7 @@ const POS_TAG = /\((?:adj|adv|n|nom|v|f|m|pl|pp)[^)]*\)/gi;
 // term is indistinguishable from the possessive, and phonetic cards are caught
 // by the brace rule anyway.
 const GRAMMAR_TERM =
-  /\b(pronoms?|toniques?|articles?|partitifs?|accords? (?:du|des|avec)|participes?|cod|coi|relatifs?|sujet|négation|liaison|élision|conjugaison|imparfait|conditionnel|subjonctif|indicatif|impératif|plus-que-parfait|passé composé|présent|futur|auxiliaire|préposition|infinitif|placement|prononcé|prononciation|voie passive)\b/i;
+  /\b(pronoms?|toniques?|articles?|partitifs?|accords? (?:du|des|avec)|participes?|cod|coi|relatifs?|sujet|négation|liaison|élision|conjugaison|imparfait|conditionnel|subjonctif|indicatif|impératif|plus-que-parfait|passé composé|pp|présent|futur|auxiliaire|préposition|infinitif|placement|prononcé|prononciation|voie passive)\b/i;
 
 // Pattern templates: "il faut + infinitif", "pas aussi … que", "cela = ça".
 // An ellipsis only marks a template when something follows it — a trailing "…"

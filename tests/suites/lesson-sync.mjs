@@ -17,6 +17,11 @@ import { openApp, finish, checker, settled } from "../harness.mjs";
 import LESSON from "../../src/data/lessons/imperatif.js";
 import { lessonCardKey } from "../../src/lib/lessonSource.js";
 
+// A card's identity is the hash of the front it was FIRST written with: a
+// reworded lesson card carries that old front as its fifth element.
+const keyOf = ([front, , , , was]) => lessonCardKey(was ?? front);
+const KEY_BY_FRONT = new Map(LESSON.cards.map((card) => [card[0], keyOf(card)]));
+
 const ck = checker();
 
 // ── A user_cards table that remembers ────────────────────────────────────
@@ -129,7 +134,7 @@ console.log(`\n  a new account, empty deck — "${LESSON.title}" has ${LESSON.ca
 
   // The key is what lets a later version of the lesson retire or correct a
   // card without mistaking it for one the student edited.
-  const badKey = got.filter((r) => r.source !== `lesson:${LESSON.id}#${lessonCardKey(r.front)}`);
+  const badKey = got.filter((r) => r.source !== `lesson:${LESSON.id}#${KEY_BY_FRONT.get(r.front)}`);
   ck("each is tagged with the key its lesson identity depends on", badKey.length === 0,
      badKey.length ? `${badKey.length} mistagged, e.g. ${JSON.stringify(badKey[0].source)}` : "all keyed");
 
@@ -143,13 +148,13 @@ console.log(`\n  a new account, empty deck — "${LESSON.title}" has ${LESSON.ca
 console.log("\n  and the student can study it and read the notes");
 {
   // Start already synced, which is every load after the first.
-  const seed = LESSON.cards.map(([front, back, category]) => ({
+  const seed = LESSON.cards.map((card) => { const [front, back, category] = card; return {
     front, back, category,
     dates: [], flagged_for_review: false, batch_id: null,
-    source: `lesson:${LESSON.id}#${lessonCardKey(front)}`,
+    source: `lesson:${LESSON.id}#${keyOf(card)}`,
     next_due_at: null, lapses: 0, stability: null, difficulty: null,
     fsrs_state: 0, reps: 0, last_review: null, last_answer_correct: null,
-  }));
+  }; });
   const store = makeStore(seed);
   const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });
   await settled(page);
@@ -216,13 +221,13 @@ console.log("\n  and the student can study it and read the notes");
 // with them the FSRS history hanging off each one.
 console.log("\n  a second visit changes nothing");
 {
-  const seed = LESSON.cards.map(([front, back, category]) => ({
+  const seed = LESSON.cards.map((card) => { const [front, back, category] = card; return {
     front, back, category,
     dates: [], flagged_for_review: false, batch_id: null,
-    source: `lesson:${LESSON.id}#${lessonCardKey(front)}`,
+    source: `lesson:${LESSON.id}#${keyOf(card)}`,
     next_due_at: null, lapses: 2, stability: 12, difficulty: 6,
     fsrs_state: 2, reps: 5, last_review: null, last_answer_correct: true,
-  }));
+  }; });
   const store = makeStore(seed);
   const before = store.rows.length;
   const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });

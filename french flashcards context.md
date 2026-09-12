@@ -260,6 +260,22 @@ Applied at **display time** (and to text-to-speech), so it fixes the existing
 deck with no migration. The stored row and the answer side are untouched. The
 same rule also runs over the parser's output so new uploads store clean.
 
+Two more display-time rules sit beside it in `cardText.js`:
+
+- `cleanEnglishPrompt(en)` — English shown as the question loses a note that
+  names the French form: `to re-elect (past participle: réélu)` asks for
+  `réélire` and prints the participle. Only notes with a colon go; a bare
+  `(past participle)` or `(of products)` is a disambiguator and stays.
+- `dropFinalPeriod(text)` — no sentence-final full stop on either face. Cards
+  are headwords and phrases, most never had one, and the lesson's did. Done at
+  display time because editing a lesson card's front changes its identity.
+
+And one rule in the answer matcher: **parentheticals come off the answer
+BEFORE it is split on `; , /`.** `seul (only; sole)` used to split inside its
+own gloss into `seul (only` and `sole)`, neither of which normalises to
+`seul`, so the right answer was marked wrong. 64 cards in the owner's deck had
+that shape; none that matched before stops matching.
+
 ### 2. One card teaching two different words
 
 `les frais` is a plural noun (costs); `frais` is an adjective (fresh). Sharing
@@ -727,9 +743,16 @@ The shape of it:
 - **Every French-answered card carries an arrow in its front.** Load bearing:
   `classifyCard()` treats it as a conjugation drill, and `answerLang()` reads it
   to know the typed answer should be French rather than English.
-- **The card wears its lesson as a badge**, so fronts do not spend their opening
-  words on `(impératif)`. The badge is also what keeps a shortened front
-  unambiguous once the cards mix into the wider deck.
+- **The card wears its lesson as a badge, and the paradigm drills still name
+  the mood.** `finir (impératif) → tu`, the same shape as the deck's own
+  `aller (subjonctif) → ils/elles`. They used to rely on the badge alone, and
+  `finir → tu` was reported as "not an imperative card" twice with the badge
+  on screen: `finis` is also the présent, and a badge is context you glance
+  past. The transformation cards (`Tu me dis → à l'impératif`) always named it.
+- **A lesson card can be reworded without losing anyone's history.** Identity
+  is a hash of the front, so the fifth element of a lesson card is the front it
+  used to have, and that stays its identity. The sync rewrites the stored text
+  on rows that still show the old wording, and leaves alone any the user edited.
 - **Exercises are sampled, not transcribed.** Laura's ~150 items became 49
   cards. A worksheet's twenty pronominal verbs work because they are twenty in
   one sitting; as cards they would be twenty review streams for one rule. The
@@ -1479,6 +1502,37 @@ account the owner creates. See the open item.
   "about 23" after what should have been a block of 50.
 - **A retry, and Previous card, recorded a second FSRS review** — stage 1's
   reason for existing, measured against the scheduler before it was fixed.
+
+### 2026-09-12 — the feedback backlog
+
+All twelve `beta_feedback` entries worked through, each checked for whether
+it was one card or a pattern. Read with the service role key from
+`.env.local`, owner's deck only (3,927 cards). Work done in the local copy,
+per the new first rule of **Working protocol**.
+
+| Feedback | Cause | Fix |
+|---|---|---|
+| `un sujet, une question` — two cards | Already split in the deck | None needed |
+| `les frais`, `planter` — two cards | Unrelated senses on one card | Card data (below) |
+| `il neige / il neigeait` — two cards | Two forms joined by ` / ` | Card data; parser rule 10b |
+| `Ne me dis pas ça.` — no periods | Lesson and ~50 cahier cards end in a stop | `dropFinalPeriod`; parser rule 10e |
+| `seul (only; sole)` — problematic | Matcher split inside the gloss | Matcher fix, 64 cards |
+| `finir → tu`, `avoir → vous` — not imperative | Front never named the mood | 27 lesson fronts reworded, history kept |
+| `la glycine` — a mistake | It is correct: *glycine* is wisteria | None |
+| `je sais que peux m'ennuyer` — ungrammatical | Transcription dropped `je` | Card data; parser rule 10d |
+| `pp de devoir : dû` — grammar, not vocab | Answer on the front; `pp` not a grammar term | `pp` in `GRAMMAR_TERM`; card data; parser rule 10c |
+| `réélire` — participle is a hint | Form note on the English prompt | `cleanEnglishPrompt`; card data |
+
+**Card data is proposed, not applied**: 37 edits (11 multi-sense, 11 slash
+pairs, 12 participle drills, 3 single fixes) and 16 new cards, owner's deck
+only. It needs the owner's go-ahead because it writes to production. See
+the open item.
+
+Found on the way: `npm test` on a Mac needs `CHROME_PATH` pointed at a local
+Chromium (the default is a Linux container path), and with that the layout
+suite fails one check — the card moving 5px when graded — **identically on
+the unchanged code**, so it is the environment (fonts), not this change.
+Everything else: 14 of 15 suites green.
 
 ---
 

@@ -16,13 +16,19 @@ import { lessonSource, lessonIdOf, lessonCardKeyOf, lessonCardKey } from "./less
 /**
  * @param {Array} lessons   the catalogue (LESSONS)
  * @param {Array} deckCards shaped deck rows from useUserDeck
- * @returns {{ missing: Array, rekey: Array, stale: number[], unkeyed: Array }}
+ * @returns {{ missing: Array, rekey: Array, retext: Array, stale: number[], unkeyed: Array }}
  *   missing — lesson cards this deck has no row for, ready for insert
  *             (the caller adds user_id)
  *   rekey   — legacy rows that DO match a lesson card, re-upserted on the same
  *             front so they gain a key. The upsert conflicts on (user_id,
  *             front) and updates only the columns given, so the FSRS state on
  *             the row is untouched. One write, once.
+ *   retext  — { row_id, front, back } for rows still showing a front the
+ *             lesson has since RENAMED. A lesson card's fifth element is the
+ *             front it used to have, and that old front stays its identity, so
+ *             the rename neither retires the row nor resets its FSRS state.
+ *             Only rows whose stored front is still exactly the old text are
+ *             rewritten — one the user edited is theirs and is left alone.
  *   stale   — row_ids to delete: keyed rows whose lesson no longer has them
  *   unkeyed — legacy rows matching no lesson card. NOT deleted: a row written
  *             before keys existed is indistinguishable from an edited one, and
@@ -32,12 +38,13 @@ import { lessonSource, lessonIdOf, lessonCardKeyOf, lessonCardKey } from "./less
 export function reconcileLessons(lessons, deckCards) {
   const missing = [];
   const rekey = [];
+  const retext = [];
   const stale = [];
   const unkeyed = [];
 
   for (const lesson of lessons) {
     const want = new Map(
-      lesson.cards.map(([f, b, c]) => [lessonCardKey(f), { f, b, c }])
+      lesson.cards.map(([f, b, c, , was]) => [lessonCardKey(was ?? f), { f, b, c, was }])
     );
     const have = (deckCards || []).filter((card) => lessonIdOf(card) === lesson.id);
     const claimed = new Set();
@@ -45,8 +52,13 @@ export function reconcileLessons(lessons, deckCards) {
     for (const card of have) {
       const stored = lessonCardKeyOf(card);
       if (stored) {
-        if (want.has(stored)) claimed.add(stored);
-        else if (card.row_id != null) stale.push(card.row_id);
+        if (want.has(stored)) {
+          claimed.add(stored);
+          const c = want.get(stored);
+          if (c.was && card.f === c.was && card.row_id != null) {
+            retext.push({ row_id: card.row_id, front: c.f, back: c.b });
+          }
+        } else if (card.row_id != null) stale.push(card.row_id);
         continue;
       }
       // Legacy row: no key. Match it by front, which is what identity used to
@@ -79,5 +91,5 @@ export function reconcileLessons(lessons, deckCards) {
     }
   }
 
-  return { missing, rekey, stale, unkeyed };
+  return { missing, rekey, retext, stale, unkeyed };
 }

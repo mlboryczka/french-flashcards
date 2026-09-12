@@ -5,7 +5,7 @@ import { LESSONS, lessonIdOf, lessonRank } from "./data/lessons";
 import { reconcileLessons } from "./lib/lessonSync";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
-import { cleanFrenchPrompt } from "./lib/cardText";
+import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./lib/cardText";
 import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 import { classifyCard, CARD_TYPES, TYPE_LABEL, TYPE_COLOR } from "./lib/cardTypes";
 import { useUserDeck } from "./useUserDeck";
@@ -122,6 +122,14 @@ function editDistance(a, b) {
   }
   return dp[a.length][b.length];
 }
+// Remove every parenthetical, nested or unclosed: "je suis allé (I went
+// (passé)" never closes its outer group, and an unclosed group runs to the end.
+function stripParens(s) {
+  let out = String(s || "");
+  let prev;
+  do { prev = out; out = out.replace(/\([^()]*\)/g, " "); } while (out !== prev);
+  return out.replace(/\(.*$/, " ").replace(/\)/g, " ").replace(/\s+/g, " ").trim();
+}
 // Match typed answer against correct answer, handling alternatives and fuzz
 function matchAnswer(typed, correct, extraAlts = []) {
   const t = normalize(typed);
@@ -139,7 +147,11 @@ function matchAnswer(typed, correct, extraAlts = []) {
     // must not decompose into standalone clauses, or a user typing the rest
     // of the sentence right with one wrong word still matches a clause as a
     // substring. Slashes are always split (they're always synonym markers).
-    const slashParts = src.split(/\//).map(s => s.trim()).filter(Boolean);
+    //
+    // Parentheticals go BEFORE the split. "seul (only; sole)" used to split on
+    // the semicolon inside its own gloss into "seul (only" and "sole)", neither
+    // of which normalize() could clean, so typing "seul" was marked wrong.
+    const slashParts = (stripParens(src) || src).split(/\//).map(s => s.trim()).filter(Boolean);
     for (const sp of slashParts) {
       const subParts = sp.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
       const tooLong = subParts.some(
@@ -1121,7 +1133,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user || !deckLoaded || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const { missing, rekey, stale, unkeyed } = reconcileLessons(LESSONS, userCards);
+      const { missing, rekey, retext, stale, unkeyed } = reconcileLessons(LESSONS, userCards);
       if (unkeyed.length) {
         // Written before lesson cards had a stable key, and matching nothing in
         // the lesson now. That is either a card the lesson retired or one the
@@ -1131,7 +1143,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           unkeyed.map((c) => c.f)
         );
       }
-      if (!missing.length && !rekey.length && !stale.length) return;
+      if (!missing.length && !rekey.length && !retext.length && !stale.length) return;
       const owned = (rows) => rows.map((r) => ({ ...r, user_id: user.id }));
       try {
         if (missing.length) {
@@ -1146,6 +1158,14 @@ export default function FlashcardApp({ user, onSignOut }) {
             .upsert(owned(rekey), { onConflict: "user_id,front" });
           if (error) throw error;
         }
+        for (const r of retext) {
+          const { error } = await supabase
+            .from("user_cards")
+            .update({ front: r.front, back: r.back })
+            .eq("id", r.row_id)
+            .eq("user_id", user.id);
+          if (error) throw error;
+        }
         if (stale.length) {
           const { error } = await supabase
             .from("user_cards")
@@ -1155,7 +1175,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           if (error) throw error;
         }
         console.info(
-          `[lessons] synced: +${missing.length} card(s), ${rekey.length} re-keyed, ` +
+          `[lessons] synced: +${missing.length} card(s), ${rekey.length} re-keyed, ${retext.length} renamed, ` +
             `-${stale.length} retired`
         );
         reloadDeck();
@@ -2082,9 +2102,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   // ── FEEDBACK VIEW (admin only) ──────────────────────────────────────
   // ── STUDY MODE ──────────────────────────────────────────────────────
   // French shown as the prompt gets its English gloss stripped — otherwise the
-  // card answers itself. The answer side is left exactly as stored.
-  const front = card ? (card.shownDir==="fr" ? cleanFrenchPrompt(card.f, card.b) : card.b) : "";
-  const back = card ? (card.shownDir==="fr" ? card.b : card.f) : "";
+  // card answers itself. English shown as the prompt loses any note naming the
+  // French form ("to re-elect (past participle: réélu)"), for the same reason.
+  // The answer side keeps everything, apart from a sentence-final full stop,
+  // which neither side shows.
+  const front = card ? dropFinalPeriod(card.shownDir==="fr" ? cleanFrenchPrompt(card.f, card.b) : cleanEnglishPrompt(card.b)) : "";
+  const back = card ? dropFinalPeriod(card.shownDir==="fr" ? card.b : card.f) : "";
   // Typing mode: user enabled it AND the card exists. All cards are
   // typable — if the back is a long explanation, the user can hit
   // "Show answer" to skip. The old isTypable guard (back ≤ 25 chars)
