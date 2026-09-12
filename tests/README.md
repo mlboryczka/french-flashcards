@@ -17,9 +17,14 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 |---|---|---|
 | `logic` | `classifyCard`, `looksMultiSense`, `cleanFrenchPrompt`, the tutor's deck-context picker | no |
 | `apply-splits` | the write endpoint: ownership, malformed splits, which row keeps its scheduling history | no |
+| `auth` | the guard on every endpoint that spends money: no verified session, no Anthropic request | no |
+| `dates` | which day a review counts towards, run under a pinned timezone so the bug isn't invisible from the one it was written in | no |
 | `layout` | card fits the window at 7 heights; a panel moves the content column and **not** the sidebar, on Cards and on Stats | yes |
 | `panels` | tutor/feedback mutual exclusion, outside-click dismissal, reflow axis | yes |
 | `lesson-sync` | a new account ends up with L'impératif in its deck: every card, correctly keyed, studiable, notes readable — and a second visit writes nothing | yes |
+| `lessons` | the lesson notes panel: its tabs and the rules its layout keeps, all read back from the lesson data | yes |
+| `motion` | a panel and the page it moves travel together — no frame leaping a large part of the distance, nothing left behind | yes |
+| `regressions` | bugs found by driving the app, each with the check that would have caught it | yes |
 | `reflow` | what the reflow drags with it: the chrome above the card holding still, the card animating rather than popping, the feedback sheet staying inside the window, and panel/page agreeing across the reflow floor | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |

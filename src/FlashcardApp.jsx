@@ -22,8 +22,11 @@ const SIDEBAR_WIDTH = 256;
 // window it wants 375 tall and 600 wide; with mainInner's 40px of padding
 // either side that is a 680px column. Give it less and the width caps while
 // the height does not, and the card turns portrait — 404x375 at a 484px
-// column, 340x375 at 420. The top bar goes first, though: below about 700 the
-// chips stop fitting on one row and stack one per line.
+// column, 340x375 at 420.
+//
+// The top bar used to go first — below about 700 the chips stopped fitting on
+// one row and stacked — but they scroll now (.chip-row in styles.css), so the
+// card is the only thing this floor is protecting.
 const MIN_REFLOW_CONTENT = 680;
 import ChatPanel, { CHAT_PANEL_WIDTH, CHAT_ANIM_MS, CHAT_EASING } from "./ChatPanel";
 import { T } from "./theme";
@@ -1413,8 +1416,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   //
   // "Not a phone" was the wrong test. A 900px window is not narrow by that
   // rule, but 900 - 256 of sidebar - 460 of panel leaves 184px of column: the
-  // chips stack one per line, the card turns portrait and crushes, and the
-  // answer row runs off the edge. Below the floor the panel goes back to being
+  // card turns portrait and crushes and the answer row runs off the edge.
+  // (The chips stacked one per line too, until they were made to scroll.) Below the floor the panel goes back to being
   // an overlay with a scrim, which is what it already does on a phone and what
   // it should always have done when there was nothing to reflow FOR.
   //

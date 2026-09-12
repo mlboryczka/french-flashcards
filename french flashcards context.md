@@ -44,7 +44,13 @@ than working for an hour and pushing somewhere nobody is looking — which is
 exactly what happened on 2026-09-08, and cost a whole session's work being
 invisible until it was noticed.
 
-`npm test` before every push. It is 12 suites and a few minutes.
+It then happened AGAIN on 2026-09-09, with this paragraph already written: the
+session took its configured branch at face value, pushed three commits there,
+and only reached `main` when the owner asked whether it had. Reading this file
+is not the same as acting on it. The check is mechanical — if the session was
+handed a branch, say so in the first reply, before any work.
+
+`npm test` before every push. It is 15 suites and a few minutes.
 
 ---
 
@@ -273,9 +279,13 @@ These look arbitrary and are not:
   `container-type: size` and the text uses `clamp(19px, 10.7cqh, 40px)` — 40px
   at full size, scaling down with the card so a squeezed card is still legible
   rather than three enormous words.
-- **`cardArea`'s 130px bottom padding is breathing room, not structure.** It
-  drops to 16 whenever a panel is open, so the space below the card is given up
-  before the card gives up anything.
+- **`cardArea` has no bottom padding any more.** It used to carry 130px that
+  dropped to 16 when a panel opened, so the space below the card was given up
+  before the card gave up anything. `cardTopSpacer` does that job now, and does
+  it above the card as well as below, which is what stopped the card sitting
+  118px high of the window's middle. The `padding-bottom` transition is still
+  declared on `cardArea` and can never fire, because the value is always 0 —
+  see the open item about what the motion suite is really checking.
 - **Everything under the card sits in a fixed-height well** (`S.belowCard`,
   170px — measured, being the height of the tallest state: a wrong graded
   answer stacks a result banner, the dispute link and the Continue row). The
@@ -382,6 +392,14 @@ These look arbitrary and are not:
   height-only loop it had could only ever catch the card being squeezed
   vertically, and the squarish-card bug above lived through it untouched — then
   a later change made it worse before there was a check to say so.
+- **The lesson notes panel reflows exactly as the tutor does, and it is now
+  measured.** Twice this went down as "unverified" because the fixture left no
+  card on screen to watch — the mock answers writes to `user_cards` with
+  `200 []` and keeps serving the same fixed deck, so the lesson sync appeared
+  to do nothing. Serving the lesson's own cards as the deck (as `lessons` and
+  `lesson-sync` do) gives it a card, and at 1600x900, 1400x900 and 1400x700 the
+  card does not move at all while the column narrows: both edges still, card
+  area jump 0.0px. Same mechanism, same result.
 - **`shellNarrow` clips one axis, `shell` clips both.** The card area's two
   decorative blur circles are positioned outside their container on purpose
   (`left:-60` / `right:-60`); the desktop shell's `overflow:hidden` hid that
@@ -685,6 +703,18 @@ Found by a review pass over the whole branch, not by the tutor work itself.
 - **Speech is browser-only now.** The Azure endpoints were deleted rather than
   secured. Restoring them means putting them behind `requireUser` and, if the
   owner should not be paying, a per-user credential like the Anthropic one.
+- **The feedback sheet has no Escape handler**, while the tutor and the lesson
+  notes both close on Escape. Found while chasing its Close button off the
+  right edge of the window. It is not a one-liner: closing has to go through
+  `handleCloseClick` so an unsent draft still prompts, which is why it was left
+  rather than bolted on.
+- **The motion suite guards a transition that can never fire.** It finds "the
+  element under `main` whose transition mentions `padding-bottom`" and checks
+  its duration and curve match the page's. That element is `cardArea`, whose
+  `padding-bottom` has been a constant 0 since `cardTopSpacer` replaced it — so
+  the check confirms a declaration rather than a movement, and would keep
+  passing if the property were removed tomorrow. Either drop the declaration
+  and the check with it, or point the check at something that actually moves.
 - **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
   there is no install manifest or offline support.
 - **The multi-sense cleanup has no UI any more.** `SplitSensesModal` and its
@@ -787,3 +817,75 @@ Also: French spacing before `!` `?` `;` `:` and inside `« »` is applied at
 display time as U+202F, so punctuation cannot wrap onto its own line; and lesson
 titles render as written — the card badge and filter chip case-folded them,
 which loses the name and mangles the accented capital.
+
+---
+
+## Recent work (session of 2026-09-09, the reflow)
+
+"The reflow is jerky" had been fixed by eye several times. Sampling geometry
+every frame through a whole open and close, at nine window sizes and on both
+axes, turned it into four separate measurable faults. The method is the point:
+a before/after measurement sees none of them.
+
+- **The chip rows wrapped.** Wrapping is a step — the top bar is 58px tall,
+  then one chip no longer fits and it is 97px. A reflow crosses that threshold
+  mid-animation, so the card area dropped 39px in a single frame, taking 39px
+  of card height with it. `MIN_REFLOW_CONTENT` exists to prevent exactly this
+  and cannot: it guards the column's FINAL width, and the wrap threshold is
+  around 777px against its 680 floor. Both rows now scroll instead (`.chip-row`).
+- **The feedback sheet hung off the right edge**, 256px of it at a 900px
+  window, carrying its own Minimize and Close buttons with it — an outside
+  click, which nothing advertises, was the only way out. `width: 100%` on a
+  fixed element resolves against the viewport, not the left/right span.
+- **The card's shape broke when the COLUMN was the tight axis** — 464x375 at an
+  800px window, near enough a square. Long-standing, and invisible to a layout
+  suite whose loop varied only the window height.
+- **The card's speed changed mid-move.** Its size is the last thing to absorb a
+  squeeze, queued behind cardArea's centring slack, cardWrap's slack above the
+  card's cap, and `cardTopSpacer`. Each has a finite capacity, so each one
+  running out changed the rate: 1.00px per px of page movement for four frames
+  with the spacer pinned at 0, then 0.31 the instant it came off the floor.
+
+Worth keeping from how these were found:
+
+- **Measure the card against the PAGE.** Per frame, its movement divided by the
+  page's: a smooth reflow is a flat line, a lurch is that share changing. Every
+  metric that judged the card against itself lied in one direction or the
+  other — a percentage of its own travel calls a 5px frame of an 8px resize
+  "63% in one frame"; a pixel threshold loose enough for a legitimate 92px
+  resize waves through a 12px jump in a 19px move.
+- **Judge the EDGES, not the height.** Height is derived, and its rate can
+  change with nothing visibly jumping — the top edge slows while the bottom
+  carries on. Asserting on height reported lurches nobody could see.
+- **A metric that passes is not automatically a good metric.** Each one here
+  was run against the pre-session code before being trusted: the edge measure
+  reads 3.0x at 1400x700 and 2.7x at 800x700 there, against 1.0-1.1x now, so it
+  discriminates rather than merely agreeing.
+- **Green suites are not coverage.** The squarish-card bug had been live for a
+  long time with everything passing, and a change made partway through this
+  session made it worse while the suite stayed green. The loop varied height
+  and never width. It now varies both.
+
+## Recent work (session of 2026-09-09, the lesson sync)
+
+Checking that L'impératif reaches a new account turned up no bug, but did turn
+up why nobody could have known. The `lessons` suite serves the lesson's own
+cards AS the deck, so the sync it triggers finds nothing missing and writes
+nothing; and the shared mock answers every non-GET on `user_cards` with
+`200 []` and then goes on serving the same fixed deck. An insert that never
+happened and one that silently failed look identical from the outside. That is
+also why the lesson panel's reflow twice went down as unmeasurable.
+
+`lesson-sync` gives `user_cards` a real in-memory store — select, upsert on
+(user_id, front), delete by id — and asserts on what the student is left with:
+108 cards in an empty deck, each with the lesson's own answer and its source
+key; the lesson in the nav with no add step, dealing a card from itself, all
+four note sections rendering; a second visit writing NOTHING, so the FSRS
+history survives; and an existing deck keeping its own cards and scheduling.
+
+Verified by reading rather than by test, because a mock cannot: `user_cards`
+carries `unique (user_id, front)`, which is what makes the upsert's
+`onConflict` resolvable at all, and RLS grants the owner insert, update and
+delete. The production build succeeds and all 108 fronts are in the bundle it
+emits. The deployed site itself was NOT checked — the sandbox could not reach
+it.
