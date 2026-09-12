@@ -763,17 +763,68 @@ happened to your memory. That is the honest behaviour and it is what makes the
 number worth watching; it is also the one real design decision here, since a
 figure that can go down puts some people off.
 
-### What to show, when this gets built
+### The agreed design, not yet built
 
-1. **Known now** — Σ retrievability over the lesson, out of its card count.
-   The headline. Free from data already in the browser.
-2. **Met** — how many cards you have been shown at all. Only goes up, and it
-   is the "have I worked through the module" question people actually ask.
-   Also free.
-3. **True retention** — of the cards recently asked, the fraction you got
-   right. Measured rather than modelled, and the check on whether FSRS is
-   calibrated for you. Exists per session as `stats.got / stats.seen`; across
-   sessions it needs a review log the app does not keep.
+**Two numbers, because either alone lies.** "Seen 61 of 108" says nothing
+about whether it stuck; "remember 43" says nothing about how much is left to
+meet. Together they are true and useful: you have seen 61, and 43 are
+currently in your head.
+
+- **Seen** — cards shown at least once. Counts up, never down. This is the
+  "have I worked through the material" question people actually ask.
+- **Remembered** — Σ retrievability, rounded to whole cards. Goes up when you
+  study, drifts down when you do not.
+
+**Wording matters here and took two passes.** "Mastered" overclaimed;
+"known"/"met" were the replacement and were also wrong — *met* is jargon, and
+*known* only reads well inside a sentence, not as a label. **Seen** and
+**remembered** are plain past participles, symmetric, and need no explanation.
+The word **"about"** is load bearing and not optional: `about 43 remembered`,
+never a bare `43`. It is an estimate and saying so is what stops this becoming
+the next "mastered".
+
+**One bar, three bands**, width = the lesson's card count:
+
+| Band | Fill | Meaning |
+|---|---|---|
+| Remembered | solid | 43 |
+| Seen but not currently remembered | light | 18 |
+| Never seen | outline | 47 |
+
+Labelled `61 seen · about 43 remembered · 108 cards`.
+
+**Three places:**
+
+1. **The lesson top bar, while studying** — one number only, since two compete
+   in a cramped space: `43 of 108 remembered`. It must not move or animate,
+   and it does **not** go on the card; nothing competes with the card.
+2. **The completion screen**, replacing "Session complete!" — said as a
+   sentence, which cannot be misread the way a one-word label can:
+
+   > **Nothing more due in L'impératif right now.**
+   > You've seen 61 of the 108 cards, and you'd remember about 43 of them
+   > today — **3 more than when you started.**
+   > Next cards due in about 6 hours.
+
+   The delta is the reward and belongs only here.
+3. **Stats**, the same three bands for the whole deck, replacing the
+   "mastered" wording.
+
+**Two deliberate choices.** Compute "remembered" when the lesson opens and
+again at the end, NOT on every answer — a number recomputing per card jitters,
+and jitter reads as noise rather than progress; the end-of-session delta is
+the payoff. And let it go down: three weeks away should lower it, because that
+is what happened to your memory. A bar that only rises is counting clicks.
+
+**Cost:** both numbers come from rows already in the browser — one
+`get_retrievability` call per card, no schema change, no new requests. "Next
+cards due" is a `min()` over `next_due_at`.
+
+**Also worth having, but blocked:** *true retention* — of the cards recently
+asked, the fraction you got right. Measured rather than modelled, and the real
+check on whether FSRS is calibrated for you. It exists per session as
+`stats.got / stats.seen`; across sessions it needs the review log the app does
+not keep.
 
 Retrievability inherits the direction problem: one number per card covering
 both FR→EN and EN→FR.
@@ -790,10 +841,12 @@ both FR→EN and EN→FR.
   secured. Restoring them means putting them behind `requireUser` and, if the
   owner should not be paying, a per-user credential like the Anthropic one.
 - **Lesson progress, the "mastered" rename and retrievability are agreed but
-  not built.** See **Progress, and the "mastered" relic** above for the
-  decision and the three figures to show. Also unbuilt: the completion screen
-  saying "nothing due right now" rather than "Session complete", and labelling
-  the counter as this session's position.
+  not built.** The design is settled down to the wording — see **The agreed
+  design, not yet built** above: seen / about N remembered, one bar with three
+  bands, in the lesson top bar and on a rewritten completion screen. Also
+  unbuilt: that screen saying "nothing more due right now" instead of "Session
+  complete", and labelling the counter as this session's position. Picked up
+  in a later session.
 - **One FSRS state covers both directions of a card.** `shownDir` is assigned
   per session, but stability and difficulty live on the row — so recognising
   *une colline* and producing it from "a hill" feed one number. They are
