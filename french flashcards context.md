@@ -918,6 +918,16 @@ not have. The panel gives the order instead.
 Two sentences are **not hers** and carry rules her prose only implies through
 its tables: how the imperative is formed, and `me`/`te` → `moi`/`toi`.
 
+One claim of hers is dropped rather than corrected. She closes the `nous` block
+with *"Cependant la première personne est très peu utilisée. La traduction la
+plus commune pour « let's » + base verbale est « on » + présent de
+l'indicatif."* The first half does not survive the module — `Allons-y !` is card
+139, taught as a phrase worth memorising, and sits in her own by-heart list. The
+form is unproductive, not rare. So the frequency ranking goes, and the
+construction that sentence existed to introduce is shown instead: `On y va` /
+`On en parle`, against the same two meanings as the table above. Her sentence is
+recorded here if the ranking is ever wanted back.
+
 Also: French spacing before `!` `?` `;` `:` and inside `« »` is applied at
 display time as U+202F, so punctuation cannot wrap onto its own line; and lesson
 titles render as written — the card badge and filter chip case-folded them,
