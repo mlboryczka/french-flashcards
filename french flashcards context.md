@@ -1378,7 +1378,9 @@ of cards due on each of the next seven days; "By type" keeps accuracy and drops
 2. The block builder in `sessionQueue.js`: 50, due-then-new, the new-card
    order. **Built** — see *How a session is built*.
 3. One progress calculation (seen / about remembered / not yet seen, grouped),
-   shared by the checkpoint, the lesson bar and Stats.
+   shared by the checkpoint, the lesson bar and Stats. **Built** —
+   `src/lib/progress.js`, guarded by the `progress` suite. About 5ms over an
+   8,700-card deck.
 4. The checkpoint screen and the "12 of 50" counter.
 5. The lesson top bar.
 6. The Stats page.
