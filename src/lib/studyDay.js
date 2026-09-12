@@ -18,3 +18,29 @@ export function localISODate(d = new Date()) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+// Whether a card has already had its review for the day.
+//
+// FSRS gets one answer per card per day: the first. The app's scheduler runs
+// with short-term steps off, which models memory across DAYS, and a second
+// answer minutes after the first says nothing about that — you have just been
+// shown the answer. Recording it anyway moved the schedule the wrong way every
+// time. Measured against this app's own scheduler settings:
+//
+//   • a known card missed, then right on the retry: due in 3 days became 4,
+//     and last_answer_correct flipped back to true, so the miss lost its place
+//     at the front of the next session
+//   • missed, then wrong again on the retry: counted as forgotten TWICE, with
+//     difficulty pushed near its maximum, for one bad moment
+//   • a new card missed, then right on the retry: due tomorrow became 3 days,
+//     as if it had been learned
+//
+// Read off the card's own last_review rather than tracked in the session, so
+// it covers every route to a second answer: the in-session retry, Previous
+// card, a reload mid-session, and a second device on the same day.
+export function reviewedToday(lastReview, now = new Date()) {
+  if (!lastReview) return false;
+  const t = new Date(lastReview);
+  if (Number.isNaN(t.getTime())) return false;
+  return localISODate(t) === localISODate(now);
+}

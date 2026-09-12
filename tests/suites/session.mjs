@@ -202,5 +202,51 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(700);
 ck("its own items still work", await bodyHas(/Upload your cahier/));
+await browser.close();
 
-await finish(browser, ck);
+console.log("\n  FSRS gets one answer per card per day");
+// The retry after a miss, and a card revisited with Previous card, are both
+// still answerable — but the first answer of the day is the review. Counted
+// as PATCHes to user_cards, for the same reason as above: the counter shows
+// where you are, not what was written.
+{
+  const oneADay = [];
+  const { browser, page } = await openApp({
+    route: (p) =>
+      p.route("**/rest/v1/user_cards*", async (r) => {
+        if (r.request().method() === "PATCH") oneADay.push(r.request().postData());
+        await r.continue();
+      }),
+  });
+  const has = (re) => page.evaluate(([s, f]) => new RegExp(s, f).test(document.body.innerText), [re.source, re.flags]);
+  const press = async (key) => { await page.keyboard.press(key); await page.waitForTimeout(150); };
+
+  const total = (await sessionCounter(page))?.total;
+  ck("a session is on screen", total === DECK_SIZE, JSON.stringify(await sessionCounter(page)));
+
+  await press("ArrowLeft"); // miss the first card
+  for (let i = 1; i < total; i++) await press("ArrowRight");
+  ck("the missed card comes back as a retry, so the next check proves something",
+     await has(/Retry 1 of 1/i));
+  ck("every card so far written once", oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
+
+  await press("ArrowRight"); // get the retry right
+  ck("answering the retry ends the session", await has(/Session complete/));
+  ck("and writes nothing: that card already had today's review",
+     oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
+
+  // Stepping back from the end lands on the last original card, with the
+  // retry still after it — two answers to finish, both cards already
+  // reviewed today.
+  await page.click('button:has-text("Previous card")');
+  await page.waitForTimeout(400);
+  ck("Previous card puts an answered card back on screen", !(await has(/Session complete/)));
+  await press("ArrowRight");
+  await press("ArrowRight");
+  ck("answering both again is graded on screen", await has(/Session complete/));
+  ck("but writes nothing either", oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
+
+  await browser.close();
+}
+
+await finish(null, ck);

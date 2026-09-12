@@ -6,7 +6,7 @@
 process.env.TZ = "America/New_York";
 
 import { checker } from "../check.mjs";
-import { localISODate } from "../../src/lib/studyDay.js";
+import { localISODate, reviewedToday } from "../../src/lib/studyDay.js";
 
 const ck = checker();
 console.log(`\n  running as TZ=${process.env.TZ} (UTC-4/5)`);
@@ -49,6 +49,22 @@ ck("morning then next evening leaves no gap",
 ck("single-digit months and days are padded",
    localISODate(new Date(2026, 0, 5)) === "2026-01-05",
    localISODate(new Date(2026, 0, 5)));
+
+// ── One FSRS answer per card per day ─────────────────────────────────────
+// A card already reviewed today must not be reviewed again. "Today" is the
+// student's own day, so the same UTC trap applies here as to the streak.
+console.log("\n  a card has had its review for the day");
+ck("a card never reviewed has not",
+   reviewedToday(null, evening) === false);
+ck("a garbage timestamp does not block the answer",
+   reviewedToday("not a date", evening) === false);
+ck("reviewed this morning, answered again this evening: already reviewed",
+   reviewedToday(morning.toISOString(), evening) === true);
+ck("reviewed last night at 9pm, answered this morning: a new day, records",
+   reviewedToday(new Date("2026-03-09T01:00:00Z").toISOString(), morning) === false,
+   "Mar 8th 9pm NY vs Mar 9th 10am NY");
+ck("reviewed at 9pm, answered at 10pm: same local day even though UTC has rolled over",
+   reviewedToday(evening.toISOString(), new Date("2026-03-10T02:00:00Z")) === true);
 
 const n = ck.fails();
 console.log(n ? `\n  FAILED: ${n}` : "\n  all checks passed");

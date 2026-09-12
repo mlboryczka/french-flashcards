@@ -144,6 +144,22 @@ ratings — `Again` for a miss, `Good` for a hit. `Hard`/`Easy` exist for apps
 where the user self-rates; here the typing check *is* the grade, and inventing
 a confidence signal the user never gave would only feed FSRS noise.
 
+**FSRS gets one answer per card per day: the first.** `answer()` skips the
+scheduler write when `reviewedToday(card.last_review)` (`src/lib/studyDay.js`)
+says the card already had its review on the student's own day. The card is
+still shown and graded on screen. This covers the retry after a miss,
+Previous card, a reload mid-session and a second device.
+
+Before this, the retry wrote a second review minutes after the student had
+been shown the answer, and the scheduler is run with short-term steps off, so
+it reads every answer as evidence about memory across days. Measured against
+this app's settings, it moved the schedule the wrong way every time: a known
+card missed then right on the retry went from due in 3 days to 4, and lost the
+`last_answer_correct = false` that puts it first next session; missed twice
+counted as forgotten twice, difficulty near its maximum; a new card missed then
+right went from due tomorrow to 3 days. `lapses` stored before this fix still
+carries those double counts, and with no review log it cannot be corrected.
+
 ### FSRS configuration (`src/lib/spacedRepetition.js`)
 
 ```
@@ -1293,6 +1309,85 @@ repaired view reads is purely the historical backlog, which is what
 broken: it reads the shape off a real row and refuses to PATCH columns it has
 not seen, which is exactly the check the admin view lacked.
 
+### 2026-09-12 — how cards are served: the agreed strategy, and stage 1
+
+A long design discussion with the owner settled how a student works through
+the app. **Only stage 1 below is built.** The rest is agreed and replaces the
+parts of *How a session is built* and *Progress, and the "mastered" relic*
+that it contradicts. Read it as the brief for the next sessions.
+
+**What FSRS does and doesn't decide.** FSRS decides when a card the student has
+already seen comes back. It has no opinion on grouping, session length, or which
+new card comes next. Those are the app's choices, and this is what they are now.
+
+**Blocks of 50.** There is no Study button: logging in is studying. The app
+deals a block of up to 50 cards, then a checkpoint screen replaces "Session
+complete!". It shows how the block went, what moved in seen and remembered for
+each area the block touched, and a Continue button that deals the next block.
+The student can always keep going.
+
+**What goes in a block, in order.**
+1. Cards missed last time that are due.
+2. Other due cards, most overdue first. Due means due any time today, on the
+   student's own clock, so the day's work doesn't grow while they study.
+3. New cards, **only once the due cards run out**. This reverses the old rule
+   of reserving new-card slots ahead of due work. A student who isn't keeping
+   up with reviews should not get new cards on top. A student who learns a lot
+   of new cards in one day gets a few review-heavy days afterwards, then new
+   cards come back. No daily new-card number, no forecast, no time setting;
+   the owner rejected all three.
+4. Two or three spot checks.
+
+The block is then shuffled, as now.
+
+**Where new cards come from.**
+- Inside a lesson: that lesson only, due and new, new cards in the lesson's own
+  order. The next new card is the next unseen one in the lesson, however long
+  the student was away. Due cards from elsewhere wait and come first on
+  return to normal study, and the checkpoint says how many are waiting.
+- Normal study: recent notes first, meaning classes in the last 14 days, newest
+  class first. Then earlier notes, most classes first (`dates.length`), older
+  class first on a tie. Tutor chat cards count as recent, dated by the day they
+  were added (`user_cards.created_at`).
+- The Grammar / Vocab / Phrases filter narrows a block the same way a lesson
+  does.
+- A lesson card, once seen, also comes back in normal study when due.
+
+Hand-built topic categories were proposed and rejected by the owner, as were
+fixed sets of 100. The class dates are human-made structure and need no
+judgement.
+
+**Review phase.** When the next block will be reviews only, the checkpoint says
+so ("You're in a review phase: 140 cards due, new cards come back once those are
+done"). The only real end is nothing due and nothing unseen.
+
+**Progress.** Seen, about N remembered (Σ retrievability) and not yet seen, as
+already agreed, now per lesson, recent classes and earlier notes. The lesson
+top bar shows "43 of 108 remembered" inside a lesson, updating at checkpoints
+only. Stats: "This session" becomes "Today" and "Right first time today"; the
+streak stays; the new / learning / mastered bar becomes seen / remembered /
+not yet seen; a new "Your progress" section with a row per lesson, recent
+classes and earlier notes, each with a finish estimate; a new "Coming up" chart
+of cards due on each of the next seven days; "By type" keeps accuracy and drops
+"mastered"; Hardest cards and Reset stay.
+
+**Build order.**
+1. One FSRS answer per card per day. **Built** — see the note under *How a
+   session is built*. Guarded by `dates` (the day rule under a pinned timezone)
+   and `session` (miss a card, answer its retry, step back and answer again:
+   one PATCH per card).
+2. The block builder in `sessionQueue.js`: 50, due-then-new, the new-card
+   order. Pure, tested without a browser.
+3. One progress calculation (seen / about remembered / not yet seen, grouped),
+   shared by the checkpoint, the lesson bar and Stats.
+4. The checkpoint screen and the "12 of 50" counter.
+5. The lesson top bar.
+6. The Stats page.
+7. Tidy-up: drop "mastered" everywhere, remove the dead `freqOnly` filter (no
+   control has ever set it), bring this document's reference sections in line.
+
+No database change is needed for any of it.
+
 ---
 
 ## Open items
@@ -1388,7 +1483,8 @@ not seen, which is exactly the check the admin view lacked.
 - **New cards are introduced in random order.** `buildSession` shuffles `fresh`
   before taking the cap, which is right for a mixed deck and wrong for a taught
   module — a student can meet `Donne-les-leur` before `Regarde`. Interleaving on
-  review and sequencing on first exposure are not in conflict.
+  review and sequencing on first exposure are not in conflict. Fixed by stage 2
+  of the serving strategy agreed on 2026-09-12 (see History).
 - **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
   hypotheses tested and falsified; see the history in git. Note that the
   *reflow* half of this complaint turned out to be four separate, measurable

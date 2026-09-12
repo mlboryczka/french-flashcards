@@ -45,7 +45,7 @@ import {
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
-import { localISODate } from "./lib/studyDay";
+import { localISODate, reviewedToday } from "./lib/studyDay";
 import { buildSession, applyAnswer } from "./lib/sessionQueue";
 import {
   RE_QUEUE_OFFSET,
@@ -747,16 +747,24 @@ export default function FlashcardApp({ user, onSignOut }) {
     // updateCard logs its own failures and never throws.
     updateCard(card.id, newProg);
 
-    // Spaced-repetition update. Optimistic local deck patch first so the
-    // in-memory card reflects the new box if it gets re-queued; DB update
-    // is fire-and-forget (errors logged, not surfaced).
-    const sr = applyAnswer(card, got);
-    setDeck(prev => prev.map(c =>
-      c.row_id === card.row_id ? { ...c, ...sr } : c
-    ));
-    if (card.row_id != null) {
-      supabase.from("user_cards").update(sr).eq("id", card.row_id)
-        .then(({ error }) => { if (error) console.error("SR update failed:", error); });
+    // Spaced-repetition update — the FIRST answer of the day only. A retry,
+    // or a card revisited with Previous card, is still shown and still
+    // graded on screen, but FSRS already has today's answer for it; see
+    // reviewedToday() for what recording a second one did to the schedule.
+    //
+    // Optimistic local deck patch first so the in-memory card carries today's
+    // last_review into its retry; DB update is fire-and-forget (errors
+    // logged, not surfaced).
+    const recordsReview = !reviewedToday(card.last_review);
+    const sr = recordsReview ? applyAnswer(card, got) : null;
+    if (sr) {
+      setDeck(prev => prev.map(c =>
+        c.row_id === card.row_id ? { ...c, ...sr } : c
+      ));
+      if (card.row_id != null) {
+        supabase.from("user_cards").update(sr).eq("id", card.row_id)
+          .then(({ error }) => { if (error) console.error("SR update failed:", error); });
+      }
     }
     // Record today's review date for streak tracking.
     // Write to Supabase (persists across devices) and update local state so
@@ -796,7 +804,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       setDeck(prev => {
         const next = [...prev];
         const insertAt = Math.min(next.length, idx + 1 + RE_QUEUE_OFFSET);
-        const reCard = { ...card, ...sr, _bucket: "lapse" };
+        const reCard = { ...card, ...(sr || {}), _bucket: "lapse" };
         next.splice(insertAt, 0, reCard);
         return next;
       });
