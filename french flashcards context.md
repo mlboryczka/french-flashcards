@@ -103,11 +103,12 @@ that is mid-assertion.
   `~/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`.
   The default path in `tests/harness.mjs` is the Linux container's.
 
-**On the Mac, 15 of 18 pass, and that is the baseline.** `layout` (type mode:
-the card moves 5px when graded), `motion` (the panel travels 0px) and `reflow`
-(the tutor reflow ran 0px) fail the same way on `9b95052`, which passed all of
-them in the container. So it is this machine's headless Chrome, not the code —
-see the open item. A new failure in any other suite is real.
+**On the Mac, 16 of 18 pass, and that is the baseline.** `layout` (type mode:
+the card moves 5px when graded) and `reflow` (the tutor reflow ran 0px) fail
+the same way on `9b95052`, which passed all of them in the container. So it is
+this machine's headless Chrome, not the code — see the open item. A new failure
+in any other suite is real. (`motion` was the third until 2026-09-12; its
+feedback checks now read the running transition instead of counting frames.)
 
 ---
 
@@ -557,27 +558,41 @@ of these were "fixed" against an assumption and shipped broken.
   that starts at one line and grows to five, and a row of chips. It was ~300px
   — a subtitle, a 90px textarea, a full-width attach row, a full-width dashed
   dropzone and a footer, for what is really one text field. `max-height` is
-  `min(300px, 38vh)` as a backstop, not the usual case. *(The sidebar panel is
-  ~278px and three rows: a 13.5px title with the ✕; the message box (180px,
-  about eight lines — the owner asked for it taller, and the streamlining pass
-  had quietly cut it back to 112px); one
-  action row — "Attach card" checkbox on the left, paperclip and Send on the
-  right, all 30px. The title, message box and checkbox share a left edge; the
-  message box, Send and the ✕'s glyph share a right edge (`panels` checks both
-  to the pixel). The message box is a container, not the bare textarea, so an
-  attached screenshot sits inside it bottom-left with a ✕ badge and the rows
-  never move. "Attach card", not "Attach current card": the full label doesn't
-  fit on the action row at sidebar width; the tooltip names the card. The
-  paperclip follows message composers (Slack, Gmail, Linear, ChatGPT): no
-  label, a tooltip, paste and drop working silently. No "⌘↵ to send" hint — the
-  shortcut stays. Mocked at real size before it was built. Anything counts as
-  sendable — a word, or only a screenshot: a five-character minimum refused
-  "test" with a screenshot attached and said "Write a few words first" to
-  someone who had. A truly empty send outlines the message box in red and
-  changes its placeholder, rather than adding an error row.)*
+  `min(300px, 38vh)` as a backstop, not the usual case. *(Bottom sheet only — the sidebar panel's layout is the next note.)*
+- **The sidebar panel is three rows, on two shared edges.** ~278px tall:
+  - a 13.5px serif title with the ✕;
+  - the message box — 180px, about eight lines, growing to about twelve.
+    `panels` fails if it starts under 175px, because the streamlining pass cut
+    it back to 112px after the owner had asked for it taller, and nobody said
+    so;
+  - one 30px action row: an "Attach card" checkbox on the left, the paperclip
+    and Send on the right.
+
+  The title, message box and checkbox share a left edge; the message box, Send
+  and the ✕'s glyph share a right edge. `panels` checks both to the pixel.
+  "Attach card", not "Attach current card", because the full label doesn't fit
+  on the action row at sidebar width; its tooltip names the card. It is a
+  checkbox rather than the filled "About: …" chip it replaced, so it doesn't
+  compete with Send. The ✕ is pulled 4px right so its glyph, not its hit area,
+  meets the edge. No "⌘↵ to send" hint; the shortcut stays. The whole thing was
+  mocked at real size before it was built.
+- **An attached screenshot sits inside the message box**, bottom-left, with a ✕
+  badge. The box is a container (`data-feedback-field`) around the textarea for
+  exactly this, and the textarea's floor drops by the thumbnail's height, so
+  the box keeps its size and the rows below never move. The paperclip
+  (`data-add-screenshot`) is icon-only, the way message composers do it: a
+  tooltip, "Attach a screenshot — or paste one", and paste and drop working
+  anywhere on the panel without being advertised.
+- **Anything is sendable: a word, or only a screenshot.** A five-character
+  minimum refused "test" with a screenshot attached, answered it with "Write a
+  few words first", and the red error row that said so made the panel taller.
+  A truly empty send now outlines the message box in red and changes its
+  placeholder to "Write something, or attach a screenshot"; typing or attaching
+  clears it. The error row is kept only for a failed send.
 - **The whole sheet is the drop and paste target**, which is what let the
   dedicated dropzone go. Dragging over it outlines the entire panel; the
-  Screenshot chip is the click-to-browse affordance.
+  Screenshot chip is the click-to-browse affordance. *(Still true of the
+  sidebar panel; the paperclip is the click-to-browse way in now.)*
 - **The sheet carries `data-feedback-sheet`.** Tests identify it by that marker:
   matching on a line of copy broke when the subtitle went, and matching on "a
   fixed panel containing a textarea" also matched the tutor.
@@ -1697,6 +1712,32 @@ Full suite on the Mac: 16 of 18. The two failures are the Mac baseline exactly
 `motion`, the third baseline failure, now passes because its feedback checks no
 longer count frames.
 
+Pushed as `a2de7e2`. Then four rounds of refinement on the live panel, each
+pushed and confirmed in the deployed bundle:
+
+- **`1afe607` — streamlined to three rows.** Five stacked rows with an icon on
+  its own read as clumsy. Asked for a paperclip next to Send and proper
+  alignment, and for a real mockup first: one action row, two shared edges,
+  the screenshot inside the message box. The intermediate steps — taller field,
+  smaller title and buttons, the "⌘↵" hint removed, "About: …" turned into a
+  checkbox, an image icon beside Send — went out folded into this commit.
+- **`50c4152` — the message box back up to 180px.** The mockup had set the box
+  to 112px, below the height the owner had just asked for, and the build
+  followed the mockup without saying the height had gone down. The lesson is
+  the obvious one: an explicit ask carries forward through a redesign, and a
+  change that reverses one gets called out, not shipped quietly.
+- **`7ed3482` — any note is sendable.** The owner typed "test", attached a
+  screenshot, and was told to write a few words. The minimum was invented, not
+  asked for; it is gone, and an empty send is flagged on the box.
+
+How this session went is worth recording too, because it cost the owner real
+patience. The first request was for a strategy and got code; being told so, the
+code was stashed without being asked, which was also wrong, and then restored.
+Reading "provide the fix" as "build it" and "you did something I didn't ask
+for" as "undo it" were both guesses at intent where a question was cheap. The
+rule the owner stated: do what is asked, and when it isn't clear whether that
+means plan or build, ask.
+
 ---
 
 ## Open items
@@ -1710,11 +1751,21 @@ longer count frames.
   figures are believable for an 8,700-card deck. Answering cards on the
   owner's account writes real reviews, so either look without answering or
   use a throwaway account.
-- **Three browser suites fail on the owner's Mac and pass in the container.**
-  `layout`, `motion` and `reflow` — see *Working protocol*. They measure
-  movement frame by frame and this machine's headless Chrome reports it
-  differently. Until they're adjusted, layout and animation changes made on
-  the Mac have no working check, so measure those by hand in a browser.
+- **Two browser suites fail on the owner's Mac and pass in the container.**
+  `layout` and `reflow` — see *Working protocol*. They measure movement frame
+  by frame, and this machine's headless Chrome delivers far fewer frames:
+  sampling the feedback panel's open measured five in 600ms. `motion` was the
+  third, and was fixed by asking the animation itself
+  (`getAnimations()`, polled on a 10ms timer rather than rAF) instead of
+  counting sampled frames — the same fix would likely rescue the other two.
+  Until then, layout and animation changes made on the Mac have no working
+  check for those two, so measure by hand in a browser.
+- **The feedback panel has not been used signed in on the live app.** It was
+  tested against the mock and confirmed in the deployed bundle, not by sending
+  a real note from the owner's account. Worth one real send with a screenshot
+  and the card attached, then a look at View feedback: a screenshot-only note
+  now arrives with an empty `message`, which the admin view has never had to
+  show.
 - **The deck has many near-duplicate cards**, from the same notebook line
   parsed more than once: `rentable` three times, `chiant` three times,
   `décrire` and `élire` each with a gloss-tagged twin. The feedback pass
