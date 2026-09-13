@@ -287,23 +287,20 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
   // Tutor chat slide-over — global, so it opens from any view.
   const [showChat, setShowChat] = useState(false);
-  // Feedback sheet. Its open state lives here rather than inside BetaFeedback
-  // so the two panels can be kept mutually exclusive, and so the page knows to
-  // make room. Height is measured by the sheet and reported up.
+  // Feedback panel. Its open state lives here rather than inside BetaFeedback
+  // so it and the tutor can be kept mutually exclusive. It opens inside the
+  // sidebar, into `feedbackDock`, so the page never has to make room for it.
   const [showFeedback, setShowFeedback] = useState(false);
-  const [feedbackHeight, setFeedbackHeight] = useState(0);
+  const [feedbackDock, setFeedbackDock] = useState(null);
+  // Bumped by the flag on the card, so the panel opens with that card attached.
+  const [feedbackAttachReq, setFeedbackAttachReq] = useState(0);
 
   // Only one panel at a time: two overlapping surfaces fighting for the same
-  // screen is worse than either alone. Closing the feedback sheet goes through
-  // its own close request rather than just flipping the flag, so an unsent
-  // draft still gets the "discard?" prompt — and if you say no, the tutor
-  // doesn't open either, instead of silently eating what you typed.
-  const feedbackCloseRef = useRef(null);
-  const dismissFeedback = useCallback(() => {
-    const req = feedbackCloseRef.current;
-    if (!req) { setShowFeedback(false); return true; }
-    return req();
-  }, []);
+  // screen is worse than either alone. Opening the tutor just puts the
+  // feedback sheet away — the sheet keeps its draft when it closes, so there
+  // is nothing to ask about. (This used to route through a close request on
+  // the sheet, so an unsent draft could prompt "discard?" and cancel the
+  // tutor opening.)
   // The card the tutor should treat as "what I'm looking at". Set when the
   // tutor is opened FROM a card — from the study view, or from the banner after
   // a wrong answer. Null when opened from the nav, where there is no such card.
@@ -319,19 +316,20 @@ export default function FlashcardApp({ user, onSignOut }) {
   // version answered "I can't see your screen".
   const [chatCard, setChatCard] = useState(null);
   const openChat = useCallback((aboutCard = null) => {
-    if (!dismissFeedback()) return;
+    setShowFeedback(false);
     setShowLessonPanel(false);
     setChatCard(aboutCard);
     setShowChat(true);
-  }, [dismissFeedback]);
+  }, []);
   const toggleChat = useCallback(() => {
     if (showChat) { setShowChat(false); return; }
-    if (!dismissFeedback()) return;
+    setShowFeedback(false);
     setShowLessonPanel(false);
     setChatCard(null);
     setShowChat(true);
-  }, [showChat, dismissFeedback]);
+  }, [showChat]);
   const openFeedback = useCallback(() => { setShowChat(false); setShowLessonPanel(false); setShowFeedback(true); }, []);
+  const reportCard = useCallback(() => { openFeedback(); setFeedbackAttachReq((n) => n + 1); }, [openFeedback]);
   // Three panels share the right-hand slot; opening one puts the others away.
   const toggleLessonPanel = useCallback(() => {
     setShowLessonPanel((v) => {
@@ -426,6 +424,12 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, []);
+  // The feedback panel lives in the desktop sidebar, which the narrow layout
+  // doesn't have. Left "open" across that change, nothing would show it but
+  // `overlayOpen` would go on swallowing the card's keyboard shortcuts.
+  useEffect(() => {
+    if (isNarrow) setShowFeedback(false);
+  }, [isNarrow]);
 
   // Review dates for streak tracking, loaded from Supabase.
   // Set of ISO date strings (e.g. "2026-04-16") on which the user reviewed
@@ -1527,10 +1531,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     ...S.main,
     boxSizing: "border-box",
     paddingRight: chatReflow ? CHAT_PANEL_WIDTH : lessonReflow ? LESSON_PANEL_WIDTH : 0,
-    paddingBottom: showFeedback ? feedbackHeight : 0,
     // Same duration and curve as the panel's own slide, so the page and the
-    // panel move together instead of as two separate animations.
-    transition: `padding-right ${PANEL_ANIM_MS}ms ${PANEL_EASING}, padding-bottom ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
+    // panel move together instead of as two separate animations. (There is no
+    // padding-bottom any more: the feedback panel moved into the sidebar.)
+    transition: `padding-right ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
   };
   
   const sidebar = (
@@ -1594,6 +1598,17 @@ export default function FlashcardApp({ user, onSignOut }) {
       {/* Bottom: account, then feedback beneath it (desktop only) */}
       {!isNarrow && user && (
         <>
+        {/* The feedback panel's slot: the empty stretch between the nav and
+            the account block. It takes the free height, pins the panel to its
+            bottom edge just above the account, and its top padding keeps the
+            panel well clear of Tutor. On a short window it holds a floor while
+            the panel is open, and the sidebar scrolls instead of the panel
+            climbing over the nav. */}
+        <div
+          ref={setFeedbackDock}
+          data-feedback-dock
+          style={{ ...S.sideFeedbackDock, minHeight: showFeedback ? 244 : 0 }}
+        />
         <div style={S.sideDivider} />
         <div style={S.sideBottom}>
           <div style={S.sideBottomRow}>
@@ -1653,12 +1668,11 @@ export default function FlashcardApp({ user, onSignOut }) {
               user={user}
               currentPage={mode}
               currentCard={mode === "study" ? card : null}
-              offsetLeft={isNarrow ? 0 : SIDEBAR_WIDTH}
               open={showFeedback}
               onOpen={openFeedback}
               onClose={() => setShowFeedback(false)}
-              requestCloseRef={feedbackCloseRef}
-              onHeightChange={setFeedbackHeight}
+              dockEl={feedbackDock}
+              attachRequest={feedbackAttachReq}
             />
           </div>
         </div>
@@ -2388,6 +2402,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {!effectiveTypeMode && <div style={S.cardHint}>Tap to reveal translation</div>}
                     {effectiveTypeMode && !typeResult && <div style={S.cardHint}>Tap to show answer</div>}
                     {!effectiveTypeMode && <ShortcutsTooltip />}
+                    {!showFeedback && <ReportCardButton onReport={reportCard} nextToInfo={!effectiveTypeMode} />}
                   </div>
                   <div style={{...S.cardBack, pointerEvents: flipped ? "auto" : "none"}}>
                     {cardLesson && <div style={S.cardBadge}>{cardLesson.title}</div>}
@@ -2412,6 +2427,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         ✏️
                       </button>
                     </div>
+                    {!showFeedback && <ReportCardButton onReport={reportCard} />}
                   </div>
                 </div>
               </div>
@@ -3073,6 +3089,32 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
   );
 }
 
+// ─── REPORT THIS CARD ────────────────────────────────────────────────────
+// A faint flag in the card's bottom-right corner, beside the ⓘ. Most feedback
+// is about a card, and the only way in used to be a 12px link at the foot of
+// the sidebar. Opens the feedback panel with this card attached. Stops the
+// click so it never flips, continues or grades the card underneath it.
+function ReportCardButton({ onReport, nextToInfo = false }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      data-report-card
+      style={{ ...S.reportCardBtn, right: nextToInfo ? 46 : 18, opacity: hover ? 0.7 : 0.25 }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); onReport(); }}
+      title="Report a problem with this card"
+      aria-label="Report a problem with this card"
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 22V4" /><path d="M4 4h13l-2 4 2 4H4" />
+      </svg>
+    </button>
+  );
+}
+
 // ─── SHORTCUTS TOOLTIP ────────────────────────────────────────────────────
 // Small ⓘ circle in the bottom-right of the card area. Hover reveals
 // keyboard shortcuts in a styled tooltip. Keeps the study view clean
@@ -3242,7 +3284,10 @@ const S = {
   // means the sidebar stays fixed while the main content scrolls.
   sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
   sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
-  sideNav: { display:"flex", flexDirection:"column", gap:4, flex:1 },
+  // Not flex:1 any more — the feedback dock below takes the free height, so the
+  // panel can sit in it. The nav looks the same either way.
+  sideNav: { display:"flex", flexDirection:"column", gap:4, flex:"none" },
+  sideFeedbackDock: { flex:"1 1 auto", minHeight:0, display:"flex", flexDirection:"column", justifyContent:"flex-end", padding:"24px 16px 12px", boxSizing:"border-box" },
   // Indented to sit under its parent nav item, and quieter than one: a lesson
   // is a place inside Lessons, not a peer of Cards and Stats.
   // Every nav style declares all FOUR border sides, even the three it does not
@@ -3388,6 +3433,7 @@ const S = {
 
   // ── Info tooltip (ⓘ keyboard shortcuts) ───────────────────────────
   infoWrap: { position:"absolute", bottom:14, right:18, zIndex:5 },
+  reportCardBtn: { position:"absolute", bottom:14, width:22, height:22, padding:0, border:"none", borderRadius:"50%", background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:T.color.onSurfaceVariant, transition:"opacity 0.15s", zIndex:5 },
   infoBtn: { width:22, height:22, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.25, transition:"opacity 0.15s", userSelect:"none" },
   infoTip: { position:"absolute", bottom:30, right:0, background:T.color.surfaceLow, color:T.color.onSurfaceVariant, padding:"12px 16px", borderRadius:T.radius.lg, fontSize:11, fontFamily:T.font.sans, lineHeight:1.8, whiteSpace:"nowrap", boxShadow:"0 4px 16px rgba(3,22,50,0.08)", zIndex:10 },
 

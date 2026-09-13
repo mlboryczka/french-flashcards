@@ -21,11 +21,11 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `dates` | which day a review counts towards, and whether a card has already had today's review, run under a pinned timezone so the bug isn't invisible from the one it was written in | no |
 | `serving` | which cards make a block of 50: due today first, new cards only once those run out, and the order new cards arrive in — lessons by teaching order, notes by recent classes then most-repeated words | no |
 | `progress` | seen, about N remembered and not yet seen: FSRS's recall estimate, which area a card counts towards, and what a block changed | no |
-| `layout` | card fits the window at 7 heights; a panel moves the content column and **not** the sidebar, on Cards and on Stats | yes |
-| `panels` | tutor/feedback mutual exclusion, outside-click dismissal, reflow axis | yes |
+| `layout` | card fits the window at 7 heights; the tutor moves the content column and **not** the sidebar; the feedback panel moves nothing, on Cards and on Stats | yes |
+| `panels` | tutor/feedback mutual exclusion, outside-click dismissal, the tutor's reflow axis; the feedback panel sitting in the sidebar and never over the card, its draft surviving every close, sending clearing it with a toast, and the flag on the card opening it about that card | yes |
 | `lesson-sync` | a new account ends up with L'impératif in its deck: every card, correctly keyed, studiable, notes readable — and a second visit writes nothing | yes |
 | `lessons` | the lesson notes panel: its tabs and the rules its layout keeps, all read back from the lesson data; the lesson's block starting at card 1, and its progress in the top bar | yes |
-| `motion` | a panel and the page it moves travel together — no frame leaping a large part of the distance, nothing left behind | yes |
+| `motion` | the page holding still on every frame of the feedback panel's open and close, the panel fading rather than popping, and the tutor on the same clock as the page it moves | yes |
 | `regressions` | bugs found by driving the app, each with the check that would have caught it | yes |
 | `reflow` | what the reflow drags with it: the chrome above the card holding still, the card animating rather than popping, the feedback sheet staying inside the window, and panel/page agreeing across the reflow floor | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
@@ -34,7 +34,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `session` | working a block to its checkpoint, Continue dealing the next block without repeating a card, what the keyboard is allowed to touch, and FSRS getting one answer per card per day | yes |
 | `tutor` | the answer rendering as it streams, the deck context the endpoint is sent, editing a proposed card before it is written | yes |
 
-**Markers:** `data-checkpoint` (the screen after a block), `data-stats-all` / `data-stats-areas` / `data-stats-coming-up` (Stats sections), `data-lesson-progress` (the lesson's figure in the top bar), `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`. Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
+**Markers:** `data-checkpoint` (the screen after a block), `data-stats-all` / `data-stats-areas` / `data-stats-coming-up` (Stats sections), `data-lesson-progress` (the lesson's figure in the top bar), `data-tutor-panel` (the panel), `data-tutor-context` (the card chip in its header), `data-proposed-card` (a card the tutor offers), `data-feedback-sheet`, `data-attach-card`, `data-feedback-draft` (the dot on the trigger while a draft waits), `data-feedback-toast` (the outcome of a send; its value is `sent` or `failed`), `data-feedback-dock` (the sidebar slot the feedback panel renders into), `data-report-card` (the flag on the card). Find things by these, never by their copy — `layoutProbe` once matched a line of the tutor's intro paragraph, and deleting that paragraph made every "is the tutor open" check answer no.
 
 ## Five rules, all learned from checks that lied
 

@@ -19,6 +19,8 @@
 //     SIDEBAR_WIDTH, and had `width: 100%` — which on a fixed element resolves
 //     against the VIEWPORT, not the span it sits in. Below a 1176px window it
 //     hung off the right edge, carrying its own Close button off-screen.
+//     (The sheet has since moved into the sidebar and no longer reflows the
+//     page at all; the check that it stays inside the window stays.)
 //   • The card gave up its size only after the page's centring slack was
 //     spent, so a reflow was two motions: slide, then shrink. On the way back
 //     the easing crossed the handover in about two frames and the card
@@ -162,18 +164,22 @@ function shareOfPageMove(frames, key) {
 
 // ── The card animates rather than popping ───────────────────────────────
 //
-// Both axes, and both directions. The vertical reflow is checked at a tall
-// window because that is where the card has centring slack to spend first —
-// the case that used to split the move into a slide and then a snap.
+// Both directions, driven by the tutor — the one panel left that reflows the
+// page. This loop used the feedback sheet, which reflowed vertically, and was
+// checked at tall windows because that is where the card had centring slack to
+// spend first. The feedback panel now lives in the sidebar and reflows nothing;
+// `panels` and `layout` check that it leaves the card alone. At 900 and 800
+// wide the tutor overlays rather than reflowing, so there the card should
+// simply hold still.
 {
-  console.log("\n  the card animates rather than popping, on both axes");
+  console.log("\n  the card animates rather than popping as the tutor reflows the page");
   for (const [W, H] of [[1600, 900], [1400, 900], [1400, 800], [1400, 700], [1400, 640], [900, 700], [800, 700]]) {
     const { browser, page } = await openApp({ width: W, height: H });
 
-    const open = await record(page, () => page.click('button:has-text("Send feedback")'));
+    const open = await record(page, () => page.click('aside button:has-text("Tutor")'));
     const so = EDGES.map((k) => shareOfPageMove(open, k));
     ck(
-      `${W}x${H}: opening the sheet, the card's edges keep pace with it`,
+      `${W}x${H}: opening the tutor, the card's edges keep pace with the page`,
       so.every((x) => x.spread <= SPREAD),
       so.map((x, i) => x.moves
         ? `${EDGES[i].replace("card", "").toLowerCase()} ${x.min.toFixed(2)}-${x.max.toFixed(2)} (${x.spread.toFixed(1)}x)`
@@ -185,11 +191,11 @@ function shareOfPageMove(frames, key) {
     // the start of the close, so a handover sitting near the closed end got
     // crossed in a frame or two.
     const close = await record(page, () =>
-      page.click('[data-feedback-sheet] button[aria-label="Close"]')
+      page.click('[data-tutor-panel] button[aria-label="Close"]')
     );
     const sc = EDGES.map((k) => shareOfPageMove(close, k));
     ck(
-      `${W}x${H}: closing it, the card's edges keep pace with it`,
+      `${W}x${H}: closing it, the card's edges keep pace with the page`,
       sc.every((x) => x.spread <= SPREAD),
       sc.map((x, i) => x.moves
         ? `${EDGES[i].replace("card", "").toLowerCase()} ${x.min.toFixed(2)}-${x.max.toFixed(2)} (${x.spread.toFixed(1)}x)`

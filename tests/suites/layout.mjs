@@ -1,5 +1,6 @@
 // Layout: the card fits the window, and a panel makes room by moving the
-// CONTENT COLUMN — never the sidebar.
+// CONTENT COLUMN — never the sidebar. The feedback panel, which lives inside
+// the sidebar, makes no room at all.
 import { openApp, finish, checker, gotoStats, layoutProbe, cardBox, settled } from "../harness.mjs";
 
 const ck = checker();
@@ -60,42 +61,45 @@ for (const [w, h] of [[1600, 900], [1400, 900], [1400, 700], [1100, 900], [900, 
 await page.setViewportSize({ width: 1400, height: 900 });
 await page.waitForTimeout(300);
 
-console.log("\n  the feedback panel moves the content column, not the sidebar");
+console.log("\n  the feedback panel moves nothing: not the page, not the sidebar");
 const closed = await layoutProbe(page);
 ck("nothing is padded while closed", closed.padBottom === 0 && closed.padRight === 0);
 ck("main is border-box", closed.boxSizing === "border-box");
 const fullSidebar = closed.sidebarBottom;
+const cardClosed = await cardBox(page);
 
 await page.click('button:has-text("Send feedback")');
 await page.waitForTimeout(800);
 const open = await layoutProbe(page);
+const cardWithPanel = await cardBox(page);
 ck("the panel is on screen", !!open.sheet);
+// It used to be a bottom sheet the page made room for, which cost the card
+// ~140px of height for as long as it was open.
 ck(
-  "the page made room equal to the panel",
-  Math.abs(open.padBottom - open.sheet.height) <= 1,
-  `padding ${open.padBottom} vs panel ${open.sheet.height}`
+  "the page made no room for it",
+  open.padBottom === 0 && open.padRight === 0,
+  `bottom ${open.padBottom}, right ${open.padRight}`
 );
 ck(
-  "main content stops above the panel",
-  open.mainContentBottom <= open.sheet.top + 1,
-  `content ends ${open.mainContentBottom}, panel starts ${open.sheet.top}`
+  "the card is exactly where it was, at the size it was",
+  cardWithPanel.top === cardClosed.top && cardWithPanel.height === cardClosed.height,
+  `${cardClosed.height}@${cardClosed.top} → ${cardWithPanel.height}@${cardWithPanel.top}`
 );
-// The panel never covers the sidebar, so the sidebar has no business moving.
-// Padding the shell instead of main shrank it and jumped the account block up
-// the page — this is the check that should have existed the first time.
 ck(
   "THE SIDEBAR DOES NOT MOVE",
   open.sidebarBottom === fullSidebar,
   `sidebar ends ${open.sidebarBottom}, was ${fullSidebar}`
 );
 ck(
-  "the account block stays at the bottom",
-  open.accountTop !== null && open.accountTop > open.sheet.top,
-  `account at ${open.accountTop}, panel top ${open.sheet.top}`
+  "the account block stays where it was",
+  open.accountTop !== null && open.accountTop === closed.accountTop && open.accountTop >= open.sheet.top + open.sheet.height,
+  `account at ${open.accountTop} (was ${closed.accountTop}), panel ends ${open.sheet.top + open.sheet.height}`
 );
-ck("the panel starts right of the sidebar", open.sheet.left >= 256, `left ${open.sheet.left}`);
-ck("the panel is shorter than the old 60vh", open.sheet.height <= 340, `${open.sheet.height}px`);
-ck("and wider than the old 600", open.sheet.width > 600, `${open.sheet.width}px`);
+ck(
+  "the panel sits inside the sidebar",
+  open.sheet.left >= 8 && open.sheet.left + open.sheet.width <= 256 - 8,
+  `left ${open.sheet.left}, width ${open.sheet.width}`
+);
 ck("the shell stays one viewport tall", Math.abs(open.shellHeight - open.viewport) <= 1);
 
 console.log("\n  the card holds its position when it flips");
@@ -147,6 +151,7 @@ await page.waitForTimeout(500);
 for (const height of [900, 800, 700, 640, 560]) {
   await page.setViewportSize({ width: 1400, height });
   await page.waitForTimeout(300);
+  const shut = await cardBox(page);
   await page.click('button:has-text("Send feedback")');
   await page.waitForTimeout(800);
   const card = await cardBox(page);
@@ -167,10 +172,16 @@ for (const height of [900, 800, 700, 640, 560]) {
     font <= card.height * 0.14 && font >= 18,
     `${font.toFixed(1)}px in a ${card.height}px card`
   );
+  // The requirement: the feedback panel never covers the card, at any height.
   ck(
-    `${height}px + panel: the card still clears the panel`,
-    card.bottom <= probe.sheet.top,
-    `card ends ${card.bottom}, panel starts ${probe.sheet.top}`
+    `${height}px + panel: the panel never overlaps the card`,
+    probe.sheet.left + probe.sheet.width <= card.centreX - card.width / 2,
+    `panel ends ${probe.sheet.left + probe.sheet.width}, card starts ${card.centreX - card.width / 2}`
+  );
+  ck(
+    `${height}px + panel: and the card gave up nothing for it`,
+    card.height === shut.height && card.top === shut.top,
+    `${shut.height}@${shut.top} → ${card.height}@${card.top}`
   );
   await page.mouse.click(80, 60);
   await page.waitForTimeout(600);
@@ -183,22 +194,13 @@ await gotoStats(page);
 await page.click('button:has-text("Send feedback")');
 await page.waitForTimeout(800);
 const stats = await layoutProbe(page);
-// The scroll container by its style, not by whether it happens to overflow
-// right now — with a shorter panel the Stats content may well fit.
-const scrolls = await page.evaluate(() => {
-  const el = [...document.querySelectorAll("main *")].find(
-    (d) => getComputedStyle(d).overflowY === "auto"
-  );
-  return el ? Math.round(el.getBoundingClientRect().bottom) : null;
-});
-ck(
-  "main content stops above the panel",
-  stats.mainContentBottom <= stats.sheet.top + 1,
-  `content ends ${stats.mainContentBottom}, panel starts ${stats.sheet.top}`
-);
-ck("the scrolling area stops there too", scrolls !== null && scrolls <= stats.sheet.top + 1, `${scrolls}`);
+ck("the page made no room for it", stats.padBottom === 0, `bottom ${stats.padBottom}`);
 ck("THE SIDEBAR DOES NOT MOVE", stats.sidebarBottom === fullSidebar, `${stats.sidebarBottom}`);
-ck("the account block stays at the bottom", stats.accountTop > stats.sheet.top);
+ck(
+  "the panel sits inside the sidebar, above the account block",
+  stats.sheet.left + stats.sheet.width <= 256 && stats.accountTop >= stats.sheet.top + stats.sheet.height,
+  `panel ${stats.sheet.left}+${stats.sheet.width}, ends ${stats.sheet.top + stats.sheet.height}, account ${stats.accountTop}`
+);
 
 console.log("\n  nothing scrolls sideways, at any width");
 // The requirement is the page, not any particular element: a phone-width
@@ -245,10 +247,10 @@ await page.evaluate(() => {
     .click();
 });
 await page.waitForSelector('button:has-text("Previous card")', { timeout: 8000 });
-// And the feedback sheet is still open from those sections, padding main's
-// bottom. Left open it makes the card 350 tall instead of 375, and opening the
-// tutor dismisses the sheet — so the card would GROW on open and the
-// comparison would measure the sheet closing, not the panel's effect.
+// And the feedback panel is still open from those sections. Opening the tutor
+// dismisses it, so close it first: the comparison below should measure the
+// tutor and nothing else. (When feedback was a bottom sheet this mattered more
+// — it padded main, so closing it made the card grow.)
 await page.evaluate(() => {
   const close = [...document.querySelectorAll("[data-feedback-sheet] button")]
     .find((b) => b.innerText.trim() === "×");

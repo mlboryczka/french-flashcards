@@ -1,33 +1,48 @@
-// "Smooth" is measurable: sample the moving edges every frame through an open
-// and a close, and check they travel continuously — no frame where something
-// leaps a large fraction of the total distance, and no element left behind by
-// the others.
+// "Smooth" is measurable: sample what moves every frame through an open and a
+// close, and check it moves continuously — and that what shouldn't move, doesn't.
 //
 // This exists because "the reflow is jerky" was reported repeatedly and fixed
-// by eye. Six timings were on screen at once: the sheet slid in over 180ms
-// with one curve, the page made room over 420ms with another, the card area
-// gave up its padding over 200ms with a third, and the sheet had no exit
+// by eye. Six timings were on screen at once: the feedback sheet slid in over
+// 180ms with one curve, the page made room over 420ms with another, the card
+// area gave up its padding over 200ms with a third, and the sheet had no exit
 // animation at all — it vanished in a single frame while the page took 420ms
 // to close the gap behind it.
+//
+// The feedback panel has since moved into the sidebar and moves nothing but
+// itself, so the questions for it are different: does the PAGE hold perfectly
+// still on every frame of its open and close, and does the panel itself fade
+// rather than pop. The page-and-panel-on-one-clock question now belongs to the
+// tutor, which is the panel that still moves the page.
 import { openApp, finish, checker, settled } from "../harness.mjs";
 
 const ck = checker();
 const { browser, page } = await openApp();
 
-// Sample the panel's top edge and the content's bottom edge together — they
-// have to move as one, or you see the gap open and close.
-async function record(action, ms = 700) {
+// Away from the sidebar, the card and every control.
+const OUTSIDE = [1300, 860];
+
+async function record(action, ms = 600) {
   await page.evaluate(() => {
     window.__frames = [];
+    const card = [...document.querySelectorAll("div")].find(
+      (d) => getComputedStyle(d).transformStyle === "preserve-3d"
+    );
+    const account = [...document.querySelectorAll("aside *")].find(
+      (n) => n.children.length === 0 && /@example\.com/.test(n.textContent || "")
+    );
     const tick = () => {
-      const sheet = document.querySelector("[data-feedback-sheet]");
+      const panel = document.querySelector("[data-feedback-sheet]");
       const main = document.querySelector("main");
       const cs = getComputedStyle(main);
-      const pad = parseFloat(cs.paddingBottom) || 0;
+      const c = card.getBoundingClientRect();
       window.__frames.push({
-        t: performance.now(),
-        sheetTop: sheet ? sheet.getBoundingClientRect().top : window.innerHeight,
-        contentBottom: main.getBoundingClientRect().bottom - pad,
+        present: !!panel,
+        opacity: panel ? parseFloat(getComputedStyle(panel).opacity) : null,
+        contentBottom: main.getBoundingClientRect().bottom - (parseFloat(cs.paddingBottom) || 0),
+        padRight: parseFloat(cs.paddingRight) || 0,
+        cardTop: c.top,
+        cardH: c.height,
+        accountTop: account ? account.getBoundingClientRect().top : 0,
       });
       window.__raf = requestAnimationFrame(tick);
     };
@@ -41,60 +56,63 @@ async function record(action, ms = 700) {
   });
 }
 
-function analyse(frames, label) {
-  const first = frames[0], last = frames[frames.length - 1];
-  const travel = Math.abs(last.sheetTop - first.sheetTop);
-  let biggestStep = 0, biggestGapDrift = 0;
-  const drifts = [];
-  for (let i = 1; i < frames.length; i++) {
-    biggestStep = Math.max(biggestStep, Math.abs(frames[i].sheetTop - frames[i - 1].sheetTop));
-    // The content edge should stay level with the panel edge the whole way.
-    const drift = Math.abs(
-      (frames[i].contentBottom - frames[i].sheetTop) - (first.contentBottom - first.sheetTop)
-    );
-    biggestGapDrift = Math.max(biggestGapDrift, drift);
-    drifts.push(drift);
+// The largest distance any of these ever strays from its first-frame value.
+function stray(frames, keys) {
+  const first = frames[0];
+  let worst = 0, which = "";
+  for (const f of frames) for (const k of keys) {
+    const d = Math.abs(f[k] - first[k]);
+    if (d > worst) { worst = d; which = k; }
   }
-  // Drift is judged on the TYPICAL frame, not the worst one.
-  //
-  // The bug this guards against — the page setting off two frames before the
-  // sheet — separates the two edges for the whole move, so it shows up in
-  // every frame. A max, by contrast, fails on one unlucky sample: catch the
-  // instant after one element's style is applied and before the other's and
-  // you read a whole frame of lag, about 16px, that nobody could see. On the
-  // close animation that pushed the max to 32px on roughly half of runs while
-  // the median sat at 16, which is how this check came to fail at random on
-  // an app that was fine.
-  const sorted = [...drifts].sort((a, b) => a - b);
-  const typicalDrift = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
-  const pct = travel ? Math.round((biggestStep / travel) * 100) : 0;
-  console.log(`  ${label}: ${frames.length} frames, travelled ${Math.round(travel)}px, biggest single step ${Math.round(biggestStep)}px (${pct}% of the move), panel/content drift ${Math.round(typicalDrift)}px typical / ${Math.round(biggestGapDrift)}px worst frame`);
-  return { travel, biggestStep, pct, biggestGapDrift, typicalDrift };
+  return { worst, which };
+}
+const PAGE = ["contentBottom", "padRight", "cardTop", "cardH", "accountTop"];
+
+// Whether the panel is mid-fade right now, read from the animation itself
+// rather than counted in sampled frames. Headless Chrome on some machines
+// delivers five frames in 600ms, and a frame count then says "popped" about a
+// fade that ran fine; a running opacity transition is the same fact without
+// depending on the frame rate.
+const fading = () => page
+  .waitForFunction(() => {
+    const el = document.querySelector("[data-feedback-sheet]");
+    const a = el && el.getAnimations().find((x) => x.transitionProperty === "opacity");
+    return !!a && a.playState === "running" && a.effect.getTiming().duration > 0;
+  }, null, { polling: 10, timeout: 500 })
+  .then(() => true, () => false);
+
+console.log("\n  opening feedback");
+let midOpen = null;
+const open = await record(async () => {
+  await page.click('button:has-text("Send feedback")');
+  midOpen = await fading();
+});
+{
+  const s = stray(open, PAGE);
+  console.log(`  ${open.length} frames, page strayed ${s.worst.toFixed(1)}px (${s.which || "nothing"}); fading in: ${midOpen}`);
+  ck("the page holds perfectly still on every frame", s.worst <= 0.5, `${s.worst.toFixed(1)}px on ${s.which}`);
+  ck("the panel fades in rather than popping", midOpen === true, "no running opacity transition on the way in");
 }
 
-console.log("\n  opening");
-const open = analyse(await record(async () => {
-  await page.click('button:has-text("Send feedback")');
-}), "open");
-ck("the panel actually travels", open.travel > 60, `${Math.round(open.travel)}px`);
-ck("no frame jumps a large part of the distance", open.pct <= 25, `${open.pct}% in one frame`);
-ck("the page keeps pace with the panel", open.typicalDrift <= 24, `${Math.round(open.typicalDrift)}px on the typical frame`);
-ck("and never falls badly behind it", open.biggestGapDrift <= 48, `${Math.round(open.biggestGapDrift)}px worst frame`);
+console.log("\n  closing feedback");
+await settled(page);
+let midClose = null;
+const close = await record(async () => {
+  await page.mouse.click(...OUTSIDE);
+  midClose = await fading();
+});
+{
+  const s = stray(close, PAGE);
+  // The old sheet was unmounted in one frame here — the pop this exists to catch.
+  console.log(`  ${close.length} frames, page strayed ${s.worst.toFixed(1)}px (${s.which || "nothing"}); fading out: ${midClose}`);
+  ck("the page holds perfectly still on every frame", s.worst <= 0.5, `${s.worst.toFixed(1)}px on ${s.which}`);
+  ck("the panel fades out rather than vanishing", midClose === true, "no running opacity transition on the way out");
+  ck("and is gone at the end", !close[close.length - 1].present);
+}
 
-console.log("\n  closing");
-const close = analyse(await record(async () => {
-  await page.mouse.click(80, 60);
-}), "close");
-// The sheet used to be unmounted in one frame here, so the whole distance was
-// covered by a single step — the pop this test exists to catch.
-ck("the panel slides out rather than vanishing", close.travel > 60, `${Math.round(close.travel)}px`);
-ck("no frame jumps a large part of the distance", close.pct <= 25, `${close.pct}% in one frame`);
-ck("the page keeps pace with the panel", close.typicalDrift <= 24, `${Math.round(close.typicalDrift)}px on the typical frame`);
-ck("and never falls badly behind it", close.biggestGapDrift <= 48, `${Math.round(close.biggestGapDrift)}px worst frame`);
-
-console.log("\n  one duration and one curve everywhere");
-// Measured on the two things that actually MOVE: the sheet's own transform and
-// the padding the page makes room with.
+console.log("\n  one duration and one curve for the panel that moves the page");
+// Measured on the two things that actually MOVE: the tutor's own transform
+// and the padding the page makes room with.
 //
 // This check used to find "the element under `main` whose transition mentions
 // padding-bottom", which was `cardArea` — whose padding-bottom had been a
@@ -103,8 +121,9 @@ console.log("\n  one duration and one curve everywhere");
 // with the property deleted, and it did pass for as long as the dead
 // declaration sat there. The declaration is now gone and this asks the
 // question it was meant to ask.
-await page.click('button:has-text("Send feedback")');
-await page.waitForSelector("[data-feedback-sheet]");
+await settled(page);
+await page.click('aside button:has-text("Tutor")');
+await page.waitForSelector("[data-tutor-panel]");
 await settled(page);
 const timings = await page.evaluate(() => {
   const pick = (el, want) => {
@@ -124,26 +143,26 @@ const timings = await page.evaluate(() => {
     };
   };
   return {
-    main: pick(document.querySelector("main"), "padding-bottom"),
-    sheet: pick(document.querySelector("[data-feedback-sheet]"), "transform"),
+    main: pick(document.querySelector("main"), "padding-right"),
+    tutor: pick(document.querySelector("[data-tutor-panel]"), "transform"),
   };
 });
 console.log(`  main ${JSON.stringify(timings.main)}`);
-console.log(`  sheet ${JSON.stringify(timings.sheet)}`);
+console.log(`  tutor ${JSON.stringify(timings.tutor)}`);
 ck(
   "the page animates the padding it makes room with",
   !!timings.main?.found,
-  `main transitions ${timings.main?.found ? timings.main.prop : "not padding-bottom"}`
+  `main transitions ${timings.main?.found ? timings.main.prop : "not padding-right"}`
 );
 ck(
-  "the panel animates the transform it moves on",
-  !!timings.sheet?.found,
-  `sheet transitions ${timings.sheet?.found ? timings.sheet.prop : "not transform"}`
+  "the tutor animates the transform it moves on",
+  !!timings.tutor?.found,
+  `tutor transitions ${timings.tutor?.found ? timings.tutor.prop : "not transform"}`
 );
 ck(
-  "the panel moves on the same clock as the page",
-  !!timings.sheet && timings.sheet.dur === timings.main.dur && timings.sheet.fn === timings.main.fn,
-  `sheet ${timings.sheet?.dur} ${timings.sheet?.fn} vs main ${timings.main?.dur} ${timings.main?.fn}`
+  "the tutor moves on the same clock as the page",
+  !!timings.tutor && timings.tutor.dur === timings.main.dur && timings.tutor.fn === timings.main.fn,
+  `tutor ${timings.tutor?.dur} ${timings.tutor?.fn} vs main ${timings.main?.dur} ${timings.main?.fn}`
 );
 ck("the page's own transitions agree with each other", timings.main.allSame, JSON.stringify(timings.main));
 

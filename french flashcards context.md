@@ -466,9 +466,22 @@ of these were "fixed" against an assumption and shipped broken.
 - **`main` owns the reflow, not the shell.** Both side panels (tutor, feedback)
   push the content column via padding on `<main>`. Padding the shell shrank the
   **sidebar** too, jumping its account block up the page. The sidebar is not
-  what either panel covers.
+  what either panel covers. *(Since 2026-09-12 only the tutor and the lesson
+  notes do; `main` has no `padding-bottom` at all.)*
+- **The feedback panel lives inside the sidebar, and moves nothing.** It is an
+  inset card (hairline border, soft shadow, 16px in from each sidebar edge,
+  ~223px wide) in `data-feedback-dock`, the flex slot between the nav and the
+  account block — `sideNav` gave up `flex: 1` so the dock could take the free
+  height. The dock pins the panel to its bottom edge and its 24px top padding
+  keeps it clear of Tutor; on a short window it holds a 244px floor while open
+  and the sidebar scrolls rather than the panel climbing over the nav. It
+  replaced a bottom sheet across the content column, which cost the card
+  ~140px of height while open, sat far from the link that opened it, and
+  produced every sheet note below. The rule it was moved to satisfy: **nothing
+  may cover the card.** A popover anchored above the link was tried in mockup
+  first and rejected for exactly that — at narrower windows it reached the card.
 - **The feedback sheet is offset by `SIDEBAR_WIDTH`** so it centres over the
-  content column instead of straddling the nav.
+  content column instead of straddling the nav. *(Bottom sheet only — superseded 2026-09-12: the feedback panel now lives in the sidebar and moves nothing.)*
 - **The card is height-driven, with a floor** — `height: 100%`, `min-height:
   170`, `max-height: min(375px, 62.5cqw)`, width following the 1.6:1 ratio
   (`aspect-ratio: 1.6 / 1`). It used to be a fixed
@@ -511,12 +524,15 @@ of these were "fixed" against an assumption and shipped broken.
 - **The feedback sheet mounts and unmounts through `mounted` / `entered`**,
   the same pattern the tutor uses. It previously had no exit animation at all —
   it vanished in a single frame while the page took 420ms to close the gap
-  behind it, the worst jerk of the lot.
+  behind it, the worst jerk of the lot. The sidebar panel keeps the pattern for
+  a 200ms fade-and-rise, but starts it from a `useLayoutEffect` that forces
+  layout rather than two `requestAnimationFrame`s: where rAF is throttled the
+  rAF version left the panel mounted, focused and at opacity 0.
 - **The page's padding is driven by `entered`, not by mount**, and reported
   from a `useLayoutEffect`. Both state changes then land in one React commit and
   the two transitions start on the same frame. Reporting the height at mount
   let the page set off two frames before the sheet did, which measured as 32px
-  of drift; tying them together makes it 0.
+  of drift; tying them together makes it 0. *(Bottom sheet only — superseded 2026-09-12: the feedback panel now lives in the sidebar and moves nothing.)*
 - **`container-type: size` lives on the card FACES, not on the card.** The
   faces are `inset: 0` so `cqh` resolves identically, and they hold no 3D
   children. Containment on the rotating element is a plausible compositing
@@ -527,17 +543,39 @@ of these were "fixed" against an assumption and shipped broken.
   that starts at one line and grows to five, and a row of chips. It was ~300px
   — a subtitle, a 90px textarea, a full-width attach row, a full-width dashed
   dropzone and a footer, for what is really one text field. `max-height` is
-  `min(300px, 38vh)` as a backstop, not the usual case.
+  `min(300px, 38vh)` as a backstop, not the usual case. *(The sidebar panel is
+  ~233px: a three-line field, because a sidebar-width line holds four words,
+  the chips stacked, and a footer with Send. An attached screenshot shows as a
+  thumbnail inside its chip, never as a row of its own.)*
 - **The whole sheet is the drop and paste target**, which is what let the
   dedicated dropzone go. Dragging over it outlines the entire panel; the
   Screenshot chip is the click-to-browse affordance.
 - **The sheet carries `data-feedback-sheet`.** Tests identify it by that marker:
   matching on a line of copy broke when the subtitle went, and matching on "a
   fixed panel containing a textarea" also matched the tutor.
-- **Tutor and feedback are mutually exclusive.** Opening one closes the other,
-  routed through the feedback sheet's own close request so an unsent draft
-  still prompts — and declining the prompt cancels opening the tutor rather
-  than silently eating what you typed.
+- **Tutor and feedback are mutually exclusive.** Opening one closes the other.
+  This used to route through the feedback sheet's own close request so an
+  unsent draft still prompted; since the panel keeps its draft on close
+  (below), it is a plain `setShowFeedback(false)`.
+- **Closing the feedback panel never throws anything away; sending is the only
+  thing that clears it.** ✕, Escape, an outside click, the "Send feedback" link
+  (a toggle now — it used to only open) and opening the tutor all just put it
+  away, and reopening brings the draft back, with a dot on the link meanwhile.
+  That retired the "Discard your feedback?" confirm, the Minimize bar (which
+  existed only to keep a draft safe) and the close-request handshake. A
+  successful send clears the form at once, closes the panel, returns focus to
+  the link and announces itself in a toast in the panel's spot
+  (`data-feedback-toast`, `role="status"`, 5s, paused on hover). A failed send
+  keeps the panel open with the draft and an inline error, or — if it was closed
+  mid-send — raises a toast that doesn't time out.
+- **The flag on the card opens feedback about that card.** A faint flag beside
+  the ⓘ (`data-report-card`, on both faces, hidden while the panel is open)
+  opens the panel with "About: <card>" switched on, even if it had been
+  switched off for the draft. It stops its own mousedown and click so it never
+  flips, continues or grades the card.
+- **The panel closes if the window goes narrow.** The narrow layout has no
+  sidebar to show it in, and left "open" `overlayOpen` would go on swallowing
+  the card's keyboard shortcuts.
 - **Only the ✕ and the nav item close the tutor; the same for the lesson
   notes.** Neither closes on an outside click or on Escape. You ask the tutor
   about the card in front of you, so clicking back onto that card — or hitting
@@ -577,7 +615,7 @@ of these were "fixed" against an assumption and shipped broken.
   off the right edge — 256px of it at a 900px window, carrying its own Minimize
   and Close buttons off-screen. The only way out of the panel was an outside
   click, which nothing advertises. `width: auto` lets left/right size it and
-  `maxWidth: 920` still caps it. The minimized bar had the identical bug.
+  `maxWidth: 920` still caps it. The minimized bar had the identical bug. *(Bottom sheet only — superseded 2026-09-12: the feedback panel now lives in the sidebar and moves nothing.)*
 - **`cardWrap` has a definite flex basis (`0 1 min(375px, 62.5cqw)`), not
   `1 1 auto`.** It
   used to grow to swallow every spare pixel of `cardArea`, and that slack split
@@ -1563,6 +1601,59 @@ does not move when graded" check (264 → 259px), and failed it identically on
 the unchanged code. One `reflow` run timed out loading the page and passed on
 a re-run.
 
+### 2026-09-12 — the feedback panel: into the sidebar, and closing keeps the draft
+
+Reported: send feedback, click outside, get asked "Discard your feedback?",
+and afterwards be unable to tell — short of opening View feedback — whether
+anything had been deleted. Nothing ever had been. After a successful insert the
+sheet stayed up for 1.5s with a "Thanks!" banner and **the sent text still in
+the field**; `handleCloseClick` only exempted `submitting`, so an outside click
+in that window read the sent text as a draft and prompted. OK closed the sheet;
+Cancel kept it, and then the 1.5s timer closed it anyway. The prompt was a
+question with no real answer. The same uncancelled timer could also wipe and
+close a draft started within 1.5s of reopening. Separately, "doesn't reflow
+well": the page tracked the sheet's height through a `ResizeObserver`, so every
+second line typed, a screenshot preview, a banner and Minimize each moved the
+card.
+
+Rethought from the lifecycle — draft → sending → sent or failed — against NN/g
+(confirmation dialogs; cancel vs close, "when in doubt, save"), the WAI-ARIA
+dialog pattern and MDN's popover light-dismiss (Escape closes, focus returns to
+the invoker), WCAG 4.1.3 status messages, Vercel Geist's feedback component,
+and GOV.UK and Smashing on disabled buttons. Closing never destroys; sending is
+the only thing that clears; the outcome is announced; Minimize goes; Escape
+closes (the open item had deferred it only because closing went through the
+prompt); Send stays enabled and validates on click; ⌘/Ctrl+Enter sends.
+
+**Placement took three passes, and the owner's rule settled it: nothing may
+cover the card.** A popover anchored above the link was mocked and rejected — at
+narrower windows it reached the card. Keeping the bottom sheet (made narrower,
+page making room once) was agreed, then replaced on second thought with the
+panel inside the sidebar: it covers nothing, moves nothing, and sits beside the
+link that opens it. The cost is width — ~223px, so the field starts at three
+lines and the chips stack — and a very short window scrolls the sidebar. The
+flag on the card was added in the same pass, so card feedback starts at the card.
+
+Not done: a sentiment row (Vercel, Stripe) — a one-learner beta and a free-text
+note is the whole signal; auto-attaching route or viewport — nothing reads it.
+
+Tests. `panels` gained the reported sequence (send, click away at once: no
+dialog, one row, toast, empty on reopen), draft survival across every close
+including the link's own toggle, the panel's geometry (in the sidebar, below
+Tutor, above the account, never over the card, the card unmoved), too-short and
+failed sends, and the flag (opens with the card attached, doesn't flip or grade).
+`layout` now asserts the panel moves nothing at five heights and on Stats.
+`motion` asserts the page holds still on every frame of the open and close and
+that the panel fades — read from the running transition, not a frame count, as
+this Mac's headless Chrome delivered five frames in 600ms. The page-and-panel
+clock check moved to the tutor, and `reflow`'s card-animation loop moved to the
+tutor too, since feedback no longer reflows anything.
+
+Full suite on the Mac: 16 of 18. The two failures are the Mac baseline exactly
+(`layout` type-mode 264 → 259, `reflow` "the tutor reflow actually ran" 0px);
+`motion`, the third baseline failure, now passes because its feedback checks no
+longer count frames.
+
 ---
 
 ## Open items
@@ -1616,16 +1707,6 @@ a re-run.
   progress-over-time graph, and no way to re-optimise FSRS parameters against
   this learner's own answers — which is the feature that makes FSRS better
   than its defaults. It is also why the Stats page has no finish estimates.
-- **The feedback sheet has no Escape handler.** Written when the tutor and the
-  lesson notes both closed on Escape and the sheet was the odd one out; since
-  2026-09-11 neither of them does, so the *inconsistency* is gone and the case
-  now rests on the sheet itself. It still holds: the sheet is the one panel you
-  open, use and put away, and it already dismisses on an outside click, so
-  Escape is the keyboard spelling of a gesture it accepts anyway — while for
-  the other two Escape was actively wrong, being the reflex for clearing a
-  field mid-answer. It is not a one-liner: closing has to go through
-  `handleCloseClick` so an unsent draft still prompts, which is why it was left
-  rather than bolted on.
 - **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
   there is no install manifest or offline support.
 - **The multi-sense cleanup has never actually been run.** The machinery is
