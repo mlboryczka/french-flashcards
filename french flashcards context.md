@@ -77,11 +77,29 @@ That is what happened on 2026-09-12: the session was handed
 `main`. Two sentences at the start instead of an hour of invisible work. Keep
 doing that.
 
-`npm test` before every push. It is 15 suites, and on a cold container closer
-to twenty minutes than a few — most of them drive a real browser at several
-window sizes. Start it early rather than last, and don't edit `src/` while it
-runs: the suites share one Vite dev server, so a save hot-reloads the app
-underneath a test that is mid-assertion.
+`npm test` before every push. It is 18 suites, and closer to twenty minutes
+than a few — most of them drive a real browser at several window sizes. Start
+it early rather than last, and don't edit `src/` while it runs: the suites
+share one Vite dev server, so a save hot-reloads the app underneath a test
+that is mid-assertion.
+
+**Running the suite on the owner's Mac takes two adjustments.**
+
+- `tests/run.mjs` refuses to run while the real `.env.local` is present,
+  rather than overwrite it. Don't move that file. Copy the repo to a scratch
+  directory without it (`git archive HEAD | tar -x -C <dir>`, or rsync
+  `src tests api` over an existing copy), symlink `node_modules` into the
+  copy, and run the suite there. The copy has the same code, and the real
+  keys never come near the mock.
+- Point `CHROME_PATH` at Playwright's Chromium:
+  `~/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`.
+  The default path in `tests/harness.mjs` is the Linux container's.
+
+**On the Mac, 15 of 18 pass, and that is the baseline.** `layout` (type mode:
+the card moves 5px when graded), `motion` (the panel travels 0px) and `reflow`
+(the tutor reflow ran 0px) fail the same way on `9b95052`, which passed all of
+them in the container. So it is this machine's headless Chrome, not the code —
+see the open item. A new failure in any other suite is real.
 
 ---
 
@@ -615,7 +633,7 @@ of these were "fixed" against an assumption and shipped broken.
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Fifteen suites: four needing no browser,
+`npm test` — see `tests/README.md`. Eighteen suites: six needing no browser,
 the rest driving the real app in headless Chromium against a mock Supabase,
 asserting on **measured** values (geometry, computed styles, request payloads)
 rather than on intent.
@@ -801,7 +819,7 @@ happened to your memory. That is the honest behaviour and it is what makes the
 number worth watching; it is also the one real design decision here, since a
 figure that can go down puts some people off.
 
-### The agreed design, not yet built
+### The agreed design (built 2026-09-12 — see Status above for where it differs)
 
 **Two numbers, because either alone lies.** "Seen 61 of 108" says nothing
 about whether it stuck; "remember 43" says nothing about how much is left to
@@ -1355,9 +1373,10 @@ not seen, which is exactly the check the admin view lacked.
 ### 2026-09-12 — how cards are served: the agreed strategy, and stage 1
 
 A long design discussion with the owner settled how a student works through
-the app. **Only stage 1 below is built.** The rest is agreed and replaces the
-parts of *How a session is built* and *Progress, and the "mastered" relic*
-that it contradicts. Read it as the brief for the next sessions.
+the app. **All seven stages below were built the same day**, except the finish
+estimates in stage 6 (see Open items). The reference sections *How a session
+is built* and *Progress, and the "mastered" relic* describe the result; this
+entry keeps the reasoning, and what the owner rejected along the way.
 
 **What FSRS does and doesn't decide.** FSRS decides when a card the student has
 already seen comes back. It has no opinion on grouping, session length, or which
@@ -1437,9 +1456,48 @@ of cards due on each of the next seven days; "By type" keeps accuracy and drops
 
 No database change is needed for any of it.
 
+**What was verified, and what wasn't.** Every stage went to `main` after the
+full suite, run on the owner's Mac (15 of 18, the three failures being the
+Mac baseline above). The checkpoint and the Stats page were screenshotted at
+1400px and 390px wide, which caught two faults before they shipped: By type
+saying "none studied yet" beside a bar of seen cards, and the Stats legend
+breaking into ragged columns on a phone. The live bundle was fetched and
+confirmed to be the new code. The `created_at` column was confirmed on the
+live table, read-only, before the deck loader asked for it.
+
+**Not verified: the live app, signed in, on a real deck.** Signing in needs
+the owner's magic link. And testing on the owner's account is not free: every
+answer is a real FSRS review, and reaching a checkpoint means answering 50
+cards. The options put to the owner were to look without answering (first
+block, Stats, the lesson bar) and watch one real block, or to use a throwaway
+account the owner creates. See the open item.
+
+**Two bugs found while building, not by the plan:**
+- **Entering a lesson could start the block at card 35 of 50.** A full rebuild
+  kept the card on screen by jumping to its position in the new shuffled
+  block, skipping everything before it. Found because the lesson bar test read
+  "about 23" after what should have been a block of 50.
+- **A retry, and Previous card, recorded a second FSRS review** — stage 1's
+  reason for existing, measured against the scheduler before it was fixed.
+
 ---
 
 ## Open items
+
+- **The new serving strategy has not been checked on the live app, signed
+  in.** Everything from 2026-09-12 was tested against the mock and confirmed
+  in the deployed bundle, never on a real account with a real deck. Worth
+  looking at: the first block is 50 or fewer, due cards before new ones; the
+  checkpoint appears after 50 and Continue deals different cards; L'impératif
+  starts at card 1 with "about N of 108 remembered" in its bar; the Stats
+  figures are believable for an 8,700-card deck. Answering cards on the
+  owner's account writes real reviews, so either look without answering or
+  use a throwaway account.
+- **Three browser suites fail on the owner's Mac and pass in the container.**
+  `layout`, `motion` and `reflow` — see *Working protocol*. They measure
+  movement frame by frame and this machine's headless Chrome reports it
+  differently. Until they're adjusted, layout and animation changes made on
+  the Mac have no working check, so measure those by hand in a browser.
 
 - **`^0.x` dependency versions can never update themselves.** The Anthropic
   SDK sat on 0.27.0 (Sept 2024) from the first commit until it was bumped to
@@ -1467,7 +1525,7 @@ No database change is needed for any of it.
   produced it. So there is no true-retention figure across sessions, no
   progress-over-time graph, and no way to re-optimise FSRS parameters against
   this learner's own answers — which is the feature that makes FSRS better
-  than its defaults.
+  than its defaults. It is also why the Stats page has no finish estimates.
 - **The feedback sheet has no Escape handler.** Written when the tutor and the
   lesson notes both closed on Escape and the sheet was the odd one out; since
   2026-09-11 neither of them does, so the *inconsistency* is gone and the case
@@ -1492,9 +1550,12 @@ No database change is needed for any of it.
   `negative`, `pronominal`, `ex1`…`ex8`, `phrase`) and nothing reads it. The
   one place that unpacks a lesson card is `reconcileLessons`
   (`src/lib/lessonSync.js`), which destructures `([f, b, c])` and drops the
-  fourth element on the floor; everywhere else only counts the cards. So the
-  section never reaches the deck at all, and a bar built on it needs that
-  destructure widened and the value carried onto the row first.
+  fourth element on the floor. The section still never reaches a stored row,
+  but it no longer has to: since 2026-09-12 `lessonRank`
+  (`src/data/lessons/index.js`) looks each lesson card up in the lesson's own
+  data by its key, and `teachingOrder` on the lesson already lists the
+  sections in the order they're taught. A per-section bar can read the
+  section the same way, with no change to the row.
 
   The 14 sections group into the four tabs the notes panel already uses, which
   is what would let the bar and the notes share one vocabulary: tapping a chip
@@ -1529,11 +1590,6 @@ No database change is needed for any of it.
   so a three-form table imports as `être → je = "sois"`. It did not bite the
   impératif module because those cards were authored rather than parsed, but it
   will bite the next cahier containing a non-indicative paradigm.
-- **New cards are introduced in random order.** `buildSession` shuffles `fresh`
-  before taking the cap, which is right for a mixed deck and wrong for a taught
-  module — a student can meet `Donne-les-leur` before `Regarde`. Interleaving on
-  review and sequencing on first exposure are not in conflict. Fixed by stage 2
-  of the serving strategy agreed on 2026-09-12 (see History).
 - **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
   hypotheses tested and falsified; see the history in git. Note that the
   *reflow* half of this complaint turned out to be four separate, measurable
