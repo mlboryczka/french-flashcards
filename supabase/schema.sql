@@ -285,7 +285,8 @@ create policy "Admin can delete beta feedback"
   on public.beta_feedback for delete
   using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
 
--- "Mark resolved" is an UPDATE, and needs its own policy for the same reason.
+-- Resolving is an UPDATE. scripts/resolve-feedback.mjs uses the service role;
+-- this policy is for an admin doing it from the app (migration_009).
 create policy "Admin can resolve beta feedback"
   on public.beta_feedback for update
   using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com')

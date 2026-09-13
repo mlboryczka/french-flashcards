@@ -12,10 +12,10 @@
 --   resolved_at  when the feedback was dealt with; null means still open
 --   resolution   what was done about it, in a sentence
 --
--- Both admin views list only rows with resolved_at null, and each entry has a
--- "Mark resolved" button. scripts/resolve-feedback.mjs does the same from a
--- terminal, which is how a fix session clears what it fixed. Resolved rows stay
--- in the table until deleted:
+-- Both admin views list only rows with resolved_at null. Entries are resolved
+-- by scripts/resolve-feedback.mjs, which is how a fix session clears what it
+-- fixed; the app itself is read-only. Resolved rows stay in the table until
+-- deleted:
 --
 --   delete from public.beta_feedback where resolved_at is not null;
 --
@@ -34,8 +34,9 @@ create index if not exists beta_feedback_open_idx
   on public.beta_feedback(created_at desc)
   where resolved_at is null;
 
--- Without an UPDATE policy, "Mark resolved" is silently blocked by RLS:
--- success, zero rows affected, and the entry is back on the next load.
+-- The script uses the service role and does not need this. It is here so an
+-- admin UPDATE from the app is not silently blocked by RLS (success, zero rows
+-- affected) if a resolve button is ever added back.
 drop policy if exists "Admin can resolve beta feedback" on public.beta_feedback;
 create policy "Admin can resolve beta feedback"
   on public.beta_feedback for update

@@ -79,8 +79,9 @@ doing that.
 
 **Feedback is cleared when it is fixed, in the same session.** Once the change
 an entry asked for has landed, mark that entry resolved with a note saying
-what was done: `node scripts/resolve-feedback.mjs <ids> --note "…" --apply`,
-or "Mark resolved" in the admin view. The list is then only ever what is still
+what was done: `node scripts/resolve-feedback.mjs <ids> --note "…" --apply`.
+The script is the only way: the owner does not fix feedback by hand, so the
+feedback log in the app is read-only. The list is then only ever what is still
 waiting. An entry that needs no change (the card was right) is resolved too,
 with the note saying why. Resolving never deletes; the owner clears resolved
 rows when they choose to.
@@ -450,6 +451,7 @@ can never undo 007.
   `beta_feedback`, and the admin UPDATE policy that marking resolved needs.
   Both admin views list only open entries; without this migration they fall
   back to listing everything and say why, rather than showing an empty list.
+  Resolving is done by `scripts/resolve-feedback.mjs`; the app has no button.
   **Search-and-replace the admin email before running it**
 
 **A cautionary tale worth knowing:** the first version of 006 treated the
@@ -1643,9 +1645,32 @@ yet; rows are archived from a script or the SQL editor.
 **Clearing feedback, added the same day.** The owner's rule: the feedback
 list is cleared once the changes are made. `beta_feedback` had no state, so
 the only way off the list was deletion. `migration_009` adds `resolved_at`
-and `resolution`; both admin views now list only open entries and have a
-"Mark resolved" button beside Delete; `scripts/resolve-feedback.mjs` does it
-from a terminal with a note. It is now a step in *Working protocol*. No browser
+and `resolution`; both admin views now list only open entries;
+`scripts/resolve-feedback.mjs` resolves from a terminal with a note. It is
+now a step in *Working protocol*.
+
+**The feedback log became read-only, and was redesigned.** A first version had
+"Mark resolved" beside Delete and Edit card. The owner pointed out none of them
+is theirs to press: feedback goes through a Claude session, which fixes it and
+resolves it. So the entry is information only, mocked up three times with the
+owner before it was built:
+
+- the message as the headline (17px), then sender and time to the minute
+- the attached card as two lines — type and which side was shown, then front
+  and back at 16px, above the 14px of buttons elsewhere in the app
+- a screenshot thumbnail beside the card, **always the card's height** — the
+  image is absolutely positioned so it can never set the row's height (it did,
+  at first, leaving the card box 102px tall around 64px of text)
+- click the thumbnail for the full screenshot; Escape or a click closes it and
+  leaves the log open, which needs `stopPropagation` because a portal's clicks
+  still bubble through the React tree to the log's own overlay
+
+`FeedbackEntry` is shared by both views and carries `data-feedback-entry`,
+`data-feedback-card`, `data-feedback-thumb` and `data-feedback-lightbox`.
+Measured in headless Chromium with a scratch admin build and routed sample
+rows, at 1400px and 390px: card and thumbnail both 64px with the same top,
+every entry's left edge identical, no horizontal overflow. There is still no
+suite for it, for the `VITE_ADMIN_EMAIL` reason above. No browser
 suite covers the admin views — the runner does not set `VITE_ADMIN_EMAIL`, and
 setting it would draw admin menu items under every other suite — so it was
 checked against the live table instead.
@@ -1852,6 +1877,11 @@ the keys beside the panel, and a cut-off stream. Full run on the Mac: 16 of 18,
   `décrire` and `élire` each with a gloss-tagged twin. The feedback pass
   removed the fourteen it tripped over; nothing finds the rest. Archiving
   (`src/lib/archive.js`) is the safe way to take them out once found.
+- **`FeedbackAdminView` is never rendered.** It holds the answer-dispute
+  review and the user feedback list, and nothing in the app mounts it; the
+  profile menu's "View feedback" opens `FeedbackReviewModal` instead. It was
+  kept in step with the modal (both use `FeedbackEntry`) rather than deleted,
+  because the dispute half has no other screen. Wire it up or remove it.
 - **Archiving has no UI.** A card is archived by setting `source` to
   `archived:<source>` from a script or the SQL editor. An "Archive" button next
   to "Delete card" in the edit modal would be the natural home.

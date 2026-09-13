@@ -1779,25 +1779,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         }}
       />
       {showFeedbackModal && (
-        <FeedbackReviewModal
-          onClose={() => setShowFeedbackModal(false)}
-          onEditCard={(item) => {
-            const frontText = item.card_context?.front;
-            if (!frontText) {
-              alert("This feedback has no attached card — nothing to edit.");
-              return;
-            }
-            // Match by lowercased trim (same convention as card_progress joins).
-            const key = String(frontText).toLowerCase().trim();
-            const found = userCards.find(c => String(c.f || "").toLowerCase().trim() === key);
-            if (!found) {
-              alert(`Couldn't find the card "${frontText}" in your deck. It may have been edited or deleted since this feedback was submitted.`);
-              return;
-            }
-            setShowFeedbackModal(false);
-            setEditingCard(found);
-          }}
-        />
+        <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />
       )}
       {showUsersModal && (
         <UsersModal onClose={() => setShowUsersModal(false)} />
@@ -2632,47 +2614,92 @@ export default function FlashcardApp({ user, onSignOut }) {
 }
 
 // ─── EDIT CARD MODAL ─────────────────────────────────────────────────────
-// ─── CARD CONTEXT PREVIEW ─────────────────────────────────────────────────
-// Renders the card snapshot captured with a beta_feedback entry via the
-// "Attach current card" toggle. Used in both FeedbackReviewModal and
-// FeedbackAdminView so admin review shows which card was on screen
-// without needing an actual screenshot.
-function CardContextPreview({ ctx }) {
-  if (!ctx) return null;
-  const type = classifyCard({ cat: ctx.category, f: ctx.front, b: ctx.back });
-  const label = TYPE_LABEL[type];
-  const color = TYPE_COLOR[type];
+// ─── FEEDBACK ENTRY ────────────────────────────────────────────────────────
+// One entry in the feedback log, the same in the "View feedback" modal and on
+// the Feedback Review page. Read-only on purpose: feedback is worked through by
+// a Claude session, which fixes the card or the code and then resolves the
+// entry with scripts/resolve-feedback.mjs. There is nothing for the owner to do
+// by hand, so there are no buttons.
+//
+// Layout: the message is the headline, then who and when (to the minute), then
+// the attached card as two lines beside a screenshot thumbnail stretched to the
+// card's height. The thumbnail is the whole affordance — click it for the full
+// screenshot.
+const FEEDBACK_THUMB_WIDTH = 120;
+
+const feedbackTime = (iso) =>
+  new Date(iso).toLocaleString(undefined, {
+    day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+
+function ScreenshotLightbox({ src, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  // Portalled, but React events still bubble up the component tree — through
+  // the feedback modal's overlay, whose click closes the modal. Stop them here.
+  return createPortal(
+    <div
+      data-feedback-lightbox
+      style={S.fbLightbox}
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+    >
+      <img src={src} alt="Feedback screenshot, full size" style={S.fbLightboxImg} />
+    </div>,
+    document.body
+  );
+}
+
+function FeedbackEntry({ item, last }) {
+  const [zoomed, setZoomed] = useState(false);
+  const ctx = item.card_context;
+  const type = ctx ? classifyCard({ cat: ctx.category, f: ctx.front, b: ctx.back }) : null;
+  const meta = [item.user_email || "anonymous", feedbackTime(item.created_at)];
+  if (!ctx && !item.screenshot) meta.push("no card attached");
+
   return (
-    <div style={{
-      border: "1px solid rgba(3,22,50,0.08)",
-      background: T.color.surfaceLow,
-      borderRadius: T.radius.lg,
-      padding: "10px 12px",
-      marginTop: 8,
-      fontFamily: T.font.sans,
-    }}>
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        marginBottom: 6,
-        fontSize: 10,
-        textTransform: "uppercase",
-        letterSpacing: "0.08em",
-        fontWeight: 600,
-      }}>
-        <span style={{ color }}>{label}</span>
-        <span style={{ opacity: 0.4, color: T.color.onSurfaceVariant }}>·</span>
-        <span style={{ color: T.color.onSurfaceVariant, opacity: 0.7 }}>
-          shown: {ctx.shown_dir === "fr" ? "FR → EN" : "EN → FR"}
-        </span>
-      </div>
-      <div style={{ fontSize: 15, color: T.color.onSurface, marginBottom: 2, fontWeight: 500 }}>
-        {ctx.front}
-      </div>
-      <div style={{ fontSize: 13, color: T.color.onSurfaceVariant }}>
-        {ctx.back}
-      </div>
+    <div data-feedback-entry style={{ ...S.fbEntry, ...(last ? { borderBottom: "none" } : null) }}>
+      <div style={S.fbEntryMsg}>{item.message}</div>
+      <div style={S.fbEntryMeta}>{meta.join(" · ")}</div>
+      {(ctx || item.screenshot) && (
+        <div
+          style={{
+            ...S.fbEntryRow,
+            gridTemplateColumns: ctx && item.screenshot
+              ? `minmax(0, 1fr) ${FEEDBACK_THUMB_WIDTH}px`
+              : ctx ? "minmax(0, 1fr)" : `${FEEDBACK_THUMB_WIDTH}px`,
+          }}
+        >
+          {ctx && (
+            <div data-feedback-card style={S.fbEntryCard}>
+              <div style={S.fbEntryCardLabel}>
+                <span style={{ color: TYPE_COLOR[type] }}>{TYPE_LABEL[type]}</span>
+                {ctx.shown_dir && (
+                  <span> · shown {ctx.shown_dir === "fr" ? "French" : "English"} first</span>
+                )}
+              </div>
+              <div style={S.fbEntryCardText} title={ctx.back ? `${ctx.front} · ${ctx.back}` : ctx.front}>
+                {ctx.front}
+                {ctx.back && <span style={{ color: T.color.onSurfaceVariant }}> · {ctx.back}</span>}
+              </div>
+            </div>
+          )}
+          {item.screenshot && (
+            <button
+              type="button"
+              data-feedback-thumb
+              title="View full size"
+              onClick={() => setZoomed(true)}
+              style={{ ...S.fbEntryThumb, ...(ctx ? null : { height: 72 }) }}
+            >
+              <img src={item.screenshot} alt="Feedback screenshot" style={S.fbEntryThumbImg} />
+            </button>
+          )}
+        </div>
+      )}
+      {zoomed && <ScreenshotLightbox src={item.screenshot} onClose={() => setZoomed(false)} />}
     </div>
   );
 }
@@ -2680,8 +2707,8 @@ function CardContextPreview({ ctx }) {
 // ─── FEEDBACK REVIEW MODAL (admin only) ───────────────────────────────────
 // ─── OPEN FEEDBACK ─────────────────────────────────────────────────────────
 // Feedback that has been dealt with is marked resolved rather than deleted, and
-// leaves the list. Both admin views read through these two, so they cannot
-// disagree about what "open" means. See migration_009.
+// leaves the list. Both admin views read through this, so they cannot disagree
+// about what "open" means. See migration_009.
 //
 // A database without migration_009 has no resolved_at column. Rather than show
 // an empty list — indistinguishable from "nothing waiting", which is exactly how
@@ -2698,27 +2725,12 @@ async function loadOpenFeedback() {
   return { data: open.data || [], error: open.error, resolvable: true };
 }
 
-// Returns an error message, or null. Chains .select() for the same reason the
-// delete does: RLS blocking an UPDATE is success with zero rows affected.
-async function resolveFeedback(id) {
-  const { data, error } = await supabase
-    .from("beta_feedback")
-    .update({ resolved_at: new Date().toISOString() })
-    .eq("id", id)
-    .select("id");
-  if (error) return error.message;
-  if (!data || data.length === 0) {
-    return "Blocked by the database (0 rows affected). Run migration_009 in the Supabase SQL editor — it adds the admin UPDATE policy.";
-  }
-  return null;
-}
-
 const NEEDS_MIGRATION_009 =
-  "Showing everything: this database can't mark feedback resolved yet. Run migrations/migration_009_beta_feedback_resolved.sql in the Supabase SQL editor.";
+  "Showing resolved feedback too: this database has no resolved_at column yet. Run migrations/migration_009_beta_feedback_resolved.sql in the Supabase SQL editor.";
 
 // Shows open beta_feedback entries in a portal overlay. Triggered from the
 // profile dropdown → "View feedback".
-function FeedbackReviewModal({ onClose, onEditCard }) {
+function FeedbackReviewModal({ onClose }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [resolvable, setResolvable] = useState(true);
@@ -2733,69 +2745,24 @@ function FeedbackReviewModal({ onClose, onEditCard }) {
     })();
   }, []);
 
-  const resolve = async (id) => {
-    const problem = await resolveFeedback(id);
-    if (problem) { alert(`Couldn't mark resolved: ${problem}`); return; }
-    setItems(prev => prev.filter(i => i.id !== id));
-  };
-
-  const dismiss = async (id) => {
-    if (!confirm("Delete this feedback? This can't be undone.")) return;
-    // Chain .select() so PostgREST returns the deleted rows — this lets us
-    // detect RLS silent failures (delete blocked by policy returns success
-    // with zero rows affected, no error) that would otherwise make the row
-    // disappear from the UI but stay in the DB, reappearing on refresh.
-    const { data, error } = await supabase
-      .from("beta_feedback")
-      .delete()
-      .eq("id", id)
-      .select();
-    if (error) {
-      alert(`Couldn't delete: ${error.message}`);
-      return;
-    }
-    if (!data || data.length === 0) {
-      alert("Delete was blocked by the database (0 rows affected). The beta_feedback table is missing an admin DELETE RLS policy — run the migration in Supabase SQL editor to fix it.");
-      return;
-    }
-    setItems(prev => prev.filter(i => i.id !== id));
-  };
-
   return createPortal(
     <div style={S.feedbackModalOverlay} onClick={onClose}>
-      <div style={S.feedbackModalBox} onClick={e => e.stopPropagation()}>
-        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20}}>
-          <h2 style={{margin:0, fontSize:24, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary}}>User feedback</h2>
-          <button style={{background:"none", border:"none", fontSize:24, cursor:"pointer", color:T.color.onSurfaceVariant, padding:"0 4px"}} onClick={onClose}>×</button>
+      <div data-feedback-log style={S.feedbackModalBox} onClick={e => e.stopPropagation()}>
+        <div style={S.fbLogHeader}>
+          <h2 style={S.fbLogTitle}>Feedback</h2>
+          {!loading && <span style={S.fbLogCount}>{items.length} open</span>}
+          <span style={{ flex: 1 }} />
+          <button aria-label="Close" style={S.fbLogClose} onClick={onClose}>×</button>
         </div>
+        {!resolvable && <div style={S.fbLogNote}>{NEEDS_MIGRATION_009}</div>}
         {loading ? (
-          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>Loading…</div>
+          <div style={S.fbLogEmpty}>Loading…</div>
         ) : items.length === 0 ? (
-          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>No open feedback.</div>
+          <div style={S.fbLogEmpty}>No open feedback.</div>
         ) : (
-          <div style={{display:"flex", flexDirection:"column", gap:12, maxHeight:"60vh", overflowY:"auto"}}>
-            {!resolvable && <div style={S.fbItemDate}>{NEEDS_MIGRATION_009}</div>}
-            {items.map(item => (
-              <div key={item.id} style={S.fbItem}>
-                <div style={S.fbItemHeader}>
-                  <span style={S.fbItemEmail}>{item.user_email || "anonymous"}</span>
-                  <span style={S.fbItemDate}>{new Date(item.created_at).toLocaleDateString()}</span>
-                </div>
-                <div style={S.fbItemMsg}>{item.message}</div>
-                {item.card_context && <CardContextPreview ctx={item.card_context} />}
-                {item.screenshot && (
-                  <img src={item.screenshot} alt="Screenshot" style={S.fbItemImg} />
-                )}
-                <div style={{display:"flex", gap:8}}>
-                  {item.card_context && onEditCard && (
-                    <button style={S.fbItemDismiss} onClick={() => onEditCard(item)}>Edit card</button>
-                  )}
-                  {resolvable && (
-                    <button style={S.fbItemDismiss} onClick={() => resolve(item.id)}>Mark resolved</button>
-                  )}
-                  <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Delete</button>
-                </div>
-              </div>
+          <div style={S.fbLogList}>
+            {items.map((item, i) => (
+              <FeedbackEntry key={item.id} item={item} last={i === items.length - 1} />
             ))}
           </div>
         )}
@@ -3093,18 +3060,6 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
     setActing(null);
   };
 
-  const resolveBetaItem = async (id) => {
-    const problem = await resolveFeedback(id);
-    if (problem) { alert(`Couldn't mark resolved: ${problem}`); return; }
-    setBetaItems(prev => prev.filter(i => i.id !== id));
-  };
-
-  const deleteBetaItem = async (id) => {
-    const { error } = await supabase.from("beta_feedback").delete().eq("id", id);
-    if (error) console.error("Delete failed:", error);
-    else setBetaItems(prev => prev.filter(i => i.id !== id));
-  };
-
   return (
     <>
       <h1 style={S.statsHeading}>Feedback Review</h1>
@@ -3171,25 +3126,9 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
       {betaItems.length === 0 ? (
         <p style={S.statsSectionSub}>No open user feedback.</p>
       ) : (
-        <div style={S.feedbackList}>
-          {betaItems.map(item => (
-            <div key={item.id} style={S.betaFeedbackItem}>
-              <div style={S.betaFeedbackHeader}>
-                <span style={S.betaFeedbackEmail}>{item.user_email || "anonymous"}</span>
-                <span style={S.feedbackDate}>{new Date(item.created_at).toLocaleDateString()}</span>
-              </div>
-              <div style={S.betaFeedbackMsg}>{item.message}</div>
-              {item.card_context && <CardContextPreview ctx={item.card_context} />}
-              {item.screenshot && (
-                <img src={item.screenshot} alt="Screenshot" style={S.betaFeedbackImg} />
-              )}
-              <div style={{display:"flex", gap:8}}>
-                {betaResolvable && (
-                  <button style={S.betaFeedbackDel} onClick={() => resolveBetaItem(item.id)}>Mark resolved</button>
-                )}
-                <button style={S.betaFeedbackDel} onClick={() => deleteBetaItem(item.id)}>Delete</button>
-              </div>
-            </div>
+        <div data-feedback-log style={S.fbLogPage}>
+          {betaItems.map((item, i) => (
+            <FeedbackEntry key={item.id} item={item} last={i === betaItems.length - 1} />
           ))}
         </div>
       )}
@@ -3922,22 +3861,30 @@ const S = {
   feedbackApprove: { flex:1, padding:12, background:T.gradient.ink, color:T.color.onPrimary, border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:T.font.sans, boxShadow:T.shadow.button },
   feedbackReject: { flex:1, padding:12, background:T.color.surfaceHigh, border:"none", color:T.color.onSurfaceVariant, borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontFamily:T.font.sans, fontWeight:500 },
   // Beta feedback (general user feedback)
-  betaFeedbackItem: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card },
-  betaFeedbackHeader: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 },
-  betaFeedbackEmail: { fontSize:12, fontFamily:T.font.sans, fontWeight:600, color:T.color.primary },
-  betaFeedbackMsg: { fontSize:14, fontFamily:T.font.sans, color:T.color.onSurface, lineHeight:1.6, marginBottom:12 },
-  betaFeedbackImg: { maxWidth:"100%", maxHeight:300, borderRadius:T.radius.lg, marginBottom:12, objectFit:"contain" },
-  betaFeedbackDel: { padding:"6px 14px", background:"transparent", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurfaceVariant },
+  // Feedback log (shared by the modal and the Feedback Review page)
+  fbLogHeader: { display:"flex", alignItems:"center", gap:10, paddingBottom:14, borderBottom:"1px solid rgba(3,22,50,0.08)" },
+  fbLogTitle: { margin:0, fontSize:24, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary },
+  fbLogCount: { fontSize:12, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurfaceVariant, background:T.color.surfaceLow, padding:"3px 10px", borderRadius:T.radius.md },
+  fbLogClose: { background:"none", border:"none", fontSize:24, lineHeight:1, cursor:"pointer", color:T.color.onSurfaceVariant, padding:"0 4px" },
+  fbLogNote: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, padding:"12px 0 0" },
+  fbLogEmpty: { textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontSize:14 },
+  fbLogList: { overflowY:"auto", minHeight:0 },
+  fbLogPage: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"4px 24px", boxShadow:T.shadow.card },
+  fbEntry: { padding:"16px 0", borderBottom:"1px solid rgba(3,22,50,0.08)", fontFamily:T.font.sans },
+  fbEntryMsg: { fontSize:17, lineHeight:1.5, color:T.color.onSurface, whiteSpace:"pre-wrap", overflowWrap:"anywhere" },
+  fbEntryMeta: { fontSize:13, color:T.color.onSurfaceVariant, marginTop:2 },
+  fbEntryRow: { display:"grid", gap:12, alignItems:"stretch", marginTop:12 },
+  fbEntryCard: { background:T.color.surfaceLow, borderRadius:T.radius.md, padding:"10px 12px", minWidth:0 },
+  fbEntryCardLabel: { fontSize:13, color:T.color.onSurfaceVariant, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" },
+  fbEntryCardText: { fontSize:16, lineHeight:1.5, color:T.color.onSurface, marginTop:2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" },
+  fbEntryThumb: { display:"block", position:"relative", padding:0, border:"1px solid rgba(3,22,50,0.08)", borderRadius:T.radius.md, background:T.color.surfaceLow, overflow:"hidden", cursor:"zoom-in", minHeight:64 },
+  // Absolute, so the image never sets the row height: the thumbnail follows the card beside it.
+  fbEntryThumbImg: { position:"absolute", inset:0, display:"block", width:"100%", height:"100%", objectFit:"cover", objectPosition:"center top" },
+  fbLightbox: { position:"fixed", inset:0, background:"rgba(3,22,50,0.72)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:24, cursor:"zoom-out" },
+  fbLightboxImg: { maxWidth:"100%", maxHeight:"100%", borderRadius:T.radius.lg, boxShadow:"0 32px 96px rgba(0,0,0,0.35)" },
   // Feedback review modal
   feedbackModalOverlay: { position:"fixed", inset:0, background:"rgba(3,22,50,0.4)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:16 },
-  feedbackModalBox: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, maxWidth:600, width:"100%", padding:"32px 36px", boxShadow:"0 32px 96px rgba(3,22,50,0.18)", fontFamily:T.font.sans, maxHeight:"80vh", overflow:"hidden", display:"flex", flexDirection:"column" },
-  fbItem: { background:T.color.surfaceLow, borderRadius:T.radius.lg, padding:"16px 20px" },
-  fbItemHeader: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 },
-  fbItemEmail: { fontSize:12, fontWeight:600, color:T.color.primary, fontFamily:T.font.sans },
-  fbItemDate: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
-  fbItemMsg: { fontSize:14, fontFamily:T.font.sans, color:T.color.onSurface, lineHeight:1.6, marginBottom:10 },
-  fbItemImg: { maxWidth:"100%", maxHeight:240, borderRadius:T.radius.md, marginBottom:10, objectFit:"contain" },
-  fbItemDismiss: { padding:"5px 12px", background:"transparent", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, fontFamily:T.font.sans, fontWeight:500, color:T.color.onSurfaceVariant },
+  feedbackModalBox: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, maxWidth:600, width:"100%", padding:"24px 28px 8px", boxShadow:"0 32px 96px rgba(3,22,50,0.18)", fontFamily:T.font.sans, maxHeight:"80vh", overflow:"hidden", display:"flex", flexDirection:"column" },
   // Users table
   usersTable: { width:"100%", borderCollapse:"collapse", fontFamily:T.font.sans, fontSize:13 },
   usersTh: { textAlign:"left", padding:"10px 12px", fontSize:10, fontWeight:700, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.08em", borderBottom:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}` },
