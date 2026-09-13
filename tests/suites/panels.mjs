@@ -93,7 +93,7 @@ const fieldH = await page.evaluate(() => {
   const t = document.querySelector("[data-feedback-field]");
   return t ? Math.round(t.getBoundingClientRect().height) : 0;
 });
-ck("the message field starts with room for a few sentences", fieldH >= 100, `${fieldH}px`);
+ck("the message box starts tall — about eight lines", fieldH >= 175, `${fieldH}px`);
 // By its marker, not by guessing at whatever French happens to be on the card.
 const attach = await page.evaluate(() => {
   const b = document.querySelector("[data-attach-card]");
@@ -276,7 +276,7 @@ await browser.close();
   console.log("\n  what you do inside the panel doesn't move the page");
   const before = await sidebarGeometry(p);
   const cardBefore = await cardBox(p);
-  await p.keyboard.type("\nline two\nline three\nline four\nline five");
+  await p.keyboard.type([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => `\nline ${n}`).join(""));
   await p.evaluate(() => {
     const dt = new DataTransfer();
     dt.items.add(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" }));
@@ -287,7 +287,7 @@ await browser.close();
   const grown = await sidebarGeometry(p);
   const cardAfter = await cardBox(p);
   // Guard the guard: if the panel didn't grow, the next checks prove nothing.
-  ck("the panel grew with five lines and a screenshot", grown.panel.bottom - grown.panel.top > before.panel.bottom - before.panel.top,
+  ck("the panel grew with twelve lines and a screenshot", grown.panel.bottom - grown.panel.top > before.panel.bottom - before.panel.top,
     `${before.panel.bottom - before.panel.top} → ${grown.panel.bottom - grown.panel.top}`);
   ck("the card held still", cardAfter.top === cardBefore.top && cardAfter.height === cardBefore.height,
     `${cardBefore.height}@${cardBefore.top} → ${cardAfter.height}@${cardAfter.top}`);

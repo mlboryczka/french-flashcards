@@ -119,7 +119,7 @@ export function BetaFeedback({
   // rather than parking it to reappear when the panel closes.
   useEffect(() => { if (open) setToast(null); }, [open]);
 
-  // Five lines at rest, growing with the content. The panel is only as wide
+  // About eight lines at rest (the box is 180px), growing with the content. The panel is only as wide
   // as the sidebar, so one line holds about four words. An attached screenshot
   // takes the bottom of the same box, so the text's floor drops by the
   // thumbnail's height and the box stays the size it was. On a short window
@@ -129,8 +129,8 @@ export function BetaFeedback({
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    const floor = screenshot ? 52 : 92;
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, floor), 150)}px`;
+    const floor = screenshot ? 120 : 160;
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, floor), 240)}px`;
   }, [message, mounted, screenshot]);
 
   // Reopening onto a saved draft puts the caret at the end of it, where you
@@ -661,7 +661,7 @@ const BF = {
     display: "block",
     width: "100%",
     minHeight: 36,
-    maxHeight: 150,
+    maxHeight: 240,
     padding: 0,
     margin: 0,
     fontSize: 12.5,

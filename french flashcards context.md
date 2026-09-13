@@ -544,7 +544,9 @@ of these were "fixed" against an assumption and shipped broken.
   — a subtitle, a 90px textarea, a full-width attach row, a full-width dashed
   dropzone and a footer, for what is really one text field. `max-height` is
   `min(300px, 38vh)` as a backstop, not the usual case. *(The sidebar panel is
-  ~210px and three rows: a 13.5px title with the ✕; the message box; one
+  ~278px and three rows: a 13.5px title with the ✕; the message box (180px,
+  about eight lines — the owner asked for it taller, and the streamlining pass
+  had quietly cut it back to 112px); one
   action row — "Attach card" checkbox on the left, paperclip and Send on the
   right, all 30px. The title, message box and checkbox share a left edge; the
   message box, Send and the ✕'s glyph share a right edge (`panels` checks both
