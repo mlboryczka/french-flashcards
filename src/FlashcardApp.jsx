@@ -2625,6 +2625,12 @@ export default function FlashcardApp({ user, onSignOut }) {
 // the attached card as two lines beside a screenshot thumbnail stretched to the
 // card's height. The thumbnail is the whole affordance — click it for the full
 // screenshot.
+//
+// Entries are numbered 1, 2, 3 down the list as it stands: open feedback only,
+// newest first. That is the number the owner quotes to a Claude session ("fix
+// feedback 2"), and scripts/resolve-feedback.mjs lists open feedback with the
+// same numbers in the same order. They are positions, not ids, so they change
+// as entries arrive or are resolved.
 const FEEDBACK_THUMB_WIDTH = 120;
 
 const feedbackTime = (iso) =>
@@ -2652,7 +2658,7 @@ function ScreenshotLightbox({ src, onClose }) {
   );
 }
 
-function FeedbackEntry({ item, last }) {
+function FeedbackEntry({ item, number, last }) {
   const [zoomed, setZoomed] = useState(false);
   const ctx = item.card_context;
   const type = ctx ? classifyCard({ cat: ctx.category, f: ctx.front, b: ctx.back }) : null;
@@ -2661,6 +2667,8 @@ function FeedbackEntry({ item, last }) {
 
   return (
     <div data-feedback-entry style={{ ...S.fbEntry, ...(last ? { borderBottom: "none" } : null) }}>
+      <div data-feedback-number style={S.fbEntryNumber}>{number}</div>
+      <div style={{ minWidth: 0 }}>
       <div style={S.fbEntryMsg}>{item.message}</div>
       <div style={S.fbEntryMeta}>{meta.join(" · ")}</div>
       {(ctx || item.screenshot) && (
@@ -2699,6 +2707,7 @@ function FeedbackEntry({ item, last }) {
           )}
         </div>
       )}
+      </div>
       {zoomed && <ScreenshotLightbox src={item.screenshot} onClose={() => setZoomed(false)} />}
     </div>
   );
@@ -2762,7 +2771,7 @@ function FeedbackReviewModal({ onClose }) {
         ) : (
           <div style={S.fbLogList}>
             {items.map((item, i) => (
-              <FeedbackEntry key={item.id} item={item} last={i === items.length - 1} />
+              <FeedbackEntry key={item.id} item={item} number={i + 1} last={i === items.length - 1} />
             ))}
           </div>
         )}
@@ -3128,7 +3137,7 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
       ) : (
         <div data-feedback-log style={S.fbLogPage}>
           {betaItems.map((item, i) => (
-            <FeedbackEntry key={item.id} item={item} last={i === betaItems.length - 1} />
+            <FeedbackEntry key={item.id} item={item} number={i + 1} last={i === betaItems.length - 1} />
           ))}
         </div>
       )}
@@ -3870,7 +3879,9 @@ const S = {
   fbLogEmpty: { textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontSize:14 },
   fbLogList: { overflowY:"auto", minHeight:0 },
   fbLogPage: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"4px 24px", boxShadow:T.shadow.card },
-  fbEntry: { padding:"16px 0", borderBottom:"1px solid rgba(3,22,50,0.08)", fontFamily:T.font.sans },
+  fbEntry: { display:"grid", gridTemplateColumns:"32px minmax(0, 1fr)", columnGap:12, padding:"16px 0", borderBottom:"1px solid rgba(3,22,50,0.08)", fontFamily:T.font.sans },
+  // Same line height as the message, so the number sits on its first line.
+  fbEntryNumber: { fontSize:15, fontWeight:600, lineHeight:"25.5px", color:T.color.onSurfaceVariant, fontVariantNumeric:"tabular-nums" },
   fbEntryMsg: { fontSize:17, lineHeight:1.5, color:T.color.onSurface, whiteSpace:"pre-wrap", overflowWrap:"anywhere" },
   fbEntryMeta: { fontSize:13, color:T.color.onSurfaceVariant, marginTop:2 },
   fbEntryRow: { display:"grid", gap:12, alignItems:"stretch", marginTop:12 },

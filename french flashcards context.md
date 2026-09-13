@@ -1665,6 +1665,14 @@ owner before it was built:
   leaves the log open, which needs `stopPropagation` because a portal's clicks
   still bubble through the React tree to the log's own overlay
 
+Entries are **numbered 1, 2, 3 down the open list, newest first** — the owner's
+choice, so the numbers count what is still waiting and nothing else. That is
+the number quoted to a Claude session ("fix feedback 2"), and
+`scripts/resolve-feedback.mjs` lists open feedback with the same numbers in
+the same order, beside each entry's id. The numbers are positions and shift
+as entries arrive or are resolved; resolve by id, after checking the message
+matches.
+
 `FeedbackEntry` is shared by both views and carries `data-feedback-entry`,
 `data-feedback-card`, `data-feedback-thumb` and `data-feedback-lightbox`.
 Measured in headless Chromium with a scratch admin build and routed sample

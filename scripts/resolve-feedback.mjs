@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Clear feedback off the admin list once it has been dealt with.
 //
-//   node scripts/resolve-feedback.mjs                               # list what is open
+//   node scripts/resolve-feedback.mjs                               # list what is open, numbered as in the app
 //   node scripts/resolve-feedback.mjs 24 25 --note "..."            # show what would be resolved
 //   node scripts/resolve-feedback.mjs 24 25 --note "..." --apply    # and resolve it
 //   node scripts/resolve-feedback.mjs --all --note "..." --apply    # every open entry
@@ -13,6 +13,11 @@
 // This is the last step of working through feedback. Fix the card or the
 // code, then resolve the entries that fix answers, with a note saying what
 // was done — so the list only ever holds what is still waiting.
+//
+// The list is numbered 1, 2, 3 newest first, exactly as the app's feedback log
+// numbers it, so "feedback 2" means the same entry here and on screen. Those
+// numbers are positions and shift as entries come and go; resolving takes the
+// entry's id (shown as #id), which never changes.
 //
 // Needs migration_009. Without it the script says so and writes nothing.
 //
@@ -67,7 +72,7 @@ const db = async (p, init = {}) => {
 let open;
 try {
   open = await db(
-    "beta_feedback?select=id,user_email,message,card_context,created_at&resolved_at=is.null&order=created_at.asc"
+    "beta_feedback?select=id,user_email,message,card_context,created_at&resolved_at=is.null&order=created_at.desc"
   );
 } catch (e) {
   if (/resolved_at/.test(e.message)) {
@@ -79,9 +84,10 @@ try {
   throw e;
 }
 
+const numberOf = new Map(open.map((r, i) => [r.id, i + 1]));
 const line = (r) => {
   const card = r.card_context?.front ? `  [${r.card_context.front}]` : "";
-  return `  #${r.id}  ${r.created_at.slice(0, 10)}  ${r.message}${card}`;
+  return `  ${String(numberOf.get(r.id)).padStart(2)}.  #${r.id}  ${r.created_at.slice(0, 16).replace("T", " ")}  ${r.message}${card}`;
 };
 
 if (!ALL && IDS.length === 0) {
