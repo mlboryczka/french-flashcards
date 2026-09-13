@@ -1624,6 +1624,11 @@ suite covers the admin views — the runner does not set `VITE_ADMIN_EMAIL`, and
 setting it would draw admin menu items under every other suite — so it was
 checked against the live table instead.
 
+The owner ran migration_009 and the script then resolved all twelve entries,
+each with a note saying what was done (#21 and #28 needed no change and say
+why). A thirteenth, #33 "test", arrived during the session from the feedback
+panel work and was left open: resolving is for what has been dealt with.
+
 **How this was carried out, since it will happen again.** The work was done in a
 session worktree and moved into the local copy by fast-forward. Mid-session a
 second session committed and pushed five commits to `main` from the local
