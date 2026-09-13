@@ -556,7 +556,11 @@ of these were "fixed" against an assumption and shipped broken.
   fit on the action row at sidebar width; the tooltip names the card. The
   paperclip follows message composers (Slack, Gmail, Linear, ChatGPT): no
   label, a tooltip, paste and drop working silently. No "⌘↵ to send" hint — the
-  shortcut stays. Mocked at real size before it was built.)*
+  shortcut stays. Mocked at real size before it was built. Anything counts as
+  sendable — a word, or only a screenshot: a five-character minimum refused
+  "test" with a screenshot attached and said "Write a few words first" to
+  someone who had. A truly empty send outlines the message box in red and
+  changes its placeholder, rather than adding an error row.)*
 - **The whole sheet is the drop and paste target**, which is what let the
   dedicated dropzone go. Dragging over it outlines the entire panel; the
   Screenshot chip is the click-to-browse affordance.

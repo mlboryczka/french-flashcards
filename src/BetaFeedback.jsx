@@ -43,7 +43,6 @@ import { PANEL_EASING } from "./lib/motion";
 // card_context column. Screenshot upload still works as before
 // (requires the `screenshot` column from the earlier migration).
 
-const MIN_LENGTH = 5;
 const TOAST_MS = 5000;
 // Short: the panel moves nothing but itself, so it has no page movement to
 // keep pace with. The curve is the app's panel curve so it still feels like
@@ -98,6 +97,9 @@ export function BetaFeedback({
   const [screenshotName, setScreenshotName] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [focused, setFocused] = useState(false);
+  // Send pressed with nothing to send. Flagged on the message box itself
+  // rather than as an error row, which made the panel taller.
+  const [needsText, setNeedsText] = useState(false);
   // { kind: "sent" | "failed", id } — the outcome of a send.
   const [toast, setToast] = useState(null);
   // Attach-card toggle: default ON when a card is provided, OFF otherwise.
@@ -117,7 +119,7 @@ export function BetaFeedback({
   useEffect(() => { openRef.current = open; }, [open]);
   // The toast and the panel share a spot; opening the panel retires the toast
   // rather than parking it to reappear when the panel closes.
-  useEffect(() => { if (open) setToast(null); }, [open]);
+  useEffect(() => { if (open) setToast(null); else setNeedsText(false); }, [open]);
 
   // About eight lines at rest (the box is 180px), growing with the content. The panel is only as wide
   // as the sidebar, so one line holds about four words. An attached screenshot
@@ -179,6 +181,7 @@ export function BetaFeedback({
     try {
       const dataUrl = await fileToBase64(file);
       setScreenshot(dataUrl);
+      setNeedsText(false);
       setScreenshotName(file.name || "screenshot");
       setError("");
     } catch (e) {
@@ -236,8 +239,11 @@ export function BetaFeedback({
 
   async function handleSubmit() {
     if (submitting) return;
-    if (trimmed.length < MIN_LENGTH) {
-      setError("Write a few words first.");
+    // Anything counts: a word, or just a screenshot. There used to be a
+    // five-character minimum, which refused "test" with a screenshot attached
+    // and told someone who had written something to write something.
+    if (!hasDraft) {
+      setNeedsText(true);
       textareaRef.current?.focus();
       return;
     }
@@ -370,7 +376,8 @@ export function BetaFeedback({
               empty part puts the caret in the text. */}
           <div
             data-feedback-field
-            style={{ ...BF.field, ...(focused ? BF.fieldFocus : null) }}
+            data-invalid={needsText || undefined}
+            style={{ ...BF.field, ...(focused ? BF.fieldFocus : null), ...(needsText ? BF.fieldInvalid : null) }}
             onMouseDown={(e) => {
               if (e.target === e.currentTarget) { e.preventDefault(); textareaRef.current?.focus(); }
             }}
@@ -379,13 +386,13 @@ export function BetaFeedback({
               ref={textareaRef}
               style={BF.textarea}
               value={message}
-              onChange={(e) => { setMessage(e.target.value); if (error) setError(""); }}
+              onChange={(e) => { setMessage(e.target.value); if (error) setError(""); setNeedsText(false); }}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit(); }
               }}
-              placeholder={isDragging ? "Drop the image anywhere here" : "Wrong translation, bad audio, a bug…"}
+              placeholder={isDragging ? "Drop the image anywhere here" : needsText ? "Write something, or attach a screenshot" : "Wrong translation, bad audio, a bug…"}
               aria-label="Your feedback"
               disabled={submitting}
               rows={3}
@@ -657,6 +664,7 @@ const BF = {
     transition: "background 0.15s, border-color 0.15s",
   },
   fieldFocus: { background: T.color.surfaceLowest, borderColor: "rgba(3,22,50,0.18)" },
+  fieldInvalid: { borderColor: T.color.error },
   textarea: {
     display: "block",
     width: "100%",

@@ -331,17 +331,30 @@ await browser.close();
     (await field()) === "" && !(await p.evaluate(() => !!document.querySelector('[data-feedback-sheet] img[alt="Attached"]')))
   );
 
-  console.log("\n  too short, or a failed send, keeps you where you are");
-  await p.keyboard.type("ok");
+  console.log("\n  an empty send is refused on the box; a short one goes through");
   await p.keyboard.press("Control+Enter");
   await p.waitForTimeout(400);
-  ck("a two-letter note isn't sent", posts.length === 1 && (await sheetOpen()), `${posts.length} rows`);
-  ck("and the panel says why", await p.evaluate(() => !!document.querySelector('[data-feedback-sheet] [role="alert"]')));
+  const empty = await p.evaluate(() => ({
+    flagged: document.querySelector("[data-feedback-field]")?.hasAttribute("data-invalid"),
+    alertRow: !!document.querySelector('[data-feedback-sheet] [role="alert"]'),
+  }));
+  ck("an empty note isn't sent", posts.length === 1 && (await sheetOpen()), `${posts.length} rows`);
+  ck("the message box is flagged instead", empty.flagged === true, JSON.stringify(empty));
+  ck("without an error row making the panel taller", empty.alertRow === false, JSON.stringify(empty));
+  // The owner's report: "test", with a screenshot attached, was refused with
+  // "Write a few words first."
+  await p.keyboard.type("test");
+  ck("typing clears the flag", !(await p.evaluate(() => document.querySelector("[data-feedback-field]").hasAttribute("data-invalid"))));
+  await p.click('[data-feedback-sheet] button:text-is("Send")');
+  await p.waitForTimeout(900);
+  ck("a one-word note is sent", posts.length === 2 && posts[1]?.message === "test" && !(await sheetOpen()), `${posts.length} rows, ${JSON.stringify(posts[1]?.message)}`);
+  await openSheet();
 
+  console.log("\n  a failed send keeps you where you are");
+  await p.keyboard.type("ok — the audio is missing");
   await p.route("**/rest/v1/beta_feedback**", (r) =>
     r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "boom" }) })
   );
-  await p.keyboard.type(" — the audio is missing");
   await p.click('[data-feedback-sheet] button:text-is("Send")');
   await p.waitForTimeout(900);
   ck("a failed send leaves the panel open", await sheetOpen());
