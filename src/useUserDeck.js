@@ -82,6 +82,40 @@ export function clearDeckCache(userId) {
   }
 }
 
+// One user_cards row, as the app uses it. Shared by the load and by add(), so
+// a card added from the tutor has exactly the shape of one fetched.
+function shapeRow(row) {
+  return {
+    f: row.front,
+    b: row.back,
+    cat: CAT_DB_TO_UI[row.category] || "vocab",
+    dates: Array.isArray(row.dates) ? row.dates : [],
+    freq: Array.isArray(row.dates) ? row.dates.length : 0,
+    id: row.front.toLowerCase().trim(),
+    row_id: row.id,
+    flagged: row.flagged_for_review === true,
+    // Null for legacy cards that predate the upload-batches migration.
+    batch_id: row.batch_id || null,
+    // Where the card came from: "cahier-upload", "tutor-chat", or
+    // "lesson:<id>" for a card added from the Lessons catalogue.
+    source: row.source || null,
+    // When the card was added. Only read for tutor chat cards, which
+    // came up in no class and are dated by this instead.
+    created_at: row.created_at || null,
+    // FSRS scheduling state (migration_006). Nulls are legitimate:
+    // a never-reviewed card has no stability and no last review.
+    next_due_at: row.next_due_at || null,
+    lapses: row.lapses ?? 0,
+    stability: row.stability ?? null,
+    difficulty: row.difficulty ?? null,
+    fsrs_state: row.fsrs_state ?? 0,
+    reps: row.reps ?? 0,
+    last_review: row.last_review || null,
+    // null = unknown (pre-FSRS row); false = missed on the last attempt.
+    last_answer_correct: row.last_answer_correct ?? null,
+  };
+}
+
 export function useUserDeck(user) {
   // Depend on the ID, not the object. supabase-js hands back a NEW user object
   // every time it refreshes the token — roughly hourly — and keying the effect
@@ -164,35 +198,7 @@ export function useUserDeck(user) {
       if (cancelled) return;
       // Archived cards are out of circulation: not studied, listed or counted.
       // See lib/archive.js.
-      const shaped = allRows.filter((row) => !isArchived(row)).map((row) => ({
-          f: row.front,
-          b: row.back,
-          cat: CAT_DB_TO_UI[row.category] || "vocab",
-          dates: Array.isArray(row.dates) ? row.dates : [],
-          freq: Array.isArray(row.dates) ? row.dates.length : 0,
-          id: row.front.toLowerCase().trim(),
-          row_id: row.id,
-          flagged: row.flagged_for_review === true,
-          // Null for legacy cards that predate the upload-batches migration.
-          batch_id: row.batch_id || null,
-          // Where the card came from: "cahier-upload", "tutor-chat", or
-          // "lesson:<id>" for a card added from the Lessons catalogue.
-          source: row.source || null,
-          // When the card was added. Only read for tutor chat cards, which
-          // came up in no class and are dated by this instead.
-          created_at: row.created_at || null,
-          // FSRS scheduling state (migration_006). Nulls are legitimate:
-          // a never-reviewed card has no stability and no last review.
-          next_due_at: row.next_due_at || null,
-          lapses: row.lapses ?? 0,
-          stability: row.stability ?? null,
-          difficulty: row.difficulty ?? null,
-          fsrs_state: row.fsrs_state ?? 0,
-          reps: row.reps ?? 0,
-          last_review: row.last_review || null,
-          // null = unknown (pre-FSRS row); false = missed on the last attempt.
-          last_answer_correct: row.last_answer_correct ?? null,
-        }));
+      const shaped = allRows.filter((row) => !isArchived(row)).map(shapeRow);
         // Sort by frequency desc to match legacy buildDeck ordering
         shaped.sort((a, b) => b.freq - a.freq);
         setCards(shaped);
@@ -221,5 +227,17 @@ export function useUserDeck(user) {
     setCards((prev) => prev.map((c) => (c.row_id === rowId ? { ...c, ...fields } : c)));
   }, []);
 
-  return { cards, loaded, reload, patch };
+  // Add one card the app has just written, without refetching.
+  //
+  // Adding a card from the tutor used to refetch the entire deck — thousands of
+  // rows per click — and a refetch mid-session can return a just-answered card
+  // with its old state (see patch). The insert returns the row; this puts it in
+  // the deck the way the load would have. A row already present is replaced.
+  const add = useCallback((row) => {
+    if (!row || row.id == null || isArchived(row)) return;
+    const card = shapeRow(row);
+    setCards((prev) => [...prev.filter((c) => c.row_id !== card.row_id), card]);
+  }, []);
+
+  return { cards, loaded, reload, patch, add };
 }

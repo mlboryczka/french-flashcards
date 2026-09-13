@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 import { createPortal } from "react-dom";
 import { supabase } from "./supabase";
@@ -6,7 +6,8 @@ import { T } from "./theme";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
 import { keyHeaders, BYOK_REQUIRED, BAD_KEY } from "./lib/anthropicKey";
 import { cleanFrenchPrompt } from "./lib/cardText";
-import { buildTutorContext } from "./lib/deckContext";
+import { buildTutorContext, cardPrompt, cardAnswer } from "./lib/deckContext";
+import { readThread, writeThread } from "./lib/tutorThreads";
 
 // "Ask the tutor" slide-over. Look a word or phrase up, get an explanation,
 // and add the cards Claude proposes straight into the deck.
@@ -25,13 +26,15 @@ import { buildTutorContext } from "./lib/deckContext";
 //   • Adds go straight to Supabase from the client, not through /api/chat.
 //     user_cards is RLS-protected (migration_003), so the insert runs as
 //     the signed-in user and can only touch their own rows.
-//   • Upsert on (user_id, front) means re-adding an existing card updates
-//     it rather than erroring — which is also why the endpoint is told
-//     which fronts already exist, so it can say "you have that" instead.
+//   • A proposal whose front is already in the deck says so, and offers to
+//     replace that card's English rather than adding. Add used to upsert on
+//     (user_id, front), which quietly overwrote the card you had — its gloss,
+//     its category and its source — and then said "Added".
 //
 // Usage:
-//   <ChatPanel open={showChat} onClose={...} user={user}
-//              deckFronts={userCards.map(c => c.f)} onCardsAdded={reloadDeck} />
+//   <ChatPanel open={showChat} onClose={...} user={user} cards={userCards}
+//              currentCard={...} thread={{ id, rowId }}
+//              onCardAdded={addDeckCard} onCardUpdated={patchDeckCard} />
 
 // Panel width. Exported because FlashcardApp reflows the app by exactly this
 // much when the panel is open on a wide screen, so the two must agree.
@@ -75,10 +78,58 @@ const SUGGESTIONS = [
   "When do I use the subjunctive after bien que?",
 ];
 
+// Opened on a card, the useful first questions are about THAT card, and which
+// ones depends on where the student is with it. None of these is sent on its
+// own: every question costs the student's own credit.
+function suggestionsFor(card) {
+  if (!card?.f) return SUGGESTIONS;
+  if (!card.answered) {
+    return ["Give me a hint without the answer", "What kind of word am I looking for?"];
+  }
+  if (card.result === "wrong" || card.result === "wrongArticle" || card.result === "revealed") {
+    return [
+      card.result === "revealed" ? "Help me remember this one" : "Why was my answer wrong?",
+      "Use it in a sentence",
+      "What's it easy to confuse with?",
+    ];
+  }
+  return ["Use it in a sentence", "Any related words worth knowing?", "When would I use this?"];
+}
+
+// Bold and italics, rendered. The prompt asks for plain prose, but a model
+// that slips in **word** anyway should read as emphasis rather than as
+// asterisks. Headings lose their hashes. Nothing else is interpreted, and it
+// never touches HTML — every piece is a React text node.
+const EMPHASIS = /\*\*([^*\n]+?)\*\*|\*([^*\s](?:[^*\n]*?[^*\s])?)\*/g;
+const stripHeadings = (text) => String(text || "").replace(/^#{1,6}[ \t]+/gm, "");
+
+function renderInline(text) {
+  const src = stripHeadings(text);
+  const parts = [];
+  const re = new RegExp(EMPHASIS.source, "g");
+  let last = 0;
+  let m;
+  while ((m = re.exec(src))) {
+    if (m.index > last) parts.push(src.slice(last, m.index));
+    parts.push(m[1] != null
+      ? <strong key={m.index}>{m[1]}</strong>
+      : <em key={m.index}>{m[2]}</em>);
+    last = re.lastIndex;
+  }
+  if (last < src.length) parts.push(src.slice(last));
+  return parts;
+}
+
+// The same text with the markup simply removed — for the screen-reader
+// announcement, which would otherwise read the asterisks out.
+const plainText = (text) => stripHeadings(text).replace(EMPHASIS, (_, b, i) => b ?? i);
+
+const frontKey = (front) => String(front || "").toLowerCase().trim();
+
 // One proposed card. Its own component so each chip owns its edit state —
 // hoisting that into ChatPanel would mean a keystroke in one chip re-rendering
 // the whole thread.
-function ProposedCard({ card, added, onAdd }) {
+function ProposedCard({ card, added, deckByFront, onAdd, onReplace }) {
   // Cleaned the same way the study view cleans it, so the chip shows what the
   // card will actually look like when you meet it.
   const [front, setFront] = useState(() => cleanFrenchPrompt(card.front, card.back));
@@ -90,7 +141,12 @@ function ProposedCard({ card, added, onAdd }) {
   // original meant editing a card before adding it wrote one key and looked up
   // another, so the chip never showed it had been added and the same card
   // could be added over and over.
-  const isAdded = added.has(front.toLowerCase().trim());
+  const done = added.get(frontKey(front));
+  const isAdded = !!done;
+  // Checked against the deck in the browser, not left to the model: it only
+  // sees the handful of cards that share a word with the question.
+  const existing = isAdded ? null : deckByFront.get(frontKey(front)) || null;
+  const sameBack = existing && existing.b.trim() === back.trim();
 
   return (
     <div style={S.cardChip} data-proposed-card>
@@ -121,16 +177,34 @@ function ProposedCard({ card, added, onAdd }) {
           {card.note ? ` · ${card.note}` : ""}
           {dirty ? " · edited" : ""}
         </div>
+        {existing && (
+          <div style={S.chipExisting} data-already-in-deck>
+            {sameBack
+              ? "Already in your deck"
+              : <>Already in your deck as “{existing.b}”</>}
+          </div>
+        )}
       </div>
       <div style={S.chipActions}>
-        <button
-          style={isAdded ? S.chipAdded : S.chipAdd}
-          onClick={() => onAdd({ ...card, front: front.trim(), back: back.trim() })}
-          disabled={isAdded || !front.trim() || !back.trim()}
-        >
-          {isAdded ? "Added" : "Add"}
-        </button>
-        {!isAdded && (
+        {existing ? (
+          <button
+            style={sameBack ? S.chipAdded : S.chipReplace}
+            onClick={() => onReplace(existing, back.trim())}
+            disabled={sameBack || !back.trim()}
+            title={sameBack ? undefined : `Replace “${existing.b}” with “${back.trim()}” on your card`}
+          >
+            {sameBack ? "In deck" : "Replace"}
+          </button>
+        ) : (
+          <button
+            style={isAdded ? S.chipAdded : S.chipAdd}
+            onClick={() => onAdd({ ...card, front: front.trim(), back: back.trim() })}
+            disabled={isAdded || !front.trim() || !back.trim()}
+          >
+            {done === "replaced" ? "Replaced" : isAdded ? "Added" : "Add"}
+          </button>
+        )}
+        {!isAdded && !sameBack && (
           <button
             style={S.chipEditToggle}
             onClick={() => setEditing((v) => !v)}
@@ -152,9 +226,19 @@ export default function ChatPanel({
   // review history off these rows to tell the tutor what you already have and
   // what you keep missing.
   cards = [],
-  // The card on screen, if the tutor was opened from a study session.
+  // The card on screen, if any, with the study view's live state on it:
+  // `answered` (has the answer been shown), and after a typed answer `typed`
+  // and `result`. Whether it has been answered decides what the header may
+  // show and what the tutor may say.
   currentCard = null,
-  onCardsAdded,
+  // Bumped when the tutor is opened from a card ("Ask the tutor" after a
+  // miss). A thread about a different card is put away for a fresh one.
+  thread = null,
+  // A card was written. Gets the new row, or null when the write returned
+  // none and the deck has to be refetched instead.
+  onCardAdded,
+  // An existing card's back was replaced: (rowId, fields).
+  onCardUpdated,
   // Opens the "connect your Claude account" dialog. The tutor spends money
   // per question and the server refuses without a key, so the error needs a
   // way out of itself rather than just an explanation.
@@ -165,7 +249,11 @@ export default function ChatPanel({
   // a scrim.
   reflow = false,
 }) {
-  const [messages, setMessages] = useState([]);
+  const threadKey = user?.id || "";
+  const [messages, setMessages] = useState(() => readThread(threadKey));
+  useEffect(() => { writeThread(threadKey, messages); }, [threadKey, messages]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -175,9 +263,17 @@ export default function ChatPanel({
   // to replace it, and it used to be the one that named the problem and left
   // them with nowhere to go.
   const [errorCode, setErrorCode] = useState("");
-  // Fronts added this session, so the chip can flip to "Added" without a
-  // full deck refetch on every click.
-  const [added, setAdded] = useState(() => new Set());
+  // Fronts added or replaced in this thread → "added" | "replaced", so the
+  // chip can say which.
+  const [added, setAdded] = useState(() => new Map());
+  // The finished answer, for screen readers. The bubble itself fills in a few
+  // characters a frame, which a live region would read out as noise.
+  const [announcement, setAnnouncement] = useState("");
+  const deckByFront = useMemo(() => {
+    const m = new Map();
+    for (const c of cards) if (c?.f) m.set(frontKey(c.f), c);
+    return m;
+  }, [cards]);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const panelRef = useRef(null);
@@ -305,6 +401,36 @@ export default function ChatPanel({
   }, []);
 
   useEffect(() => stopDrain, [stopDrain]);
+  // Unmounting mid-answer (a view switch) must not leave the request running.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Which thread a request belongs to. An answer aborted by New chat still
+  // runs its catch block, which restores the thread it was sent from — and
+  // would bring the old conversation straight back over the new one.
+  const threadGenRef = useRef(0);
+
+  // Put the thread away and start clean.
+  const newThread = useCallback(() => {
+    threadGenRef.current += 1;
+    abortRef.current?.abort();
+    stopDrain();
+    setMessages([]);
+    setAdded(new Map());
+    setAnnouncement("");
+    setError("");
+    setErrorCode("");
+    inputRef.current?.focus();
+  }, [stopDrain]);
+
+  // Opened from a card: a thread that was about some other card is finished
+  // with. Asking "why was I wrong?" about card 12 should not arrive as turn
+  // nine of a conversation about card 3.
+  useEffect(() => {
+    if (!thread?.id) return;
+    const lastUser = [...messagesRef.current].reverse().find((m) => m.role === "user");
+    if (lastUser && lastUser.rowId !== thread.rowId) newThread();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.id]);
 
   const send = useCallback(
     async (text) => {
@@ -314,7 +440,24 @@ export default function ChatPanel({
       setError("");
       setErrorCode("");
       setInput("");
-      const nextMessages = [...messages, { role: "user", content: trimmed }];
+      setAnnouncement("");
+      // Sent with the button, focus went to it — and the button disables
+      // while the answer streams, which drops focus to the page. The next
+      // question belongs in the box.
+      inputRef.current?.focus();
+      const previousQuestion = [...messages].reverse().find((m) => m.role === "user")?.content;
+      const nextMessages = [
+        ...messages,
+        {
+          role: "user",
+          content: trimmed,
+          // What the card showed when this was asked — its prompt, never its
+          // answer. Sent back with every later turn so a follow-up still knows
+          // what "why?" was about.
+          about: currentCard?.f ? cardPrompt(currentCard) : "",
+          rowId: currentCard?.row_id ?? null,
+        },
+      ];
       // The empty assistant bubble is what fills in as tokens arrive, so it
       // goes in before the request rather than after it.
       setMessages([
@@ -325,8 +468,11 @@ export default function ChatPanel({
 
       const controller = new AbortController();
       abortRef.current = controller;
+      const gen = threadGenRef.current;
       bufferRef.current = "";
       let gotText = false;
+      let gotDone = false;
+      let full = "";
 
       try {
         const {
@@ -345,12 +491,20 @@ export default function ChatPanel({
           },
           signal: controller.signal,
           body: JSON.stringify({
-            // Only the prose goes back to the model — card proposals are
-            // rendered client-side and would just be noise in the history.
-            messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+            // The prose, plus what grounded each turn: the card a question was
+            // asked about, and the fronts and backs an answer proposed — so
+            // "change the second card" can be answered. Notes stay client-side.
+            messages: nextMessages.map((m) => ({
+              role: m.role,
+              content: m.content,
+              ...(m.about ? { about: m.about } : null),
+              ...(m.cards?.length
+                ? { cards: m.cards.map((c) => ({ front: c.front, back: c.back })) }
+                : null),
+            })),
             // Rebuilt from scratch every turn against the question just asked,
             // so it never accumulates in the thread.
-            context: buildTutorContext({ question: trimmed, cards, currentCard }),
+            context: buildTutorContext({ question: trimmed, previousQuestion, cards, currentCard }),
           }),
         });
 
@@ -398,12 +552,15 @@ export default function ChatPanel({
             }
             if (event.type === "text") {
               gotText = true;
+              full += event.delta;
               bufferRef.current += event.delta;
               drain();
             } else if (event.type === "cards") {
               updateLast((m) => ({ ...m, cards: event.cards || [] }));
             } else if (event.type === "error") {
               streamError = event;
+            } else if (event.type === "done") {
+              gotDone = true;
             }
           }
         }
@@ -418,8 +575,15 @@ export default function ChatPanel({
           err.code = streamError.code || "";
           throw err;
         }
+        // The server ends every complete answer with "done". A stream that
+        // stops without it was cut off — the function ran out of time, or the
+        // connection dropped — and used to be shown as if it had finished.
+        if (!gotDone) throw new Error("The answer was cut off before it finished. Try asking again.");
         if (!gotText) throw new Error("The tutor returned nothing. Try rephrasing.");
+        setAnnouncement(plainText(full));
       } catch (e) {
+        // Superseded by New chat: that thread is gone, leave the new one alone.
+        if (threadGenRef.current !== gen) return;
         // Closing the panel aborts on purpose. The bubble still has to be
         // closed out: this component is not unmounted, so returning early left
         // a half-answer blinking its caret forever and put an empty assistant
@@ -454,32 +618,75 @@ export default function ChatPanel({
   const addCard = useCallback(
     async (card) => {
       if (!user) return;
-      const key = card.front.toLowerCase().trim();
+      const key = frontKey(card.front);
       setError("");
+      const row = {
+        user_id: user.id,
+        front: card.front,
+        back: card.back,
+        category: CAT_UI_TO_DB[card.category] || "V",
+        // `dates` deliberately not written: those are the LESSON dates a
+        // word appeared on, and a card invented in a chat appeared on none.
+        // The column defaults to '[]'.
+        source: "tutor-chat",
+      };
       try {
-        const { error: insErr } = await supabase.from("user_cards").upsert(
-          {
-            user_id: user.id,
-            front: card.front,
-            back: card.back,
-            category: CAT_UI_TO_DB[card.category] || "V",
-            // `dates` deliberately not written: those are the LESSON dates a
-            // word appeared on, and a card invented in a chat appeared on
-            // none. The column defaults to '[]', and omitting it also leaves
-            // an existing card's real dates alone on conflict.
-            source: "tutor-chat",
-          },
-          { onConflict: "user_id,front" }
-        );
+        // An INSERT, not an upsert. The chip has already checked the deck for
+        // this front, so a card that exists never gets here — it is offered
+        // as Replace instead.
+        let { data, error: insErr } = await supabase.from("user_cards").insert(row).select();
+        // The one card the deck in memory can't show: an archived one, whose
+        // row still holds the (user_id, front) slot. Adding it again is how
+        // an archived card comes back (see lib/archive.js), so that conflict
+        // alone falls through to the upsert, which clears the archived source.
+        if (insErr?.code === "23505") {
+          ({ data, error: insErr } = await supabase
+            .from("user_cards")
+            .upsert(row, { onConflict: "user_id,front" })
+            .select());
+        }
         if (insErr) throw insErr;
-        setAdded((prev) => new Set(prev).add(key));
-        onCardsAdded?.();
+        setAdded((prev) => new Map(prev).set(key, "added"));
+        onCardAdded?.(Array.isArray(data) ? data[0] || null : null);
       } catch (e) {
         console.error("Add card failed:", e);
         setError(`Couldn't add "${card.front}": ${e.message || "unknown error"}`);
       }
     },
-    [user, onCardsAdded]
+    [user, onCardAdded]
+  );
+
+  // Replace the English on a card the student already has. Only the back
+  // changes: the front, category, source and FSRS history are that card's
+  // own. Goes through the same endpoint the card editor uses, which checks
+  // ownership row by row.
+  const replaceBack = useCallback(
+    async (existing, back) => {
+      if (!user || existing?.row_id == null) return;
+      setError("");
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch("/api/admin-update-card", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session?.access_token || ""}`,
+          },
+          body: JSON.stringify({ row_id: existing.row_id, front: existing.f, back }),
+        });
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
+          throw new Error(msg);
+        }
+        setAdded((prev) => new Map(prev).set(frontKey(existing.f), "replaced"));
+        onCardUpdated?.(existing.row_id, { b: back });
+      } catch (e) {
+        console.error("Replace card failed:", e);
+        setError(`Couldn't update "${existing.f}": ${e.message || "unknown error"}`);
+      }
+    },
+    [user, onCardUpdated]
   );
 
   // The box starts at one line and grows with what you type, to a cap. It was
@@ -497,8 +704,9 @@ export default function ChatPanel({
   }, [input]);
 
   const onKeyDown = (e) => {
-    // Enter sends, Shift+Enter makes a newline.
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Enter sends, Shift+Enter makes a newline. Not while an input method is
+    // composing a character — that Enter belongs to the composition.
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
     }
@@ -530,15 +738,28 @@ export default function ChatPanel({
             {/* The card in view, named rather than described. This is the
                 thing that makes the answers specific, so it gets a chip
                 instead of a line of grey micro-copy. */}
+            {/* What the card is ASKING, as its face shows it. This used to be
+                the French front on every card, so on an English-prompt card the
+                header showed the answer — and kept showing each next card's
+                answer as the session moved on. The answer joins it only once
+                the card has shown it. */}
             {currentCard?.f && (
               <div style={S.contextChip} data-tutor-context>
-                {cleanFrenchPrompt(currentCard.f, currentCard.b)}
+                {cardPrompt(currentCard)}
+                {currentCard.answered ? ` — ${cardAnswer(currentCard)}` : ""}
               </div>
             )}
           </div>
-          <button style={S.close} onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+          <div style={S.headActions}>
+            {messages.length > 0 && (
+              <button style={S.newChat} onClick={newThread} data-tutor-new-chat>
+                New chat
+              </button>
+            )}
+            <button style={S.close} onClick={onClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
         </header>
 
         <div style={S.scroll} ref={scrollRef}>
@@ -549,7 +770,7 @@ export default function ChatPanel({
           <div style={S.threadFoot}>
           {messages.length === 0 && (
             <div style={S.empty}>
-              {SUGGESTIONS.map((s) => (
+              {suggestionsFor(currentCard).map((s) => (
                 <button key={s} style={S.suggestion} onClick={() => send(s)}>
                   {s}
                 </button>
@@ -572,7 +793,7 @@ export default function ChatPanel({
                   </span>
                 ) : (
                   <>
-                    {m.content}
+                    {m.role === "user" ? m.content : renderInline(m.content)}
                     {/* A caret while text is still arriving, so an answer
                         mid-generation doesn't read as one that has finished. */}
                     {m.streaming && <span style={S.caret}>▌</span>}
@@ -582,7 +803,14 @@ export default function ChatPanel({
               {m.cards?.length > 0 && (
                 <div style={S.cardList}>
                   {m.cards.map((c, j) => (
-                    <ProposedCard key={j} card={c} added={added} onAdd={addCard} />
+                    <ProposedCard
+                      key={j}
+                      card={c}
+                      added={added}
+                      deckByFront={deckByFront}
+                      onAdd={addCard}
+                      onReplace={replaceBack}
+                    />
                   ))}
                 </div>
               )}
@@ -590,6 +818,7 @@ export default function ChatPanel({
           ))}
           </div>
         </div>
+        <div style={S.srOnly} aria-live="polite">{announcement}</div>
 
         {error && (
           <div style={S.error}>
@@ -611,7 +840,6 @@ export default function ChatPanel({
             onKeyDown={onKeyDown}
             placeholder="Ask about a word or phrase…"
             rows={1}
-            disabled={sending}
           />
           <button
             style={sending || !input.trim() ? S.sendDisabled : S.send}
@@ -662,6 +890,26 @@ const S = {
     borderBottom: "1px solid rgba(3,22,50,0.06)",
   },
   headMain: { minWidth: 0 },
+  headActions: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 },
+  newChat: {
+    background: "transparent",
+    border: "1px solid rgba(3,22,50,0.12)",
+    borderRadius: T.radius.md,
+    padding: "4px 10px",
+    fontSize: 11.5,
+    fontWeight: 500,
+    fontFamily: T.font.sans,
+    color: T.color.onSurfaceVariant,
+    cursor: "pointer",
+  },
+  srOnly: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    overflow: "hidden",
+    clip: "rect(0 0 0 0)",
+    whiteSpace: "nowrap",
+  },
   title: { fontFamily: T.font.serif, fontSize: 18, fontWeight: 600, color: T.color.onSurface },
   // The card in view. Set in the serif the app uses for card content
   // everywhere else, which is what identifies it as a card without a label —
@@ -808,6 +1056,21 @@ const S = {
     cursor: "pointer",
   },
   chipMeta: { fontSize: 11, color: T.color.onSurfaceVariant, marginTop: 4, lineHeight: 1.4 },
+  chipExisting: { fontSize: 11, color: T.color.onSurface, marginTop: 3, lineHeight: 1.4, fontStyle: "italic" },
+  // Secondary, not the ink CTA: replacing a card you own is the less common
+  // and more consequential of the two.
+  chipReplace: {
+    flexShrink: 0,
+    padding: "7px 14px",
+    background: T.color.surfaceLowest,
+    color: T.color.onSurface,
+    border: "1px solid rgba(3,22,50,0.2)",
+    borderRadius: T.radius.md,
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: T.font.sans,
+    cursor: "pointer",
+  },
   chipAdd: {
     flexShrink: 0,
     padding: "7px 14px",

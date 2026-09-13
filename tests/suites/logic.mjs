@@ -3,7 +3,8 @@
 import { classifyCard } from "../../src/lib/cardTypes.js";
 import { looksMultiSense } from "../../src/lib/multiSense.js";
 import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "../../src/lib/cardText.js";
-import { findRelatedCards, recentMisses } from "../../src/lib/deckContext.js";
+import { findRelatedCards, recentMisses, relevantMisses, buildTutorContext, cardPrompt } from "../../src/lib/deckContext.js";
+import { buildRequestMessages, normalizeCards } from "../../api/chat.js";
 import { reconcileLessons } from "../../src/lib/lessonSync.js";
 import { lessonSource, lessonCardKey } from "../../src/lib/lessonSource.js";
 import { isArchived, archivedSource } from "../../src/lib/archive.js";
@@ -171,6 +172,107 @@ console.log("\n  recentMisses — what they are actually getting wrong");
   );
   ck("only the missed cards come back", missed.length === 2, missed.join(", "));
   ck("most recently missed first", missed[0] === "la colline", missed.join(", "));
+}
+
+console.log("\n  findRelatedCards — the way learners actually type");
+{
+  const D = [
+    { f: "la sœur", b: "the sister" },
+    { f: "l’école", b: "the school" },
+    { f: "être", b: "to be" },
+    { f: "sale", b: "dirty" },
+    { f: "salé (adj)", b: "salty" },
+  ];
+  const fronts = (q) => findRelatedCards(q, D).map((c) => c.front);
+  // œ used to be a non-letter, so "sœur" split into "s" and "ur" and matched
+  // nothing — typed with or without the ligature.
+  ck("\"soeur\" finds la sœur", fronts("what does soeur mean")[0] === "la sœur", fronts("what does soeur mean").join(", "));
+  ck("\"sœur\" finds la sœur", fronts("is sœur feminine")[0] === "la sœur", fronts("is sœur feminine").join(", "));
+  // Elision: the card is "l’école" with a curly apostrophe, the question
+  // names the bare word without its accent.
+  ck("\"ecole\" finds l’école", fronts("ecole?")[0] === "l’école", fronts("ecole?").join(", "));
+  ck("\"etre\" finds être", fronts("is etre irregular")[0] === "être", fronts("is etre irregular").join(", "));
+  // Folding is a fallback, not an equivalence: the accented word outranks.
+  ck("an exact accented match outranks a folded one", fronts("salé")[0] === "salé (adj)", fronts("salé").join(", "));
+}
+
+console.log("\n  relevantMisses — only the misses that bear on the question");
+{
+  const NOW = Date.parse("2026-09-12T12:00:00Z");
+  const D = [
+    { row_id: 1, f: "amener", b: "to bring (a person)", last_answer_correct: false, last_review: "2026-09-10" },
+    { row_id: 2, f: "la colline", b: "the hill", last_answer_correct: false, last_review: "2026-09-11" },
+    { row_id: 3, f: "emmener", b: "to take (a person)", last_answer_correct: false, last_review: "2026-03-01" },
+  ];
+  const m = relevantMisses({ question: "amener or apporter?", cards: D, now: NOW }).map((c) => c.front);
+  ck("a miss sharing a word with the question is sent", m.includes("amener"), m.join(", "));
+  ck("a miss about something else is not", !m.includes("la colline"), m.join(", "));
+  const old = relevantMisses({ question: "emmener?", cards: D, now: NOW }).map((c) => c.front);
+  ck("a miss from months ago is not recent", old.length === 0, old.join(", "));
+}
+
+console.log("\n  buildTutorContext — the card on screen, as the student has it");
+{
+  const D = [
+    { row_id: 1, f: "une colline", b: "a hill", last_answer_correct: false, last_review: "2026-09-11" },
+    { row_id: 2, f: "un coteau", b: "a hillside", last_answer_correct: true },
+  ];
+  const enCard = { ...D[0], shownDir: "en" };
+  ck("an English-prompt card's prompt is the English", cardPrompt(enCard) === "a hill", cardPrompt(enCard));
+
+  const before = buildTutorContext({ question: "what is a hill in French?", cards: D, currentCard: { ...enCard, answered: false } });
+  ck("unanswered is stated", before.currentCard.answered === false, JSON.stringify(before.currentCard));
+  // The row's last result is last session's. It is not "they just got this wrong".
+  ck("last session's miss is not reported as this attempt", !before.currentCard.result && before.currentCard.missedLastTime === true, JSON.stringify(before.currentCard));
+  ck(
+    "an unanswered card is kept out of the related list, which would give its answer away",
+    !(before.relatedCards || []).some((c) => c.front === "une colline"),
+    JSON.stringify(before.relatedCards)
+  );
+
+  const after = buildTutorContext({
+    question: "why?",
+    cards: D,
+    currentCard: { ...enCard, answered: true, result: "wrongArticle", typed: "le colline" },
+  });
+  ck("what they typed and how it was marked are sent", after.currentCard.typed === "le colline" && after.currentCard.result === "wrongArticle", JSON.stringify(after.currentCard));
+
+  // A follow-up with no content words of its own borrows the last question's.
+  const follow = buildTutorContext({ question: "and the plural?", previousQuestion: "what about coteau", cards: D });
+  ck("a follow-up still finds the card being discussed", (follow?.relatedCards || []).some((c) => c.front === "un coteau"), JSON.stringify(follow));
+}
+
+console.log("\n  /api/chat — what a conversation becomes");
+{
+  const out = buildRequestMessages({
+    messages: [
+      { role: "user", content: "why?", about: "a hill" },
+      { role: "assistant", content: "Colline is feminine.", cards: [{ front: "une colline", back: "a hill" }] },
+      { role: "user", content: "another example?", about: "a hill" },
+    ],
+    context: { currentCard: { prompt: "a hill", answer: "une colline", answered: false } },
+  });
+  const text = (m) => (typeof m.content === "string" ? m.content : m.content.map((b) => b.text).join(""));
+  ck("an earlier question keeps the card it was about", /a hill/.test(text(out[0])) && /why\?/.test(text(out[0])), text(out[0]));
+  ck("an earlier answer keeps the cards it proposed", /une colline — a hill/.test(text(out[1])), text(out[1]));
+  ck("an unanswered card is flagged as not to be revealed", /NOT answered/.test(text(out[2])), text(out[2]));
+  ck(
+    "the conversation up to the latest question is cached",
+    Array.isArray(out[1].content) && out[1].content[0].cache_control?.type === "ephemeral" && typeof out[2].content === "string",
+    JSON.stringify(out[1].content).slice(0, 120)
+  );
+
+  const cards = normalizeCards({
+    cards: [
+      { front: "bien que + subjonctif", back: "although", category: "gram" },
+      { front: "le e muet", back: "silent e", category: "pron" },
+      { front: "venir (subjonctif) → que je", back: "vienne", category: "gram" },
+      { front: "une colline", back: "a hill", category: "vocab" },
+    ],
+  }).map((c) => c.front);
+  ck("a grammar card with nothing to produce is dropped", !cards.includes("bien que + subjonctif"), cards.join(", "));
+  ck("a pronunciation card is dropped", !cards.includes("le e muet"), cards.join(", "));
+  ck("an arrow drill and a word survive", cards.length === 2, cards.join(", "));
 }
 
 // Keeping a deck in step with a lesson. The requirement that costs real data:

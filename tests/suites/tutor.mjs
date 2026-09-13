@@ -69,17 +69,34 @@ const server = createServer(async (req, res) => {
   // Second exchange: everything in one lump, after a pause. Real deltas arrive
   // unevenly and adaptive thinking delays the first one, so this is the shape
   // the reveal buffer exists for.
-  setTimeout(() => {
-    send({ type: "text", delta: LUMP });
+  if (requests.length === 2) {
+    setTimeout(() => {
+      send({ type: "text", delta: LUMP });
+      send({ type: "done" });
+      res.end();
+    }, 600);
+    return;
+  }
+
+  // Third: proposes a card the deck already has, under a different gloss.
+  if (requests.length === 3) {
+    send({ type: "text", delta: "Think of what you would climb on a walk. **Feminine**, too." });
+    send({ type: "cards", cards: [{ front: target.front, back: "a small mountain", category: "vocab" }] });
     send({ type: "done" });
     res.end();
-  }, 600);
+    return;
+  }
+
+  // Fourth: the function dies mid-answer. No "done", no error — just the end.
+  send({ type: "text", delta: "The short answer is that it depends on" });
+  setTimeout(() => res.end(), 200);
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PORT = server.address().port;
 
 // ── Drive it ───────────────────────────────────────────────────────────────
 const adds = [];
+let deckGets = 0;
 const { browser, page } = await openApp({
   route: async (p) => {
     // continue() rather than fulfill(): fulfill buffers the whole body, which
@@ -89,13 +106,17 @@ const { browser, page } = await openApp({
     );
     // Catch the deck write without needing the mock to grow a POST handler.
     await p.route("**/rest/v1/user_cards*", async (r) => {
+      if (r.request().method() === "GET") deckGets++;
       if (r.request().method() !== "POST") return r.continue();
-      adds.push(JSON.parse(r.request().postData() || "null"));
+      const row = JSON.parse(r.request().postData() || "null");
+      adds.push(row);
+      // Answer the way PostgREST does for insert().select(): the written row,
+      // with the id the database gave it.
       await r.fulfill({
         status: 201,
         headers: { "Access-Control-Allow-Origin": "*" },
         contentType: "application/json",
-        body: "[]",
+        body: JSON.stringify([{ id: 990000 + adds.length, created_at: new Date().toISOString(), ...row }]),
       });
     });
   },
@@ -157,8 +178,12 @@ await frontInput.fill(CORRECTED);
 // The lesson sync writes its own 108 cards on mount, so the deck's write log
 // already has an entry. Only what happens from here is the tutor's doing.
 adds.length = 0;
+const getsBeforeAdd = deckGets;
 await page.click("[data-proposed-card] button:text-is('Add')");
 await page.waitForSelector("[data-proposed-card] button:text-is('Added')", { timeout: 8000 });
+await page.waitForTimeout(800);
+// Adding used to refetch the entire deck on every click.
+ck("adding a card does not refetch the deck", deckGets === getsBeforeAdd, `${deckGets - getsBeforeAdd} refetch(es)`);
 
 const written = adds[0] || {};
 ck(
@@ -226,6 +251,140 @@ ck(
   "no single frame dumps the whole answer",
   biggest < jumps.total * 0.5,
   `biggest step ${biggest} of ${jumps.total}`
+);
+
+// ── What the next turn carries back ────────────────────────────────────────
+// Deck context rides on the latest question only, so earlier turns have to
+// keep what grounded them or a follow-up loses its subject.
+{
+  const second = requests[1] || {};
+  const firstQ = second.messages?.[0] || {};
+  const firstA = second.messages?.[1] || {};
+  ck(
+    "an earlier question goes back with the card that was on screen",
+    typeof firstQ.about === "string" && firstQ.about.length > 0,
+    JSON.stringify(firstQ).slice(0, 160)
+  );
+  ck(
+    "an earlier answer goes back with the cards it proposed",
+    (firstA.cards || []).some((c) => c.front === PROPOSED.front),
+    JSON.stringify(firstA).slice(0, 160)
+  );
+}
+
+// ── Focus stays in the box ─────────────────────────────────────────────────
+// The box used to be disabled while the answer streamed, which dropped focus,
+// and nothing gave it back: every follow-up needed a click first.
+ck(
+  "after an answer the question box still has focus",
+  await page.evaluate(() => document.activeElement?.matches?.("[data-tutor-panel] textarea")),
+  await page.evaluate(() => document.activeElement?.tagName)
+);
+
+// ── New chat ───────────────────────────────────────────────────────────────
+await page.click("[data-tutor-new-chat]");
+await page.waitForTimeout(200);
+ck(
+  "New chat clears the thread",
+  await page.locator("[data-proposed-card]").count() === 0 &&
+    !(await page.evaluate(() => /the thing walks/.test(document.body.innerText))),
+  ""
+);
+
+// ── The card on screen, beside the panel ───────────────────────────────────
+// Studying with the tutor open: the header shows what the card ASKS, never its
+// answer, and the study keys still work while you're not using the panel.
+const chip = () => page.locator("[data-tutor-context]").innerText().catch(() => "");
+// Answer until the card on screen is an English-prompt card: the case where
+// the header used to show the French answer.
+await page.click("button:text-is('EN→FR')");
+await page.waitForTimeout(500);
+// The last click was outside the panel (the direction button), so the key is
+// the card's.
+{
+  const beforeKey = await chip();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(300);
+  ck(
+    "with the tutor beside the card, the arrow key still grades and moves on",
+    (await chip()) !== beforeKey,
+    `${beforeKey} → ${await chip()}`
+  );
+}
+let enCard = null;
+for (let i = 0; i < 25 && !enCard; i++) {
+  const shown = (await chip()).trim();
+  enCard = deck.find((c) => c.back && shown.length > 1 && c.back.replace(/\.$/, "").startsWith(shown)) || null;
+  if (enCard) break;
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(250);
+}
+if (!enCard) {
+  ck("found an English-prompt card to check the header against", false, "none within 25 cards");
+} else {
+  const shown = await chip();
+  ck(
+    "on an English-prompt card the header shows the English, not the French answer",
+    !shown.includes(enCard.front),
+    `header: ${JSON.stringify(shown)}`
+  );
+
+  // Ask about it before answering: the tutor is told it is unanswered.
+  await page.fill("[data-tutor-panel] textarea", "hint please");
+  await page.click("button:text-is('Send')");
+  await page.waitForSelector("[data-already-in-deck]", { timeout: 8000 }).catch(() => {});
+  const cc = requests[2]?.context?.currentCard || {};
+  ck("the tutor is told the card has not been answered", cc.answered === false, JSON.stringify(cc));
+  ck("and what it asks, as the card shows it", cc.prompt === shown.trim(), `${JSON.stringify(cc.prompt)} vs ${JSON.stringify(shown)}`);
+
+  // Bold in the answer is emphasis, not asterisks. Checked once the reveal
+  // has finished drawing it.
+  await page.waitForFunction(
+    () => /Feminine, too/.test(document.querySelector("[data-tutor-panel]")?.innerText || ""),
+    null,
+    { timeout: 8000 }
+  ).catch(() => {});
+  ck(
+    "bold in an answer renders as bold",
+    await page.evaluate(() => [...document.querySelectorAll("[data-tutor-panel] strong")].some((e) => e.textContent === "Feminine")) &&
+      !(await page.evaluate(() => /\*\*Feminine/.test(document.querySelector("[data-tutor-panel]").innerText))),
+    ""
+  );
+
+  // A proposal whose front the deck already holds.
+  ck(
+    "a proposal already in the deck says so",
+    await page.locator("[data-already-in-deck]").count() === 1,
+    ""
+  );
+  ck(
+    "and offers Replace, not Add",
+    await page.locator("[data-proposed-card] button:text-is('Replace')").count() === 1 &&
+      await page.locator("[data-proposed-card] button:text-is('Add')").count() === 0,
+    ""
+  );
+
+  // A click inside the panel hands it the keyboard: an arrow must not grade
+  // the card behind it.
+  await page.click("[data-tutor-panel] header");
+  const beforeKey = await chip();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(300);
+  ck("after a click in the panel, the arrow key leaves the card alone", (await chip()) === beforeKey, `${beforeKey} → ${await chip()}`);
+}
+
+// ── An answer that never finished ──────────────────────────────────────────
+await page.fill("[data-tutor-panel] textarea", "is it always feminine?");
+await page.click("button:text-is('Send')");
+await page.waitForFunction(
+  () => /cut off/i.test(document.querySelector("[data-tutor-panel]")?.innerText || ""),
+  null,
+  { timeout: 8000 }
+).catch(() => {});
+ck(
+  "a stream that ends without done is reported as cut off",
+  await page.evaluate(() => /cut off/i.test(document.querySelector("[data-tutor-panel]")?.innerText || "")),
+  ""
 );
 
 server.close();

@@ -229,7 +229,7 @@ function typedGotIt(typeResult) {
 
 export default function FlashcardApp({ user, onSignOut }) {
   const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
-  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard } = useUserDeck(user);
+  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, add: addDeckCard } = useUserDeck(user);
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
   const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
@@ -301,31 +301,25 @@ export default function FlashcardApp({ user, onSignOut }) {
   // is nothing to ask about. (This used to route through a close request on
   // the sheet, so an unsent draft could prompt "discard?" and cancel the
   // tutor opening.)
-  // The card the tutor should treat as "what I'm looking at". Set when the
-  // tutor is opened FROM a card — from the study view, or from the banner after
-  // a wrong answer. Null when opened from the nav, where there is no such card.
+  // The tutor always knows the card on screen, live, with where the student is
+  // with it — see `tutorCard` below. Opening it FROM a card ("Ask the tutor"
+  // after a miss) additionally bumps this, so a conversation about some other
+  // card is put away for a fresh one.
   //
-  // Without this there was no path from a card to the tutor at all: openChat
-  // took no argument, so asking why you'd just missed something meant retyping
-  // the whole card into the box.
-  //
-  // It is only ever an OVERRIDE. The tutor falls back to whatever card is on
-  // screen (see the ChatPanel call below), because opening the panel from the
-  // nav mid-session and having it not know what you are looking at is the
-  // question people actually ask it — "what is this card" — and the first
-  // version answered "I can't see your screen".
-  const [chatCard, setChatCard] = useState(null);
+  // This used to be a snapshot of the card carrying `last_answer_correct:
+  // false`, because the miss isn't on the row until the answer is committed.
+  // The live typed result says the same thing, and says what was typed.
+  const [tutorThread, setTutorThread] = useState(null);
   const openChat = useCallback((aboutCard = null) => {
     setShowFeedback(false);
     setShowLessonPanel(false);
-    setChatCard(aboutCard);
+    if (aboutCard) setTutorThread((t) => ({ id: (t?.id || 0) + 1, rowId: aboutCard.row_id ?? null }));
     setShowChat(true);
   }, []);
   const toggleChat = useCallback(() => {
     if (showChat) { setShowChat(false); return; }
     setShowFeedback(false);
     setShowLessonPanel(false);
-    setChatCard(null);
     setShowChat(true);
   }, [showChat]);
   const openFeedback = useCallback(() => { setShowChat(false); setShowLessonPanel(false); setShowFeedback(true); }, []);
@@ -622,10 +616,32 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [sessionDone, userCards, candidatesFrom, lessonFilter]);
   // Keep the ref in sync so deck rebuilds can find the current card.
   useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
-  // Drop the tutor's card override once you move on. It is a snapshot taken at
-  // a wrong answer (it carries the miss), so leaving it set would have the
-  // tutor still talking about a card two behind the one on screen.
-  useEffect(() => { setChatCard(null); }, [card?.row_id]);
+  // The card on screen as the tutor needs it: what it asks, and whether its
+  // answer has been shown. Until it has, the tutor's header shows only the
+  // prompt and the tutor is told not to give the answer away — a recall FSRS
+  // records after the tutor said the word is a recall that never happened.
+  //
+  // "Answered" sticks for this appearance of the card: flip it back over and
+  // the answer has still been seen. Keyed on the queue position as well as
+  // the row, so the same card re-queued after a miss starts unanswered again.
+  const cardSlot = card ? `${idx}:${card.row_id}` : null;
+  const [revealedSlot, setRevealedSlot] = useState(null);
+  useEffect(() => {
+    if (cardSlot && (flipped || typeResult)) setRevealedSlot(cardSlot);
+  }, [cardSlot, flipped, typeResult]);
+  const tutorCard = useMemo(() => {
+    // After the last card of a block the checkpoint replaces it on screen.
+    if (mode !== "study" || !card || sessionDone) return null;
+    const answered = flipped || !!typeResult || revealedSlot === cardSlot;
+    return {
+      ...card,
+      answered,
+      ...(typeResult ? { result: typeResult } : null),
+      ...(typeResult && typeResult !== "revealed" && typedAnswer.trim()
+        ? { typed: typedAnswer.trim() }
+        : null),
+    };
+  }, [mode, card, sessionDone, flipped, typeResult, typedAnswer, revealedSlot, cardSlot]);
   const flip = useCallback(() => setFlipped(f => !f), []);
 
   // Auto-speak French when a French side becomes visible
@@ -977,15 +993,45 @@ export default function FlashcardApp({ user, onSignOut }) {
   // FSRS review, written for a card the user never saw an answer for.
   // Checking the event target for INPUT/TEXTAREA isn't enough; most of a
   // panel is neither.
+  //
+  // The tutor is the exception when it sits BESIDE the card rather than over
+  // it. It is built for studying with it open — it follows you from card to
+  // card — and treating it as an overlay left Space, Enter and the arrows dead
+  // the whole time. Beside the card it only takes the keyboard while it is
+  // what you are using: focus inside it, or your last click was in it (the
+  // inert-click case above, where focus falls to the body).
+  const roomToReflow = (panelWidth) =>
+    winWidth - SIDEBAR_WIDTH - panelWidth >= MIN_REFLOW_CONTENT;
+  const chatReflow = showChat && !isNarrow && roomToReflow(CHAT_PANEL_WIDTH);
+  const lessonReflow = showLessonPanel && !isNarrow && roomToReflow(LESSON_PANEL_WIDTH);
   const overlayOpen =
-    showChat || showFeedback || showUpload || showKeyModal || showLessonPanel ||
+    (showChat && !chatReflow) || showFeedback || showUpload || showKeyModal || showLessonPanel ||
     showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
+  const pointerInTutorRef = useRef(false);
+  useEffect(() => {
+    // click as well as pointerdown: a click from the keyboard or assistive
+    // tech arrives with no pointer event in front of it.
+    const onDown = (e) => {
+      pointerInTutorRef.current = !!e.target?.closest?.("[data-tutor-panel]");
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("click", onDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("click", onDown, true);
+    };
+  }, []);
+  // The ✕ is a click inside the panel; closing must not leave the keys held.
+  useEffect(() => { if (!showChat) pointerInTutorRef.current = false; }, [showChat]);
+  const tutorHasKeyboard = () =>
+    pointerInTutorRef.current || !!document.activeElement?.closest?.("[data-tutor-panel]");
 
   useEffect(() => {
     if (mode !== "study" || typeMode || overlayOpen || sessionDone) return;
     const handler = (e) => {
       if (!card) return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (tutorHasKeyboard()) return;
       if (e.key === " ") { e.preventDefault(); flipRef.current(); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); answerRef.current(false); }
       else if (e.key === "ArrowRight" || e.key === "Enter") { e.preventDefault(); answerRef.current(true); }
@@ -1004,6 +1050,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     const gotIt = typedGotIt(typeResult);
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (tutorHasKeyboard()) return;
       if (e.key === "Enter" || e.key === " " || e.key === "ArrowRight") {
         e.preventDefault();
         answerRef.current(gotIt, "typed");
@@ -1446,12 +1493,16 @@ export default function FlashcardApp({ user, onSignOut }) {
           )}
         </div>
 
+        {/* A separate instance from the main app's, so the conversation
+            lives in lib/tutorThreads rather than in either one: adding the
+            first card from here swaps this screen for the main app. */}
         <ChatPanel
           open={showChat}
           onClose={() => setShowChat(false)}
           user={user}
-          cards={[]}
-          onCardsAdded={reloadDeck}
+          cards={userCards}
+          onCardAdded={(row) => (row ? addDeckCard(row) : reloadDeck())}
+          onCardUpdated={patchDeckCard}
           onNeedKey={() => setShowKeyModal(true)}
         />
 
@@ -1518,10 +1569,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   // it should always have done when there was nothing to reflow FOR.
   //
   // See MIN_REFLOW_CONTENT for where the floor comes from.
-  const roomToReflow = (panelWidth) =>
-    winWidth - SIDEBAR_WIDTH - panelWidth >= MIN_REFLOW_CONTENT;
-  const chatReflow = showChat && !isNarrow && roomToReflow(CHAT_PANEL_WIDTH);
-  const lessonReflow = showLessonPanel && !isNarrow && roomToReflow(LESSON_PANEL_WIDTH);
+  // (roomToReflow, chatReflow and lessonReflow are computed further up, before
+  // the keyboard handlers, which need to know whether the tutor covers the card.)
   const shellStyle = isNarrow ? S.shellNarrow : S.shell;
   // The room is made by MAIN, not by the shell. Padding the shell shrank the
   // sidebar too — its account block jumped up the page and left a gap —
@@ -1697,11 +1746,14 @@ export default function FlashcardApp({ user, onSignOut }) {
         onClose={() => setShowChat(false)}
         user={user}
         cards={userCards}
-        // The override if there is one, otherwise the card on screen. Passing
-        // `card` live rather than a snapshot means the tutor follows you as
-        // you advance through the session.
-        currentCard={chatCard || (mode === "study" ? card : null)}
-        onCardsAdded={reloadDeck}
+        // Live rather than a snapshot, so the tutor follows you as you advance
+        // through the session — with whether each card's answer has been shown.
+        currentCard={tutorCard}
+        thread={tutorThread}
+        // The insert hands back the row, so the deck takes it in place; only a
+        // write that returned nothing falls back to a refetch.
+        onCardAdded={(row) => (row ? addDeckCard(row) : reloadDeck())}
+        onCardUpdated={patchDeckCard}
         onNeedKey={() => { setShowChat(false); setShowKeyModal(true); }}
         reflow={chatReflow}
       />
@@ -2484,11 +2536,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                               data-tutor-toggle
                               style={S.feedbackBtn}
                               onClick={() =>
-                                // The miss is stated, not read off the row:
-                                // last_answer_correct isn't patched until the
-                                // answer is committed, and this button sits in
-                                // the banner BEFORE that.
-                                openChat({ ...card, last_answer_correct: false })
+                                // The miss reaches the tutor through tutorCard,
+                                // which carries the typed answer and the
+                                // verdict. Passing the card starts a fresh
+                                // thread if the last one was about another.
+                                openChat(card)
                               }
                             >
                               Ask the tutor
