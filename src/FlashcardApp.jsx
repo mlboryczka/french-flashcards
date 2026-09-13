@@ -2626,24 +2626,66 @@ function CardContextPreview({ ctx }) {
 }
 
 // ─── FEEDBACK REVIEW MODAL (admin only) ───────────────────────────────────
-// Shows all beta_feedback entries in a portal overlay. Triggered from the
+// ─── OPEN FEEDBACK ─────────────────────────────────────────────────────────
+// Feedback that has been dealt with is marked resolved rather than deleted, and
+// leaves the list. Both admin views read through these two, so they cannot
+// disagree about what "open" means. See migration_009.
+//
+// A database without migration_009 has no resolved_at column. Rather than show
+// an empty list — indistinguishable from "nothing waiting", which is exactly how
+// the dispute view hid its backlog — the list falls back to every entry and
+// says why it cannot be cleared.
+async function loadOpenFeedback() {
+  const query = () =>
+    supabase.from("beta_feedback").select("*").order("created_at", { ascending: false }).limit(50);
+  const open = await query().is("resolved_at", null);
+  if (open.error && /resolved_at/.test(open.error.message || "")) {
+    const all = await query();
+    return { data: all.data || [], error: all.error, resolvable: false };
+  }
+  return { data: open.data || [], error: open.error, resolvable: true };
+}
+
+// Returns an error message, or null. Chains .select() for the same reason the
+// delete does: RLS blocking an UPDATE is success with zero rows affected.
+async function resolveFeedback(id) {
+  const { data, error } = await supabase
+    .from("beta_feedback")
+    .update({ resolved_at: new Date().toISOString() })
+    .eq("id", id)
+    .select("id");
+  if (error) return error.message;
+  if (!data || data.length === 0) {
+    return "Blocked by the database (0 rows affected). Run migration_009 in the Supabase SQL editor — it adds the admin UPDATE policy.";
+  }
+  return null;
+}
+
+const NEEDS_MIGRATION_009 =
+  "Showing everything: this database can't mark feedback resolved yet. Run migrations/migration_009_beta_feedback_resolved.sql in the Supabase SQL editor.";
+
+// Shows open beta_feedback entries in a portal overlay. Triggered from the
 // profile dropdown → "View feedback".
 function FeedbackReviewModal({ onClose, onEditCard }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [resolvable, setResolvable] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase
-        .from("beta_feedback")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50);
+      const { data, error, resolvable } = await loadOpenFeedback();
       if (error) console.error("Failed to load feedback:", error);
-      setItems(data || []);
+      setItems(data);
+      setResolvable(resolvable);
       setLoading(false);
     })();
   }, []);
+
+  const resolve = async (id) => {
+    const problem = await resolveFeedback(id);
+    if (problem) { alert(`Couldn't mark resolved: ${problem}`); return; }
+    setItems(prev => prev.filter(i => i.id !== id));
+  };
 
   const dismiss = async (id) => {
     if (!confirm("Delete this feedback? This can't be undone.")) return;
@@ -2677,9 +2719,10 @@ function FeedbackReviewModal({ onClose, onEditCard }) {
         {loading ? (
           <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>Loading…</div>
         ) : items.length === 0 ? (
-          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>No feedback yet.</div>
+          <div style={{textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans}}>No open feedback.</div>
         ) : (
           <div style={{display:"flex", flexDirection:"column", gap:12, maxHeight:"60vh", overflowY:"auto"}}>
+            {!resolvable && <div style={S.fbItemDate}>{NEEDS_MIGRATION_009}</div>}
             {items.map(item => (
               <div key={item.id} style={S.fbItem}>
                 <div style={S.fbItemHeader}>
@@ -2694,6 +2737,9 @@ function FeedbackReviewModal({ onClose, onEditCard }) {
                 <div style={{display:"flex", gap:8}}>
                   {item.card_context && onEditCard && (
                     <button style={S.fbItemDismiss} onClick={() => onEditCard(item)}>Edit card</button>
+                  )}
+                  {resolvable && (
+                    <button style={S.fbItemDismiss} onClick={() => resolve(item.id)}>Mark resolved</button>
                   )}
                   <button style={S.fbItemDismiss} onClick={() => dismiss(item.id)}>Delete</button>
                 </div>
@@ -2889,6 +2935,7 @@ const EM = {
 function FeedbackAdminView({ user, setMode, resetSession }) {
   const [items, setItems] = useState([]);
   const [betaItems, setBetaItems] = useState([]);
+  const [betaResolvable, setBetaResolvable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [acting, setActing] = useState(null); // id being acted on
@@ -2910,16 +2957,13 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
       setItems(data || []);
     }
     // Load general user feedback
-    const { data: betaData, error: betaErr } = await supabase
-      .from("beta_feedback")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(50);
+    const { data: betaData, error: betaErr, resolvable } = await loadOpenFeedback();
+    setBetaResolvable(resolvable);
     if (betaErr) {
       console.error("Failed to load beta feedback:", betaErr);
       setBetaItems([]);
     } else {
-      setBetaItems(betaData || []);
+      setBetaItems(betaData);
     }
     setLoading(false);
   };
@@ -2997,6 +3041,12 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
     setActing(null);
   };
 
+  const resolveBetaItem = async (id) => {
+    const problem = await resolveFeedback(id);
+    if (problem) { alert(`Couldn't mark resolved: ${problem}`); return; }
+    setBetaItems(prev => prev.filter(i => i.id !== id));
+  };
+
   const deleteBetaItem = async (id) => {
     const { error } = await supabase.from("beta_feedback").delete().eq("id", id);
     if (error) console.error("Delete failed:", error);
@@ -3065,8 +3115,9 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
 
       {/* General user feedback from beta_feedback */}
       <h3 style={{...S.statsSectionTitle, marginTop:32}}>User feedback</h3>
+      {!betaResolvable && <p style={S.statsSectionSub}>{NEEDS_MIGRATION_009}</p>}
       {betaItems.length === 0 ? (
-        <p style={S.statsSectionSub}>No user feedback yet.</p>
+        <p style={S.statsSectionSub}>No open user feedback.</p>
       ) : (
         <div style={S.feedbackList}>
           {betaItems.map(item => (
@@ -3080,7 +3131,12 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
               {item.screenshot && (
                 <img src={item.screenshot} alt="Screenshot" style={S.betaFeedbackImg} />
               )}
-              <button style={S.betaFeedbackDel} onClick={() => deleteBetaItem(item.id)}>Dismiss</button>
+              <div style={{display:"flex", gap:8}}>
+                {betaResolvable && (
+                  <button style={S.betaFeedbackDel} onClick={() => resolveBetaItem(item.id)}>Mark resolved</button>
+                )}
+                <button style={S.betaFeedbackDel} onClick={() => deleteBetaItem(item.id)}>Delete</button>
+              </div>
             </div>
           ))}
         </div>

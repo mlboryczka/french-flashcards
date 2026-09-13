@@ -77,6 +77,14 @@ That is what happened on 2026-09-12: the session was handed
 `main`. Two sentences at the start instead of an hour of invisible work. Keep
 doing that.
 
+**Feedback is cleared when it is fixed, in the same session.** Once the change
+an entry asked for has landed, mark that entry resolved with a note saying
+what was done: `node scripts/resolve-feedback.mjs <ids> --note "…" --apply`,
+or "Mark resolved" in the admin view. The list is then only ever what is still
+waiting. An entry that needs no change (the card was right) is resolved too,
+with the note saying why. Resolving never deletes; the owner clears resolved
+rows when they choose to.
+
 `npm test` before every push. It is 18 suites, and closer to twenty minutes
 than a few — most of them drive a real browser at several window sizes. Start
 it early rather than last, and don't edit `src/` while it runs: the suites
@@ -387,6 +395,7 @@ writing nothing** — `--apply` is what makes them write.
 |---|---|
 | `fix-multi-sense.mjs` | The multi-sense cleanup end to end: scan, audit, apply. `DECK_USER_ID` narrows it to one deck; omit it for every user |
 | `resolve-disputes.mjs` | Works the backlog of "my answer should have been accepted" claims left in `feedback_submissions` |
+| `resolve-feedback.mjs` | Lists open `beta_feedback`, and marks entries resolved (`--note`, `--apply`) once they are fixed. Needs `migration_009` |
 
 Two things worth knowing about them:
 
@@ -436,6 +445,11 @@ can never undo 007.
   accepted for *everyone* holding that card. One learner's loose synonym
   silently loosened everyone else's grading. The old rows had no recoverable
   owner, so they go rather than get guessed at
+- `009_beta_feedback_resolved` — adds `resolved_at` and `resolution` to
+  `beta_feedback`, and the admin UPDATE policy that marking resolved needs.
+  Both admin views list only open entries; without this migration they fall
+  back to listing everything and say why, rather than showing an empty list.
+  **Search-and-replace the admin email before running it**
 
 **A cautionary tale worth knowing:** the first version of 006 treated the
 `dates` array as review history. It isn't — those are the *lesson* dates a word
@@ -1599,6 +1613,16 @@ migration, and clearing the archive later is one line:
 `(user_id, front)` slot, so adding a card with that front again — tutor or
 lesson sync — upserts onto it and brings it back. There is no archive button
 yet; rows are archived from a script or the SQL editor.
+
+**Clearing feedback, added the same day.** The owner's rule: the feedback
+list is cleared once the changes are made. `beta_feedback` had no state, so
+the only way off the list was deletion. `migration_009` adds `resolved_at`
+and `resolution`; both admin views now list only open entries and have a
+"Mark resolved" button beside Delete; `scripts/resolve-feedback.mjs` does it
+from a terminal with a note. It is now a step in *Working protocol*. No browser
+suite covers the admin views — the runner does not set `VITE_ADMIN_EMAIL`, and
+setting it would draw admin menu items under every other suite — so it was
+checked against the live table instead.
 
 **How this was carried out, since it will happen again.** The work was done in a
 session worktree and moved into the local copy by fast-forward. Mid-session a

@@ -81,7 +81,7 @@ create policy "Users can read own feedback"
 -- Admin can read all feedback. 
 -- ╔══════════════════════════════════════════════════════════════════╗
 -- ║ BEFORE RUNNING: replace YOUR_EMAIL_HERE@example.com on the next  ║
--- ║ two policies with the email you log in with.                     ║
+-- ║ three policies with the email you log in with.                   ║
 -- ╚══════════════════════════════════════════════════════════════════╝
 create policy "Admin can read all feedback"
   on public.feedback_submissions for select
@@ -250,7 +250,11 @@ create table if not exists public.beta_feedback (
   screenshot text,
   -- { card_id, front, back, category, shown_dir } for the card on screen.
   card_context jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Null while open. Set when the feedback has been dealt with, which takes it
+  -- off the admin list without deleting it (migration_009).
+  resolved_at timestamptz,
+  resolution text
 );
 
 create index if not exists beta_feedback_created_at_idx
@@ -280,3 +284,9 @@ create policy "Admin can read all beta feedback"
 create policy "Admin can delete beta feedback"
   on public.beta_feedback for delete
   using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
+
+-- "Mark resolved" is an UPDATE, and needs its own policy for the same reason.
+create policy "Admin can resolve beta feedback"
+  on public.beta_feedback for update
+  using (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com')
+  with check (auth.jwt() ->> 'email' = 'YOUR_EMAIL_HERE@example.com');
