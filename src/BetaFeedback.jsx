@@ -97,6 +97,7 @@ export function BetaFeedback({
   const [screenshot, setScreenshot] = useState(null);
   const [screenshotName, setScreenshotName] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [focused, setFocused] = useState(false);
   // { kind: "sent" | "failed", id } — the outcome of a send.
   const [toast, setToast] = useState(null);
   // Attach-card toggle: default ON when a card is provided, OFF otherwise.
@@ -118,14 +119,19 @@ export function BetaFeedback({
   // rather than parking it to reappear when the panel closes.
   useEffect(() => { if (open) setToast(null); }, [open]);
 
-  // Three lines at rest, growing with the content. The panel is only as wide
-  // as the sidebar, so one line held about four words.
+  // Five lines at rest, growing with the content. The panel is only as wide
+  // as the sidebar, so one line holds about four words. An attached screenshot
+  // takes the bottom of the same box, so the text's floor drops by the
+  // thumbnail's height and the box stays the size it was. On a short window
+  // the text is what gives way (`flexShrink` in its style) before the panel
+  // has to scroll.
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, 60), 132)}px`;
-  }, [message, mounted]);
+    const floor = screenshot ? 52 : 92;
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, floor), 150)}px`;
+  }, [message, mounted, screenshot]);
 
   // Reopening onto a saved draft puts the caret at the end of it, where you
   // left off, rather than in front of the first word.
@@ -343,102 +349,123 @@ export function BetaFeedback({
             handleImage(e.dataTransfer?.files?.[0]);
           }}
         >
+          {/* Three rows: title, message, one action row. The title, the
+              message box and the checkbox share the left edge; the message
+              box, Send and the ✕ share the right. */}
           <div style={BF.header}>
             <h2 style={BF.title}>Send feedback</h2>
-            <button
-              style={BF.iconBtn}
+            <IconButton
+              variant="close"
               onClick={() => close({ returnFocus: true })}
               aria-label="Close"
               title="Close — your draft is kept"
             >
-              <span style={{ fontSize: 18, lineHeight: 1 }}>×</span>
-            </button>
+              <XIcon size={13} />
+            </IconButton>
           </div>
 
-          <textarea
-            ref={textareaRef}
-            style={BF.textarea}
-            value={message}
-            onChange={(e) => { setMessage(e.target.value); if (error) setError(""); }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit(); }
+          {/* The message box is a container, not the bare textarea, so an
+              attached screenshot can sit inside it (bottom-left, like a
+              message composer) and the rows below never move. Clicking its
+              empty part puts the caret in the text. */}
+          <div
+            data-feedback-field
+            style={{ ...BF.field, ...(focused ? BF.fieldFocus : null) }}
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) { e.preventDefault(); textareaRef.current?.focus(); }
             }}
-            placeholder={isDragging ? "Drop the image anywhere here" : "Wrong translation, bad audio, a bug…"}
-            aria-label="Your feedback"
-            disabled={submitting}
-            rows={3}
-          />
+          >
+            <textarea
+              ref={textareaRef}
+              style={BF.textarea}
+              value={message}
+              onChange={(e) => { setMessage(e.target.value); if (error) setError(""); }}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit(); }
+              }}
+              placeholder={isDragging ? "Drop the image anywhere here" : "Wrong translation, bad audio, a bug…"}
+              aria-label="Your feedback"
+              disabled={submitting}
+              rows={3}
+            />
+            {screenshot && (
+              <span style={BF.thumbWrap}>
+                <button
+                  type="button"
+                  style={BF.thumbBtn}
+                  onClick={() => fileInputRef.current?.click()}
+                  title={`${screenshotName} — click to replace`}
+                  aria-label="Replace screenshot"
+                >
+                  <img src={screenshot} alt="Attached" style={BF.imgThumb} />
+                </button>
+                <button
+                  type="button"
+                  style={BF.thumbRemove}
+                  onClick={() => { setScreenshot(null); setScreenshotName(""); }}
+                  aria-label="Remove image"
+                  title="Remove screenshot"
+                >
+                  <XIcon size={8} stroke={3.5} />
+                </button>
+              </span>
+            )}
+          </div>
 
           {error && <div style={BF.error} role="alert">{error}</div>}
 
-          <div style={BF.chips}>
-            {currentCard && (
-              <button
-                type="button"
-                data-attach-card
-                style={attachCard ? { ...BF.chip, ...BF.chipOn } : BF.chip}
-                onClick={() => { userTouchedAttach.current = true; setAttachCard((v) => !v); }}
-                aria-pressed={attachCard}
-                title={attachCard ? `Attaching: ${currentCard.f} · ${currentCard.b}` : "Attach the card you're looking at"}
-              >
-                <CardIcon />
-                {/* The prompt as you saw it, not the raw stored front — the
-                    chip shouldn't show a gloss the card itself hides. The
-                    full row is still sent, and the tooltip has the original. */}
-                <span style={BF.chipLabel}>About: {cleanFrenchPrompt(currentCard.f, currentCard.b)}</span>
-              </button>
-            )}
-            {/* An attached image lives IN its chip — thumbnail, name, remove —
-                rather than in a preview row of its own. */}
-            {screenshot ? (
-              <span style={{ ...BF.chip, ...BF.chipOn, padding: "3px 4px", cursor: "default" }}>
-                <button
-                  type="button"
-                  style={BF.chipInner}
-                  onClick={() => fileInputRef.current?.click()}
-                  title={`${screenshotName} — click to replace`}
-                >
-                  <img src={screenshot} alt="Attached" style={BF.imgThumb} />
-                  <span style={BF.chipLabel}>{screenshotName}</span>
-                </button>
-                <button
-                  type="button"
-                  style={{ ...BF.chipInner, padding: "0 6px", fontSize: 13 }}
-                  onClick={() => { setScreenshot(null); setScreenshotName(""); }}
-                  aria-label="Remove image"
-                >
-                  ✕
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                style={BF.chip}
-                onClick={() => fileInputRef.current?.click()}
-                title="Attach a screenshot — or drop one on this panel, or paste it"
-              >
-                <ImageIcon />
-                Screenshot
-              </button>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={(e) => { handleImage(e.target.files?.[0]); e.target.value = ""; }}
-              style={{ display: "none" }}
-            />
-          </div>
-
           <div style={BF.footer}>
-            <span style={BF.hint}>⌘↵ to send</span>
-            <button
-              style={{ ...BF.submitBtn, ...(submitting ? BF.submitBusy : null) }}
-              onClick={handleSubmit}
-              aria-disabled={submitting}
-            >
-              {submitting ? "Sending…" : "Send"}
-            </button>
+            {/* A plain checkbox rather than a filled chip: attaching the card
+                is an option on the note, not a second thing competing with
+                Send. "Attach card", not "Attach current card": the full label
+                doesn't fit on one row with the paperclip and Send at sidebar
+                width. The tooltip names the card, as the prompt appears on it
+                — not the raw stored front, which can carry a gloss the card
+                hides. */}
+            {currentCard && (
+              <label
+                style={BF.check}
+                title={`Attach the current card: ${cleanFrenchPrompt(currentCard.f, currentCard.b)} · ${currentCard.b}`}
+              >
+                <input
+                  type="checkbox"
+                  data-attach-card
+                  style={BF.checkBox}
+                  checked={attachCard}
+                  onChange={(e) => { userTouchedAttach.current = true; setAttachCard(e.target.checked); }}
+                />
+                Attach card
+              </label>
+            )}
+            {/* The paperclip sits against Send, the way message composers do
+                it: no label, a tooltip, and paste and drop working anywhere on
+                the panel without being advertised. */}
+            <div style={BF.actions}>
+              <IconButton
+                data-add-screenshot
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach a screenshot — or paste one"
+                aria-label="Attach a screenshot"
+              >
+                <PaperclipIcon />
+              </IconButton>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => { handleImage(e.target.files?.[0]); e.target.value = ""; }}
+                style={{ display: "none" }}
+              />
+              <button
+                style={{ ...BF.submitBtn, ...(submitting ? BF.submitBusy : null) }}
+                onClick={handleSubmit}
+                aria-disabled={submitting}
+              >
+                {submitting ? "Sending…" : "Send"}
+              </button>
+            </div>
           </div>
         </div>,
         dockEl
@@ -506,7 +533,7 @@ function Toast({ kind, onDone, onOpen }) {
           <span style={{ flex: 1 }}>Feedback sent</span>
         </>
       )}
-      <button style={BF.toastClose} onClick={dismiss} aria-label="Dismiss">×</button>
+      <button style={BF.toastClose} onClick={dismiss} aria-label="Dismiss"><XIcon size={12} stroke={2.4} /></button>
     </div>
   );
 }
@@ -514,14 +541,31 @@ function Toast({ kind, onDone, onOpen }) {
 const ICON = { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
   strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: "none" } };
 
-const CardIcon = () => (
-  <svg {...ICON}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /></svg>
-);
-const ImageIcon = () => (
-  <svg {...ICON}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></svg>
+// Quiet at rest, a soft ground on hover — inline styles have no :hover.
+function IconButton({ children, variant, ...props }) {
+  const [hover, setHover] = useState(false);
+  const base = variant === "close" ? BF.closeBtn : BF.iconOnly;
+  return (
+    <button
+      type="button"
+      {...props}
+      style={{ ...base, ...(hover ? BF.iconOnlyHover : null) }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      {children}
+    </button>
+  );
+}
+
+const PaperclipIcon = () => (
+  <svg {...ICON} width={16} height={16}><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
 );
 const CheckIcon = () => (
-  <svg {...ICON}><path d="M20 6 9 17l-5-5" /></svg>
+  <svg {...ICON} strokeWidth={2.4}><path d="M20 6 9 17l-5-5" /></svg>
+);
+const XIcon = ({ size = 13, stroke = 2.2 }) => (
+  <svg {...ICON} width={size} height={size} strokeWidth={stroke}><path d="M18 6 6 18M6 6l12 12" /></svg>
 );
 
 const BF = {
@@ -556,89 +600,91 @@ const BF = {
     position: "relative",
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 10,
     // Shrinks to the dock on a short window and scrolls inside, rather than
     // riding up over the nav.
     minHeight: 0,
     overflowY: "auto",
     background: T.color.surfaceLowest,
     border: "1px solid rgba(3,22,50,0.08)",
-    borderRadius: T.radius.lg,
-    boxShadow: "0 10px 28px rgba(3,22,50,0.10), 0 1px 3px rgba(3,22,50,0.06)",
-    padding: "12px 12px 12px",
+    borderRadius: 10,
+    boxShadow: "0 10px 28px rgba(3,22,50,0.09), 0 1px 3px rgba(3,22,50,0.05)",
+    padding: 12,
     boxSizing: "border-box",
     fontFamily: T.font.sans,
     transition: `opacity ${DOCK_ANIM_MS}ms ${PANEL_EASING}, transform ${DOCK_ANIM_MS}ms ${PANEL_EASING}`,
   },
   panelDrag: {
-    boxShadow: `0 10px 28px rgba(3,22,50,0.10), inset 0 0 0 2px ${T.color.secondary}`,
+    boxShadow: `0 10px 28px rgba(3,22,50,0.09), inset 0 0 0 2px ${T.color.secondary}`,
   },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
+    height: 22,
     flexShrink: 0,
   },
   title: {
     margin: 0,
-    fontSize: 15,
+    fontSize: 13.5,
+    lineHeight: 1,
     color: T.color.primary,
     fontFamily: T.font.serif,
     fontWeight: 700,
-    letterSpacing: "-0.02em",
+    letterSpacing: "-0.01em",
   },
-  iconBtn: {
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    color: T.color.onSurfaceVariant,
-    padding: "2px 6px",
-    marginRight: -4,
-    borderRadius: T.radius.md,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
+  // 22px square; the -4px pulls the glyph's right edge onto the content edge,
+  // level with Send's.
+  closeBtn: {
+    width: 22, height: 22, marginRight: -4, padding: 0, border: "none", borderRadius: T.radius.md,
+    background: "transparent", color: T.color.onSurfaceVariant, cursor: "pointer",
+    display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none",
+    transition: "background 0.15s",
   },
-  textarea: {
-    width: "100%",
-    minHeight: 60,
-    maxHeight: 132,
-    padding: "8px 10px",
-    fontSize: 13,
-    border: "none",
+
+  // ── Message box ─────────────────────────────────────────────────
+  field: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    minHeight: 0,
+    flexShrink: 1,
+    padding: "9px 11px",
     background: T.color.surfaceLow,
-    borderRadius: T.radius.md,
+    border: "1px solid transparent",
+    borderRadius: T.radius.lg,
+    cursor: "text",
+    transition: "background 0.15s, border-color 0.15s",
+  },
+  fieldFocus: { background: T.color.surfaceLowest, borderColor: "rgba(3,22,50,0.18)" },
+  textarea: {
+    display: "block",
+    width: "100%",
+    minHeight: 36,
+    maxHeight: 150,
+    padding: 0,
+    margin: 0,
+    fontSize: 12.5,
+    border: "none",
+    background: "transparent",
     resize: "none",
     boxSizing: "border-box",
     fontFamily: T.font.sans,
     color: T.color.onSurface,
     lineHeight: 1.45,
     outline: "none",
-    flexShrink: 0,
+    flexShrink: 1,
   },
-
-  // ── Chips ────────────────────────────────────────────────────────
-  chips: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: "wrap" },
-  chip: {
-    display: "inline-flex", alignItems: "center", gap: 6, maxWidth: "100%", boxSizing: "border-box",
-    borderWidth: 1, borderStyle: "solid", borderColor: "rgba(3,22,50,0.1)",
-    background: "transparent", borderRadius: T.radius.full, padding: "4px 10px",
-    fontSize: 11.5, fontWeight: 600, color: T.color.onSurfaceVariant,
-    fontFamily: T.font.sans, cursor: "pointer", whiteSpace: "nowrap",
+  thumbWrap: { position: "relative", alignSelf: "flex-start", flex: "none", display: "inline-flex" },
+  thumbBtn: {
+    padding: 0, border: "1px solid rgba(3,22,50,0.12)", borderRadius: 5, background: T.color.surfaceLowest,
+    cursor: "pointer", display: "inline-flex", overflow: "hidden",
   },
-  chipOn: { background: T.color.primary, borderColor: T.color.primary, color: T.color.onPrimary },
-  chipLabel: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 },
-  chipInner: {
-    display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0,
-    background: "transparent", border: "none", color: "inherit", font: "inherit",
-    cursor: "pointer", padding: 0,
-  },
-  imgThumb: {
-    width: 22,
-    height: 16,
-    objectFit: "cover",
-    borderRadius: 3,
-    flex: "none",
+  imgThumb: { width: 48, height: 34, objectFit: "cover", display: "block" },
+  thumbRemove: {
+    position: "absolute", top: -6, right: -6, width: 16, height: 16, padding: 0, border: "none",
+    borderRadius: "50%", background: T.color.primary, color: T.color.onPrimary, cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
   },
 
   // ── Messages ─────────────────────────────────────────────────────
@@ -651,20 +697,33 @@ const BF = {
     flexShrink: 0,
   },
 
-  footer: { display: "flex", alignItems: "center", flexShrink: 0 },
-  hint: { fontSize: 11, color: T.color.onSurfaceVariant, opacity: 0.7 },
+  // ── Action row ──────────────────────────────────────────────────
+  footer: { display: "flex", alignItems: "center", height: 30, flexShrink: 0 },
+  check: {
+    display: "flex", alignItems: "center", gap: 7, cursor: "pointer", whiteSpace: "nowrap",
+    fontSize: 12, fontWeight: 500, color: T.color.onSurfaceVariant, fontFamily: T.font.sans, userSelect: "none",
+  },
+  checkBox: { margin: 0, width: 14, height: 14, accentColor: T.color.primary, cursor: "pointer", flex: "none" },
+  actions: { marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 },
+  iconOnly: {
+    width: 30, height: 30, padding: 0, border: "none", borderRadius: T.radius.md,
+    background: "transparent", color: T.color.onSurfaceVariant, cursor: "pointer",
+    display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none",
+    transition: "background 0.15s, color 0.15s",
+  },
+  iconOnlyHover: { background: T.color.surfaceMid, color: T.color.primary },
   submitBtn: {
-    marginLeft: "auto",
-    padding: "7px 16px",
+    height: 30,
+    padding: "0 14px",
     background: T.gradient.ink,
     color: T.color.onPrimary,
     border: "none",
     borderRadius: T.radius.md,
     cursor: "pointer",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 600,
     fontFamily: T.font.sans,
-    boxShadow: T.shadow.button,
+    boxShadow: "0 6px 16px rgba(3,22,50,0.14)",
     letterSpacing: "0.01em",
   },
   submitBusy: { opacity: 0.7, cursor: "progress" },
@@ -674,13 +733,13 @@ const BF = {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    padding: "9px 8px 9px 12px",
+    padding: "10px 10px 10px 12px",
     background: T.color.primary,
     color: T.color.onPrimary,
-    borderRadius: T.radius.lg,
+    borderRadius: 10,
     boxShadow: "0 10px 28px rgba(3,22,50,0.16)",
-    fontSize: 13,
-    fontWeight: 500,
+    fontSize: 12.5,
+    fontWeight: 600,
     fontFamily: T.font.sans,
     transition: `opacity ${DOCK_ANIM_MS}ms ${PANEL_EASING}, transform ${DOCK_ANIM_MS}ms ${PANEL_EASING}`,
   },
@@ -695,9 +754,8 @@ const BF = {
     color: "inherit",
     opacity: 0.7,
     cursor: "pointer",
-    fontSize: 17,
-    lineHeight: 1,
-    padding: "0 4px",
+    display: "flex",
+    padding: 2,
   },
   toastAction: {
     background: "transparent",

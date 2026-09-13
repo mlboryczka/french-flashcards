@@ -544,9 +544,17 @@ of these were "fixed" against an assumption and shipped broken.
   — a subtitle, a 90px textarea, a full-width attach row, a full-width dashed
   dropzone and a footer, for what is really one text field. `max-height` is
   `min(300px, 38vh)` as a backstop, not the usual case. *(The sidebar panel is
-  ~233px: a three-line field, because a sidebar-width line holds four words,
-  the chips stacked, and a footer with Send. An attached screenshot shows as a
-  thumbnail inside its chip, never as a row of its own.)*
+  ~210px and three rows: a 13.5px title with the ✕; the message box; one
+  action row — "Attach card" checkbox on the left, paperclip and Send on the
+  right, all 30px. The title, message box and checkbox share a left edge; the
+  message box, Send and the ✕'s glyph share a right edge (`panels` checks both
+  to the pixel). The message box is a container, not the bare textarea, so an
+  attached screenshot sits inside it bottom-left with a ✕ badge and the rows
+  never move. "Attach card", not "Attach current card": the full label doesn't
+  fit on the action row at sidebar width; the tooltip names the card. The
+  paperclip follows message composers (Slack, Gmail, Linear, ChatGPT): no
+  label, a tooltip, paste and drop working silently. No "⌘↵ to send" hint — the
+  shortcut stays. Mocked at real size before it was built.)*
 - **The whole sheet is the drop and paste target**, which is what let the
   dedicated dropzone go. Dragging over it outlines the entire panel; the
   Screenshot chip is the click-to-browse affordance.
@@ -570,7 +578,7 @@ of these were "fixed" against an assumption and shipped broken.
   mid-send — raises a toast that doesn't time out.
 - **The flag on the card opens feedback about that card.** A faint flag beside
   the ⓘ (`data-report-card`, on both faces, hidden while the panel is open)
-  opens the panel with "About: <card>" switched on, even if it had been
+  opens the panel with "Attach card" ticked, even if it had been
   switched off for the draft. It stops its own mousedown and click so it never
   flips, continues or grades the card.
 - **The panel closes if the window goes narrow.** The narrow layout has no

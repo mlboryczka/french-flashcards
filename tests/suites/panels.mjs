@@ -72,19 +72,59 @@ ck(
   "the subtitle is gone",
   !(await page.evaluate(() => /Bug, idea, or wrong translation/.test(document.body.innerText)))
 );
-// Three lines — the old sheet's box was 90px and mostly empty, and one line of
-// a sidebar-width field holds about four words.
+// Room for a few sentences. A sidebar-width line holds about four words, and
+// at three lines the field read as a one-liner.
+//
+// And the three rows line up: title, message box and checkbox share the left
+// edge; message box, Send and the close button's glyph share the right.
+const edges = await page.evaluate(() => {
+  const q = (sel) => document.querySelector(`[data-feedback-sheet] ${sel}`)?.getBoundingClientRect();
+  const send = [...document.querySelectorAll("[data-feedback-sheet] button")].find((b) => b.innerText.trim() === "Send").getBoundingClientRect();
+  const x = document.querySelector('[data-feedback-sheet] button[aria-label="Close"] svg').getBoundingClientRect();
+  return {
+    left: [q("h2").left, q("[data-feedback-field]").left, q("[data-attach-card]").left].map(Math.round),
+    right: [q("[data-feedback-field]").right, send.right, x.right].map(Math.round),
+  };
+});
+const spread = (xs) => Math.max(...xs) - Math.min(...xs);
+ck("title, message box and checkbox share a left edge", spread(edges.left) <= 1, JSON.stringify(edges.left));
+ck("message box, Send and ✕ share a right edge", spread(edges.right) <= 1, JSON.stringify(edges.right));
 const fieldH = await page.evaluate(() => {
-  const t = document.querySelector("[data-feedback-sheet] textarea");
-  return t ? Math.round(t.getBoundingClientRect().height) : 999;
+  const t = document.querySelector("[data-feedback-field]");
+  return t ? Math.round(t.getBoundingClientRect().height) : 0;
 });
-ck("the message field starts small — under the old 90px box", fieldH < 90, `${fieldH}px`);
+ck("the message field starts with room for a few sentences", fieldH >= 100, `${fieldH}px`);
 // By its marker, not by guessing at whatever French happens to be on the card.
-const attachWidth = await page.evaluate(() => {
+const attach = await page.evaluate(() => {
   const b = document.querySelector("[data-attach-card]");
-  return b ? Math.round(b.getBoundingClientRect().width) : null;
+  const label = b?.closest("label");
+  return b ? { type: b.type, checked: b.checked, text: label?.innerText.trim(), width: Math.round(label.getBoundingClientRect().width) } : null;
 });
-ck("attach-card is a chip that fits the panel", attachWidth !== null && attachWidth <= g.panel.right - g.panel.left, `${attachWidth}px`);
+ck(
+  "attaching the card is a checkbox, on by default on a card",
+  attach?.type === "checkbox" && attach.checked && attach.text === "Attach card",
+  JSON.stringify(attach)
+);
+ck("and fits the panel", !!attach && attach.width <= g.panel.right - g.panel.left, `${attach?.width}px`);
+// Attaching a screenshot is a paperclip, not a labelled chip: named for screen
+// readers and in its tooltip, with no visible text, beside Send.
+const shotBtn = await page.evaluate(() => {
+  const b = document.querySelector("[data-add-screenshot]");
+  const send = [...document.querySelectorAll("[data-feedback-sheet] button")].find((x) => x.innerText.trim() === "Send");
+  if (!b || !send) return null;
+  const r = b.getBoundingClientRect(), sr = send.getBoundingClientRect();
+  return {
+    label: b.getAttribute("aria-label"),
+    text: b.innerText.trim(),
+    sameRow: Math.abs((r.top + r.bottom) / 2 - (sr.top + sr.bottom) / 2) <= 1,
+    gapToSend: Math.round(sr.left - r.right),
+  };
+});
+ck(
+  "attaching a screenshot is an icon-only button right beside Send",
+  !!shotBtn && shotBtn.label === "Attach a screenshot" && shotBtn.text === "" && shotBtn.sameRow && shotBtn.gapToSend <= 8,
+  JSON.stringify(shotBtn)
+);
 // The dedicated dropzone is gone, so the panel itself has to accept the file.
 await page.evaluate(() => {
   const dt = new DataTransfer();
@@ -253,11 +293,13 @@ await browser.close();
     `${cardBefore.height}@${cardBefore.top} → ${cardAfter.height}@${cardAfter.top}`);
   ck("the panel still stops below Tutor", grown.panel.top >= grown.tutorBottom + 16, `top ${grown.panel.top}, Tutor ${grown.tutorBottom}`);
   ck(
-    "the screenshot sits in its chip, not a row of its own",
+    "the screenshot sits inside the message box, not a row of its own",
     await p.evaluate(() => {
       const img = document.querySelector('[data-feedback-sheet] img[alt="Attached"]');
-      const chip = img?.parentElement?.parentElement;
-      return !!chip && chip.getBoundingClientRect().height <= 30;
+      const field = document.querySelector("[data-feedback-field]");
+      if (!img || !field) return false;
+      const a = img.getBoundingClientRect(), f = field.getBoundingClientRect();
+      return a.left >= f.left && a.right <= f.right && a.top >= f.top && a.bottom <= f.bottom;
     })
   );
 
@@ -313,7 +355,7 @@ await browser.close();
   // Switch attaching OFF on the current draft, then put the panel away: the
   // flag has to switch it back on, because the flag means "this card".
   await p.click("[data-attach-card]");
-  ck("(attach switched off for the draft)", (await p.getAttribute("[data-attach-card]", "aria-pressed")) === "false");
+  ck("(attach switched off for the draft)", !(await p.isChecked("[data-attach-card]")));
   await p.mouse.click(...OUTSIDE);
   await p.waitForTimeout(600);
   ck("the flag is on the card while the panel is shut", (await p.locator("[data-report-card]").count()) > 0);
@@ -327,7 +369,7 @@ await browser.close();
   await p.locator("[data-report-card]").first().click();
   await p.waitForTimeout(800);
   ck("clicking it opens the panel", await sheetOpen());
-  ck("with the card attached", (await p.getAttribute("[data-attach-card]", "aria-pressed")) === "true");
+  ck("with the card attached", await p.isChecked("[data-attach-card]"));
   ck("keeping the draft that was there", (await field()) === "ok — the audio is missing", JSON.stringify(await field()));
   const flipAfter = await p.evaluate(() => {
     const el = [...document.querySelectorAll("div")].find((d) => getComputedStyle(d).transformStyle === "preserve-3d");
