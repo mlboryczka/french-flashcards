@@ -324,7 +324,7 @@ The parser prompt also forbids producing these in the first place.
 | Route | Does |
 |---|---|
 | `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, polysemy-aware dedupe |
-| `chat.js` | Tutor chat. Streams (SSE), Sonnet 5 at effort `low`, sent a slice of the deck as context. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
+| `chat.js` | Tutor chat. Streams (SSE), Sonnet 5 at effort `low`, sent a slice of the deck as context, including the card on screen and **whether its answer has been shown** — until it has, the tutor gives hints, never the answer. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
 | `split-senses.js` | Audits candidate multi-sense cards. Read-only |
 | `apply-splits.js` | Applies approved splits. Service role + manual ownership checks |
 | `admin-update-card.js` | Single-card edit. Service role, because RLS was silently returning success with zero rows affected from the client |
@@ -634,6 +634,17 @@ of these were "fixed" against an assumption and shipped broken.
   swallow was eating clicks on "Send feedback". All of that is gone with the
   behaviour it served. On a narrow screen the scrim still dims the app behind
   the panel, and no longer dismisses it.
+- **The study keys work beside the tutor, until you click into it.** When the
+  tutor reflows the page rather than covering the card, it is not in
+  `overlayOpen`: it is built for studying with it open, and treating it as an
+  overlay left Space, Enter and the arrows dead the whole time. The keys
+  belong to the tutor only while focus is inside it or the last click landed in
+  it (`pointerInTutorRef`, set on `pointerdown` AND `click` — a click from the
+  keyboard or assistive tech has no pointer event, and the `session` suite's
+  synthetic click is exactly that). That second condition is the "clicked
+  somewhere inert in the tutor, then Enter graded the card" bug, which is why
+  checking focus alone is not enough. As an overlay (narrow window, no room to
+  reflow) it still blocks the keys outright.
 - **Nav markers use CSS longhands**, not the `borderRight` shorthand. React
   diffs per property, so a shorthand base plus a longhand override leaves a
   stale value when the item deactivates — both nav items showed a marker.
@@ -1738,6 +1749,76 @@ for" as "undo it" were both guesses at intent where a question was cheap. The
 rule the owner stated: do what is asked, and when it isn't clear whether that
 means plan or build, ask.
 
+### 2026-09-12 — the tutor, audited: nineteen fixes
+
+Asked to evaluate the tutor and list everything worth fixing, then to fix all
+of it. Found by reading the code, not by driving the live app. Five of the
+nineteen corrupted study data or gave answers away, and those are the ones
+worth remembering:
+
+- **The panel header showed the answer.** It always printed the French front,
+  so on an English-prompt card the answer sat in the header — and, since the
+  header follows the session, every next card's answer too. It now shows what
+  the card asks (`cardPrompt` in `lib/deckContext.js`, the same cleaning the
+  card face uses), with the answer appended only once the card has shown it.
+- **The tutor could hand over an unanswered card, and FSRS then recorded a
+  recall.** It was sent front and back with no sign of whether the student had
+  answered. `tutorCard` in `FlashcardApp` now carries `answered` (sticky for
+  that appearance of the card, keyed on queue position and row), and after a
+  typed answer `typed` and `result`. The prompt forbids giving an unanswered
+  card's answer even when asked, and the card is kept out of the related list
+  while unanswered, since that list would give it away.
+- **"They just got this wrong" was usually false.** It was read off
+  `last_answer_correct`, which is last session's result, and lapse cards come
+  first in every block. It now comes from this attempt; the row's result is
+  sent separately as "missed it last time".
+- **"Ask the tutor" after a miss never sent what was typed.** It does now, with
+  the verdict.
+- **Add silently overwrote an existing card.** It upserted on `(user_id,
+  front)`: the notebook's gloss replaced, `source` set to `tutor-chat` (which
+  re-dates the card in `sessionQueue`), a lesson card stripped of its lesson
+  tag until the next sync. The chip now checks the deck in the browser,
+  ignoring case, and says "Already in your deck as …" with a Replace that
+  changes only the back through `/api/admin-update-card`. New cards are
+  inserted; only a unique-key conflict falls through to the upsert, because
+  that is an archived card coming back.
+
+The rest, briefly. Earlier turns go back with the card they were asked about
+and the cards they proposed, as bracketed notes built server-side, so a
+follow-up keeps its subject. Card rules the impératif module established are
+now in the prompt and enforced in `normalizeCards`: grammar cards must be arrow
+drills with a French answer, pronunciation cards are gone. Misses are sent only
+when recent (30 days) and sharing a word with the question. Deck matching
+folds accents, splits elision, treats `œ`/`æ` as letters and falls back to the
+previous question. A stream that ends without `done` reads as cut off;
+`max_tokens` and refusal are reported; raw API errors stay in the log. Add
+inserts the returned row into the deck (`add` in `useUserDeck`) instead of
+refetching thousands. The panel gained New chat (and a fresh thread when opened
+from a different card), card-aware suggestions, rendered bold and italics,
+focus that stays in the box, a screen-reader announcement, and a thread that
+lives in `lib/tutorThreads.js` so the onboarding-to-app swap no longer wipes it;
+sign-out clears it.
+
+**The cache open item is settled by the docs, and fixed.** Sonnet 5's minimum
+cacheable prefix is 1,024 tokens and the system prompt plus tool schema were
+about 900, so the breakpoint cached nothing. A second breakpoint now sits on
+the turn before the latest question — the latest carries this turn's
+`[Context]`, which is gone from it by the next request — and the window trims
+ten turns at a time so the prefix doesn't shift every turn.
+
+**Found by the suite, not by reading:** clicking Send moved focus to a button
+that then disabled, dropping focus to the page; the screen-reader region kept
+the old answer after New chat, and read `**` aloud; and the first version of
+the keyboard fix listened for `pointerdown` only, which `session` caught with a
+synthetic click writing three stray reviews.
+
+Tests: `logic` gained matching, misses, context and request-building checks;
+`tutor` gained the header on an English-prompt card, unanswered context, Replace
+instead of Add, no refetch on Add, earlier turns' notes, focus, New chat, bold,
+the keys beside the panel, and a cut-off stream. Full run on the Mac: 16 of 18,
+`layout` the baseline and `session` the failure above; after the fix `session`,
+`tutor`, `panels` and `logic` all pass. `reflow` passed on this run.
+
 ---
 
 ## Open items
@@ -1887,11 +1968,17 @@ means plan or build, ask.
   editable, so a bad card costs a keystroke rather than months of reviews. A
   real answer needs ~30-40 real questions with checked answers, run against both
   at a couple of effort levels. Until then: use it, and switch back if it is
-  visibly worse.
-- **The tutor's cache breakpoint may be a no-op.** The system prompt plus tool
-  schema is roughly 900 tokens and the minimum cacheable prefix is
-  model-dependent; below it, `cache_control` silently does nothing. One
-  `count_tokens` call against the real prompt would settle it.
+  visibly worse. Since 2026-09-12 the prompt also carries rules a lighter model
+  may follow less reliably — see the next item.
+- **The tutor fixes of 2026-09-12 were tested against a mock, not Claude.**
+  The suites prove what the app sends and shows. They cannot prove that the
+  model withholds an unanswered card's answer when pushed, writes grammar cards
+  as arrow drills, and never imitates the bracketed history notes; nor that
+  the conversation cache now hits (`usage.cache_read_input_tokens` above zero
+  from the second question); nor Replace against the real
+  `/api/admin-update-card`, which the mock does not serve. A handful of real
+  questions on the owner's deck would settle all of it — ask on an unanswered
+  card without answering it, so no review is written.
 - **`split-senses.js` still runs Opus 5** for what is batch classification
   against written-out rules — see the table under Serverless functions. It is
   offline, so it could also go through the Batch API at half price.
