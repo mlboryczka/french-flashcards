@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 import { CAT_DB_TO_UI } from "./lib/cardCategories";
+import { isArchived } from "./lib/archive";
 
 // Loads the user's flashcard deck from user_cards.
 //
@@ -161,7 +162,9 @@ export function useUserDeck(user) {
       }
 
       if (cancelled) return;
-      const shaped = allRows.map((row) => ({
+      // Archived cards are out of circulation: not studied, listed or counted.
+      // See lib/archive.js.
+      const shaped = allRows.filter((row) => !isArchived(row)).map((row) => ({
           f: row.front,
           b: row.back,
           cat: CAT_DB_TO_UI[row.category] || "vocab",

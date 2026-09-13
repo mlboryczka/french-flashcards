@@ -1523,16 +1523,45 @@ per the new first rule of **Working protocol**.
 | `pp de devoir : dû` — grammar, not vocab | Answer on the front; `pp` not a grammar term | `pp` in `GRAMMAR_TERM`; card data; parser rule 10c |
 | `réélire` — participle is a hint | Form note on the English prompt | `cleanEnglishPrompt`; card data |
 
-**Card data is proposed, not applied**: 37 edits (11 multi-sense, 11 slash
-pairs, 12 participle drills, 3 single fixes) and 16 new cards, owner's deck
-only. It needs the owner's go-ahead because it writes to production. See
-the open item.
+**Card data, applied with the owner's go-ahead**, owner's deck only: 36 rows
+rewritten in place, so each keeps its FSRS history (11 multi-sense cards
+reduced to their first sense, 11 slash pairs to one form, 12 participle drills
+to `verbe → participe passé` with the participle as the answer, plus
+`réélire` and a wrong `ça va` → "it was okay"), and 16 new cards for the
+second halves, starting as New. A split's second half takes a disambiguating
+tag on its front (`planter (fam)`, `la mousse (plante)`) because
+`(user_id, front)` is unique. Where the second half already existed as its
+own card, no new card was made. Fourteen rows turned out to repeat a card
+that already exists (`il neige / il neigeait` beside `il neige` and
+`il neigeait`; the uncorrected `je sais que peux m'ennuyer` beside the
+correct one), and the owner deleted them from the SQL editor. Deck: 3,927
+cards before, 3,929 after, and a check against the pre-change snapshot found
+exactly those fourteen rows gone and nothing else.
 
-Found on the way: `npm test` on a Mac needs `CHROME_PATH` pointed at a local
-Chromium (the default is a Linux container path), and with that the layout
-suite fails one check — the card moving 5px when graded — **identically on
-the unchanged code**, so it is the environment (fonts), not this change.
-Everything else: 14 of 15 suites green.
+**Archiving, added the same day.** A card can now be taken out of circulation
+without deleting it: `source` gains an `archived:` prefix
+(`archived:cahier-upload`) and `useUserDeck` drops those rows, so the card is
+not studied, listed or counted. `src/lib/archive.js` owns the prefix. No
+migration, and clearing the archive later is one line:
+`delete from user_cards where source like 'archived:%';`. The row keeps its
+`(user_id, front)` slot, so adding a card with that front again — tutor or
+lesson sync — upserts onto it and brings it back. There is no archive button
+yet; rows are archived from a script or the SQL editor.
+
+**How this was carried out, since it will happen again.** The work was done in a
+session worktree and moved into the local copy by fast-forward. Mid-session a
+second session committed and pushed five commits to `main` from the local
+copy, so the fast-forward was refused (it had uncommitted edits to
+`FlashcardApp.jsx`) and the feedback commit was rebased onto its work
+instead. Only this document conflicted. Two sessions on one checkout is
+survivable because git refuses to overwrite; check `git status` in the local
+copy before moving anything into it.
+
+Tests, run on the Mac as *Working protocol* describes: 17 of 18 suites green
+after rebasing onto the block and progress work. `layout` failed its "card
+does not move when graded" check (264 → 259px), and failed it identically on
+the unchanged code. One `reflow` run timed out loading the page and passed on
+a re-run.
 
 ---
 
@@ -1552,7 +1581,14 @@ Everything else: 14 of 15 suites green.
   movement frame by frame and this machine's headless Chrome reports it
   differently. Until they're adjusted, layout and animation changes made on
   the Mac have no working check, so measure those by hand in a browser.
-
+- **The deck has many near-duplicate cards**, from the same notebook line
+  parsed more than once: `rentable` three times, `chiant` three times,
+  `décrire` and `élire` each with a gloss-tagged twin. The feedback pass
+  removed the fourteen it tripped over; nothing finds the rest. Archiving
+  (`src/lib/archive.js`) is the safe way to take them out once found.
+- **Archiving has no UI.** A card is archived by setting `source` to
+  `archived:<source>` from a script or the SQL editor. An "Archive" button next
+  to "Delete card" in the edit modal would be the natural home.
 - **`^0.x` dependency versions can never update themselves.** The Anthropic
   SDK sat on 0.27.0 (Sept 2024) from the first commit until it was bumped to
   0.124.0, because below 1.0 a caret pins the MINOR — `^0.27.0` means 0.27.x

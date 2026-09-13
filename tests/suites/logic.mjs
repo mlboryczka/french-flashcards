@@ -6,6 +6,7 @@ import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "../../sr
 import { findRelatedCards, recentMisses } from "../../src/lib/deckContext.js";
 import { reconcileLessons } from "../../src/lib/lessonSync.js";
 import { lessonSource, lessonCardKey } from "../../src/lib/lessonSource.js";
+import { isArchived, archivedSource } from "../../src/lib/archive.js";
 import { checker } from "../check.mjs";
 
 const ck = checker();
@@ -278,6 +279,14 @@ console.log("\n  card text — what the prompt may not show");
   ck("an ellipsis is not a full stop", dropFinalPeriod("c'est pour ça que...") === "c'est pour ça que...");
   ck("nor is etc.", dropFinalPeriod("tout etc.") === "tout etc.");
   ck("? and ! are untouched", dropFinalPeriod("Tu viens ?") === "Tu viens ?");
+}
+
+console.log("\n  archive — out of circulation, recoverable");
+{
+  ck("an archived source keeps where the card came from", archivedSource("cahier-upload") === "archived:cahier-upload");
+  ck("archiving twice changes nothing", archivedSource(archivedSource("tutor-chat")) === "archived:tutor-chat");
+  ck("an archived row is recognised", isArchived({ source: "archived:cahier-upload" }));
+  ck("ordinary rows are not", !isArchived({ source: "cahier-upload" }) && !isArchived({ source: null }) && !isArchived({}));
 }
 
 const n = ck.fails();
