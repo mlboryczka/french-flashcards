@@ -319,4 +319,46 @@ console.log("\n  Continue deals the next block, and never the same card twice");
   await browser.close();
 }
 
+console.log("\n  switching between flipping and typing waits once the answer is seen");
+// Switching used to reset the card, so an answer seen one way could be given
+// the other: flip, switch to typing, type what you just read (a recall that
+// never happened); or Show answer, switch to flipping, press Got It (a miss
+// turned into a hit). Judged by what was written, not by what is on screen.
+{
+  const writes = [];
+  const { browser, page } = await openApp({
+    route: (p) => p.route("**/rest/v1/user_cards*", async (r) => {
+      if (r.request().method() === "PATCH") writes.push(JSON.parse(r.request().postData() || "{}"));
+      await r.continue();
+    }),
+  });
+  const click = (t) => page.evaluate((x) => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === x)?.click(), t);
+  const has = (re) => page.evaluate(([s, f]) => new RegExp(s, f).test(document.body.innerText), [re.source, re.flags]);
+  const typing = () => page.evaluate(() => !!document.querySelector("input[placeholder^='Type ']"));
+  const wait = (ms = 350) => page.waitForTimeout(ms);
+
+  await click("Type answer"); await wait();
+  ck("before the answer is seen, switching is immediate", await typing());
+  await click("Type answer"); await wait();
+  await page.keyboard.press(" "); await wait(700);
+  await click("Type answer"); await wait();
+  ck("after flipping, the switch to typing waits for the next card",
+     !(await typing()) && await has(/Typing starts from the next card/));
+  await click("Type answer"); await wait();
+  ck("pressing again cancels it", !(await has(/starts from the next card/)));
+  await click("Type answer"); await wait();
+  await click("Got It"); await wait(600);
+  ck("the next card is typed", await typing());
+  await click("Show answer"); await wait(500);
+  await click("Type answer"); await wait();
+  ck("after Show answer, the switch to flipping waits, and Got It is not offered",
+     await has(/Flipping starts from the next card/) && !(await has(/Got It/)));
+  await click("Continue →"); await wait(600);
+  ck("so the flip was recorded as right and Show answer as a miss",
+     JSON.stringify(writes.map((w) => w.last_answer_correct)) === "[true,false]",
+     JSON.stringify(writes.map((w) => w.last_answer_correct)));
+  ck("and the card after is flipped", !(await typing()) && !(await has(/starts from the next card/)));
+  await browser.close();
+}
+
 await finish(null, ck);

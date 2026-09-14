@@ -230,6 +230,28 @@ counted as forgotten twice, difficulty near its maximum; a new card missed then
 right went from due tomorrow to 3 days. `lapses` stored before this fix still
 carries those double counts, and with no review log it cannot be corrected.
 
+### Flipping and typing
+
+Two ways to answer, both recorded to FSRS the same way, under the same one
+answer per card per day rule:
+
+- **Flipping** (the default). The student turns the card and grades
+  themselves with Got It or Again. FSRS learns only what that press says; it
+  cannot tell whether the answer was really known. Just turning a card records
+  nothing, and there is no way on to the next card without grading.
+- **Typing.** The matcher grades: a small typo is right ("close enough"), a
+  wrong article is wrong, Show answer is wrong. Checked, so it is the stronger
+  evidence.
+
+**Switching waits once the answer has been seen** (`toggleTypeMode`,
+`pendingTypeMode`). Before the answer is seen, the switch is immediate. After —
+a flip, a checked answer, or Show answer — the card is graded the way it was
+started and the switch applies from the next card, with "Typing starts from the
+next card" (or "Flipping…") beside the chip; pressing again cancels it.
+Switching used to reset the card: flip, switch to typing and type what you had
+just read, and FSRS recorded a recall that never happened; or Show answer,
+switch to flipping and press Got It. `session` checks both, by the writes.
+
 ### FSRS configuration (`src/lib/spacedRepetition.js`)
 
 ```
@@ -2023,9 +2045,61 @@ count). `stats` checks it.
 
 Not verified: the live app, signed in, after the fix. See the open item.
 
+### 2026-09-14 — flipping versus typing, and the study flow's exception paths
+
+The owner asked how the two ways of answering should work, and then how a
+student going back and forth between them is handled. It wasn't: switching
+modes reset the card, so an answer already seen could be given again the other
+way. Fixed — see *Flipping and typing*.
+
+Then every exception path in a study session was driven in the app against the
+mock, judged by what was written to FSRS rather than what the screen showed.
+The findings are open items below, not fixes; the owner was asked which to
+take:
+
+- Flip mode grades a card that was never turned (Got It showing, and
+  ArrowRight / Enter recording a hit, before the flip).
+- An accepted "my answer should be accepted" dispute is still recorded as a
+  miss when Continue is pressed.
+- Correcting a mistaken grade with Previous card records nothing, because the
+  day's answer is already in.
+- Tapping the card, or pressing Escape, with an answer typed but not checked
+  throws the typed answer away and records a miss.
+- A save that fails says nothing on screen.
+- Changing direction or the type filter mid-block deals a new block and loses
+  the block's running count.
+
 ---
 
 ## Open items
+
+- **Flip mode grades cards that were never turned.** Got It and Again show
+  before the flip, and ArrowRight / Enter record a hit on an unturned card —
+  measured: one write, `last_answer_correct: true`, with the answer never on
+  screen. The grade should only be offered once the answer is showing.
+- **An accepted dispute is recorded as a miss.** "My answer should be
+  accepted" → "Accepted — this answer will be remembered" → Continue still
+  sends `answer(typedGotIt(typeResult))` with `typeResult` "wrong", so FSRS
+  gets Again. The alternate is saved for next time; today's grade isn't
+  corrected. Continue should record a hit once the dispute is accepted.
+- **A mistaken grade can't be corrected.** Previous card and a different
+  grade is shown but not recorded — the one-answer-per-day rule sees the card
+  already reviewed. Keeping each card's state from before its first answer in
+  the block would let a regrade replace that day's answer instead.
+- **An unchecked typed answer is discarded.** Tapping the card or pressing
+  Escape with text in the box is Show answer: the text is ignored and a miss
+  recorded. Tapping should check what was typed; Escape with text should clear
+  the box rather than give up.
+- **Failed saves are silent.** A PATCH that errors goes to `console.error`;
+  the screen moves on as if it saved, and the answer is lost on reload. A
+  small "Not saved — retrying" notice and a retry would make it visible.
+- **Changing direction or the type filter mid-block deals a new block.** The
+  counter and the checkpoint's counts start again, and a missed card's
+  pending retry is lost (it is still due tomorrow). Direction could apply from
+  the next card instead, like the mode switch.
+- **Typing isn't remembered between visits.** The app opens in flip mode every
+  time. Recommended to the owner: remember the last mode, and make typing the
+  default for a new student.
 
 - **The retry and reset fixes of 2026-09-14 have not been seen on the live
   app.** The owner found both problems by studying on the live app; the fixes

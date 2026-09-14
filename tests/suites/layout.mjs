@@ -121,6 +121,13 @@ await settled(page);
 await page.click('button:has-text("FR→EN")');
 await page.waitForTimeout(300);
 if (!(await page.$('input[placeholder^="Type"]'))) await page.click('button:has-text("Type answer")');
+// The card above was flipped, so its answer has been seen, and switching to
+// typing waits for the next card rather than letting it be typed from memory.
+// Grade it to get there.
+if (await page.$("[data-pending-switch]")) {
+  await page.click('button:has-text("Got It")');
+  await page.waitForTimeout(400);
+}
 await page.waitForSelector('input[placeholder^="Type"]');
 {
   await settled(page);

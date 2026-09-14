@@ -669,6 +669,35 @@ export default function FlashcardApp({ user, onSignOut }) {
   useEffect(() => {
     if (cardSlot && (flipped || typeResult)) setRevealedSlot(cardSlot);
   }, [cardSlot, flipped, typeResult]);
+  // Switching between flipping and typing once this card's answer has been
+  // seen waits for the next card. Switching reset the card, so the answer
+  // could be seen one way and then given the other: flip, switch to typing,
+  // type what you just read, and FSRS recorded a recall that never happened;
+  // or "Show answer" (a miss), switch to flipping, and press Got It. Before
+  // the answer is seen, the switch is immediate.
+  const [pendingTypeMode, setPendingTypeMode] = useState(null);
+  const answerSeen = !!card && (flipped || !!typeResult || revealedSlot === cardSlot);
+  useEffect(() => {
+    if (pendingTypeMode === null) return;
+    setTypeMode(pendingTypeMode);
+    setPendingTypeMode(null);
+  // Apply on the NEXT card (or the checkpoint), never on the one it was asked on.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardSlot, sessionDone]);
+  const toggleTypeMode = () => {
+    const target = pendingTypeMode === null ? !typeMode : !pendingTypeMode;
+    if (answerSeen && !sessionDone) {
+      // Pressing again before the next card cancels the pending switch.
+      setPendingTypeMode(target === typeMode ? null : target);
+      return;
+    }
+    setPendingTypeMode(null);
+    setTypeMode(target);
+    setTypedAnswer("");
+    setTypeResult(null);
+    setFlipped(false);
+  };
+
   const tutorCard = useMemo(() => {
     // After the last card of a block the checkpoint replaces it on screen.
     if (mode !== "study" || !card || sessionDone) return null;
@@ -2365,11 +2394,18 @@ export default function FlashcardApp({ user, onSignOut }) {
             ))}
           </div>
           <button
-            style={typeMode ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
-            onClick={() => { setTypeMode(v => !v); setTypedAnswer(""); setTypeResult(null); setFlipped(false); }}
+            data-type-toggle
+            style={(pendingTypeMode ?? typeMode) ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
+            onClick={toggleTypeMode}
+            title={pendingTypeMode === null ? undefined : "This card's answer has been seen, so the switch waits for the next card"}
           >
             Type answer
           </button>
+          {pendingTypeMode !== null && (
+            <span style={S.pendingSwitch} data-pending-switch>
+              {pendingTypeMode ? "Typing starts from the next card" : "Flipping starts from the next card"}
+            </span>
+          )}
           {TTS_AVAILABLE && (
             <button
               style={autoSpeak ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
@@ -3640,6 +3676,7 @@ const S = {
   // Chip-style toggle button — used in the study filter row in place of
   // raw checkboxes. Same pill shape as catBtn but with an active state.
   chipToggle: { padding:"6px 13px", border:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}`, borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
+  pendingSwitch: { fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, whiteSpace:"nowrap", flexShrink:0 },
   chipToggleA: { background:T.color.primary, color:T.color.onPrimary, borderColor:T.color.primary, fontWeight:600 },
   // Sits inside the scrolling chip row, so it must not wrap on its own either.
   typeGroup: { display:"flex", gap:6, alignItems:"center", flexWrap:"nowrap", flexShrink:0 },
