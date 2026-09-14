@@ -527,7 +527,9 @@ of these were "fixed" against an assumption and shipped broken.
   fire, and the motion suite was pointed at it — see the 2026-09-12 entry.
 - **Everything under the card sits in a fixed-height well** (`S.belowCard`,
   170px — measured, being the height of the tallest state: a wrong graded
-  answer stacks a result banner, the dispute link and the Continue row). The
+  answer stacks a result banner, the dispute link and the Continue row). *(Since
+  2026-09-13 the tallest is a "close enough" answer at 168px — banner, both
+  link rows, Continue — and a wrong one is 133px; see the next note but one.)* The
   card area centres its contents, so without the well, swapping the typed-answer
   input for the graded state re-centred the whole column and the card jumped
   45px up the page mid-answer. The card now holds one position in every state.
@@ -1920,12 +1922,12 @@ correct and close answers, pencil and flag centred on the same x.
   counting sampled frames — the same fix would likely rescue `reflow`.
   Until then, reflow changes made on the Mac have no working check, so measure
   by hand in a browser.
-- **The feedback panel has not been used signed in on the live app.** It was
-  tested against the mock and confirmed in the deployed bundle, not by sending
-  a real note from the owner's account. Worth one real send with a screenshot
-  and the card attached, then a look at View feedback: a screenshot-only note
-  now arrives with an empty `message`, which the admin view has never had to
-  show.
+- **A screenshot-only feedback note has never been seen in View feedback.**
+  The owner has since used the panel signed in on the live app — "test", with
+  a screenshot and the card attached (#33) — and it arrived and shows in the
+  log with the card and thumbnail side by side. What is still untested is a
+  note with a screenshot and no text, which the panel now allows: it arrives
+  with an empty `message`, and the entry makes the message its headline.
 - **The deck has many near-duplicate cards**, from the same notebook line
   parsed more than once: `rentable` three times, `chiant` three times,
   `décrire` and `élire` each with a gloss-tagged twin. The feedback pass
