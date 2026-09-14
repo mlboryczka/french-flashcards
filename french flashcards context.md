@@ -86,7 +86,7 @@ waiting. An entry that needs no change (the card was right) is resolved too,
 with the note saying why. Resolving never deletes; the owner clears resolved
 rows when they choose to.
 
-`npm test` before every push. It is 18 suites, and closer to twenty minutes
+`npm test` before every push. It is 19 suites, and closer to twenty minutes
 than a few — most of them drive a real browser at several window sizes. Start
 it early rather than last, and don't edit `src/` while it runs: the suites
 share one Vite dev server, so a save hot-reloads the app underneath a test
@@ -765,12 +765,31 @@ of these were "fixed" against an assumption and shipped broken.
   document came out 20px wider than the window. It takes `overflowX` only:
   the narrow layout scrolls vertically by design — its nav is a fixed bottom
   bar — so clipping both axes would be wrong.
+- **The sidebar minimizes to a 64px rail** (`data-sidebar-toggle`, in the
+  sidebar's top padding so toggling moves nothing in the nav). Minimized: icons
+  only, each with its page's name as a title, the marker unchanged, no lesson
+  sub-items; the avatar, then the feedback trigger as an icon beneath it, as
+  "Send feedback" sits beneath the account at full width. The preference is
+  `localStorage["sidebar:minimized"]`. Three things follow from it:
+  - **Feedback widens it.** The panel renders inside the sidebar and needs the
+    full width to write in, so opening it (from the icon or the flag on the
+    card) sets the sidebar full width *without* touching the saved preference,
+    and closing it minimizes the sidebar again.
+  - **`roomToReflow` subtracts the sidebar's current width**, not 256, so a
+    minimized sidebar leaves the tutor room to sit beside the card on
+    narrower windows.
+  - **The rail does not scroll.** The full sidebar is `overflowY: auto`, which
+    forces horizontal clipping too, and the profile menu (200px wide) would
+    have been cut off at the rail's edge. Minimized, overflow is visible; the
+    rail is short enough never to need to scroll.
+  Guarded by the `sidebar` suite. Phones are untouched: no toggle, same
+  bottom bar.
 
 ---
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Eighteen suites: six needing no browser,
+`npm test` — see `tests/README.md`. Nineteen suites: six needing no browser,
 the rest driving the real app in headless Chromium against a mock Supabase,
 asserting on **measured** values (geometry, computed styles, request payloads)
 rather than on intent.
@@ -1905,6 +1924,18 @@ Mac — `layout` in full for the first time on this machine (see the baseline
 note). Measured in the app: banner, links and column 420px on the same edges,
 Continue centred on the column's centre, the card top unmoved through wrong,
 correct and close answers, pencil and flag centred on the same x.
+
+---
+
+### 2026-09-14 — the sidebar minimizes
+
+A button at the top of the sidebar minimizes it to a rail of icons, as mocked
+up with the owner; see the UI layout note. The one design question settled
+first: "Send feedback" opens a panel inside the sidebar, so from the rail it
+widens the sidebar for as long as the panel is open. Measured at 1400px:
+256px → 64px, main starts at 64, one nav item marked, feedback icon centred
+under the avatar, the account menu fully clickable past the rail, the choice
+surviving a reload. New suite `sidebar`, 19 in all.
 
 ---
 

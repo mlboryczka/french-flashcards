@@ -16,6 +16,9 @@ import ApiKeyModal from "./ApiKeyModal";
 import { keyHeaders, hasKey } from "./lib/anthropicKey";
 
 const SIDEBAR_WIDTH = 256;
+// The sidebar can be minimized to a rail of icons. Remembered per browser.
+const SIDEBAR_MIN_WIDTH = 64;
+const SIDEBAR_MIN_KEY = "sidebar:minimized";
 // Narrowest content column worth reflowing to.
 //
 // Measured, not guessed. The card is height-driven and 1.6:1, so in a 900px
@@ -292,6 +295,19 @@ export default function FlashcardApp({ user, onSignOut }) {
   // sidebar, into `feedbackDock`, so the page never has to make room for it.
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedbackDock, setFeedbackDock] = useState(null);
+  // Minimized sidebar: icons only, no labels, no lesson sub-items. The feedback
+  // panel opens INSIDE the sidebar and needs its full width to write in, so
+  // opening it widens the sidebar, and closing it puts the sidebar back the
+  // way it was.
+  const [sidebarMin, setSidebarMin] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_MIN_KEY) === "1"; } catch { return false; }
+  });
+  const widenedForFeedback = useRef(false);
+  const setSidebarMinimized = useCallback((v) => {
+    widenedForFeedback.current = false;
+    setSidebarMin(v);
+    try { localStorage.setItem(SIDEBAR_MIN_KEY, v ? "1" : "0"); } catch { /* storage blocked: still toggles */ }
+  }, []);
   // Bumped by the flag on the card, so the panel opens with that card attached.
   const [feedbackAttachReq, setFeedbackAttachReq] = useState(0);
 
@@ -322,7 +338,19 @@ export default function FlashcardApp({ user, onSignOut }) {
     setShowLessonPanel(false);
     setShowChat(true);
   }, [showChat]);
-  const openFeedback = useCallback(() => { setShowChat(false); setShowLessonPanel(false); setShowFeedback(true); }, []);
+  const openFeedback = useCallback(() => {
+    setShowChat(false);
+    setShowLessonPanel(false);
+    // Widen for the panel without touching the saved preference.
+    setSidebarMin((min) => { if (min) widenedForFeedback.current = true; return false; });
+    setShowFeedback(true);
+  }, []);
+  useEffect(() => {
+    if (!showFeedback && widenedForFeedback.current) {
+      widenedForFeedback.current = false;
+      setSidebarMin(true);
+    }
+  }, [showFeedback]);
   const reportCard = useCallback(() => { openFeedback(); setFeedbackAttachReq((n) => n + 1); }, [openFeedback]);
   // Three panels share the right-hand slot; opening one puts the others away.
   const toggleLessonPanel = useCallback(() => {
@@ -1001,7 +1029,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // what you are using: focus inside it, or your last click was in it (the
   // inert-click case above, where focus falls to the body).
   const roomToReflow = (panelWidth) =>
-    winWidth - SIDEBAR_WIDTH - panelWidth >= MIN_REFLOW_CONTENT;
+    winWidth - (sidebarMin ? SIDEBAR_MIN_WIDTH : SIDEBAR_WIDTH) - panelWidth >= MIN_REFLOW_CONTENT;
   const chatReflow = showChat && !isNarrow && roomToReflow(CHAT_PANEL_WIDTH);
   const lessonReflow = showLessonPanel && !isNarrow && roomToReflow(LESSON_PANEL_WIDTH);
   const overlayOpen =
@@ -1587,11 +1615,32 @@ export default function FlashcardApp({ user, onSignOut }) {
   };
   
   const sidebar = (
-    <aside style={isNarrow ? S.sideBarBottom : S.sideBar}>
+    <aside
+      data-sidebar
+      data-minimized={!isNarrow && sidebarMin ? "" : undefined}
+      style={isNarrow ? S.sideBarBottom : sidebarMin ? { ...S.sideBar, ...S.sideBarMin } : S.sideBar}
+    >
+      {!isNarrow && (
+        // In the sidebar's top padding, so toggling moves nothing in the nav.
+        <button
+          data-sidebar-toggle
+          style={sidebarMin ? { ...S.sideToggle, ...S.sideToggleMin } : S.sideToggle}
+          onClick={() => setSidebarMinimized(!sidebarMin)}
+          aria-label={sidebarMin ? "Expand sidebar" : "Minimize sidebar"}
+          title={sidebarMin ? "Expand sidebar" : "Minimize sidebar"}
+          aria-expanded={!sidebarMin}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+            <path d={sidebarMin ? "M14 10l2 2-2 2" : "M16 10l-2 2 2 2"} />
+          </svg>
+        </button>
+      )}
       {/* Nav items with icons */}
       <nav style={isNarrow ? S.sideNavBottom : S.sideNav}>
         {navItems.map(([m, label]) => {
-          const baseStyle = isNarrow ? S.sideItemBottom : S.sideItem;
+          const baseStyle = isNarrow ? S.sideItemBottom : sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem;
           const activeStyle = isNarrow ? S.sideItemBottomActive : S.sideItemActive;
           return (
             <Fragment key={m}>
@@ -1604,16 +1653,18 @@ export default function FlashcardApp({ user, onSignOut }) {
                   if (m === "study") leaveLesson();
                   setMode(m);
                 }}
+                title={!isNarrow && sidebarMin ? label : undefined}
+                aria-label={!isNarrow && sidebarMin ? label : undefined}
               >
                 <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
-                {label}
+                {!(sidebarMin && !isNarrow) && label}
               </button>
               {/* Lessons are the one nav item with children: each lesson sits
                   under it as a sub-item, so picking one is a single click
                   rather than a trip through the catalogue. Only on desktop —
                   the narrow layout's nav is a row of icons with no room to
                   nest anything. */}
-              {m === "lessons" && !isNarrow && LESSONS.map((lesson) => {
+              {m === "lessons" && !isNarrow && !sidebarMin && LESSONS.map((lesson) => {
                 const on = mode === "study" && lessonFilter === lesson.id;
                 return (
                   <button
@@ -1636,11 +1687,13 @@ export default function FlashcardApp({ user, onSignOut }) {
             a primary action, and nobody finds it behind an avatar. */}
         <button
           data-tutor-toggle
-          style={isNarrow ? S.sideItemBottom : S.sideItem}
+          style={isNarrow ? S.sideItemBottom : sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem}
           onClick={toggleChat}
+          title={!isNarrow && sidebarMin ? "Tutor" : undefined}
+          aria-label={!isNarrow && sidebarMin ? "Tutor" : undefined}
         >
           <span style={S.sideIcon}>{NAV_ICONS.tutor}</span>
-          Tutor
+          {!(sidebarMin && !isNarrow) && "Tutor"}
         </button>
       </nav>
 
@@ -1658,9 +1711,9 @@ export default function FlashcardApp({ user, onSignOut }) {
           data-feedback-dock
           style={{ ...S.sideFeedbackDock, minHeight: showFeedback ? 244 : 0 }}
         />
-        <div style={S.sideDivider} />
-        <div style={S.sideBottom}>
-          <div style={S.sideBottomRow}>
+        <div style={sidebarMin ? { ...S.sideDivider, ...S.sideDividerMin } : S.sideDivider} />
+        <div style={sidebarMin ? { ...S.sideBottom, ...S.sideBottomMin } : S.sideBottom}>
+          <div style={sidebarMin ? { ...S.sideBottomRow, ...S.sideBottomRowMin } : S.sideBottomRow}>
             <div style={S.sideProfileRow} ref={profileRef}>
               <button
                 style={S.profileBtn}
@@ -1710,10 +1763,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                 </div>
               )}
             </div>
-            <span style={S.sideBottomEmail}>{user.email}</span>
+            {!sidebarMin && <span style={S.sideBottomEmail}>{user.email}</span>}
           </div>
-          <div style={S.sideFeedbackRow}>
+          <div style={sidebarMin ? { ...S.sideFeedbackRow, ...S.sideFeedbackRowMin } : S.sideFeedbackRow}>
             <BetaFeedback
+              compact={sidebarMin}
               user={user}
               currentPage={mode}
               currentCard={mode === "study" ? card : null}
@@ -3349,7 +3403,10 @@ const S = {
   // ── Sidebar ───────────────────────────────────────────────────────
   // Fixed 256px column on desktop. The sticky positioning + 100vh height
   // means the sidebar stays fixed while the main content scrolls.
-  sideBar: { width:256, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box" },
+  // overflowX stays visible when minimized so the profile menu can open past
+  // the 64px rail; the rail is short enough never to need to scroll.
+  sideBarMin: { width:SIDEBAR_MIN_WIDTH, overflowY:"visible" },
+  sideBar: { width:SIDEBAR_WIDTH, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box", transition:`width ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
   sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
   // Not flex:1 any more — the feedback dock below takes the free height, so the
   // panel can sit in it. The nav looks the same either way.
@@ -3388,11 +3445,20 @@ const S = {
   sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderRightWidth:0, borderRightStyle:"solid", borderRightColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderTopWidth:3, borderTopStyle:"solid", borderTopColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
   sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
+  // Minimized: the item is just its icon, centred in the rail. The right-edge
+  // marker still shows which page you are on.
+  sideItemMin: { justifyContent:"center", padding:"14px 0", gap:0 },
   sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideIcon: { display:"flex", alignItems:"center", flexShrink:0 },
   // ── Sidebar bottom: avatar + email + feedback in one row ────────────
   sideDivider: { marginTop:"auto", height:1, background:"rgba(3,22,50,0.07)", marginLeft:20, marginRight:20 },
   sideBottom: { padding:"14px 20px 4px" },
+  sideBottomMin: { padding:"14px 0 4px", display:"flex", flexDirection:"column", alignItems:"center" },
+  sideBottomRowMin: { justifyContent:"center" },
+  sideDividerMin: { marginLeft:12, marginRight:12 },
+  sideFeedbackRowMin: { marginLeft:0, marginTop:6, display:"flex", justifyContent:"center" },
+  sideToggle: { position:"absolute", top:8, right:12, width:32, height:32, display:"flex", alignItems:"center", justifyContent:"center", padding:0, border:"none", borderRadius:T.radius.md, background:"transparent", color:"rgba(3,22,50,0.45)", cursor:"pointer" },
+  sideToggleMin: { right:"auto", left:"50%", transform:"translateX(-50%)" },
   sideBottomRow: { display:"flex", alignItems:"center", gap:10 },
   sideFeedbackRow: { marginTop:2, marginLeft:42 },
   sideProfileRow: { position:"relative", flexShrink:0 },

@@ -64,6 +64,8 @@ export function BetaFeedback({
   // Bumped by the flag on the card. Each bump switches "attach this card" on,
   // even if it had been switched off for an earlier draft.
   attachRequest = 0,
+  // In the minimized sidebar the trigger is an icon rather than a label.
+  compact = false,
 }) {
   const panelRef = useRef(null);
   const triggerRef = useRef(null);
@@ -318,13 +320,20 @@ export function BetaFeedback({
         data-feedback-toggle
         // A waiting draft lifts the trigger out of its usual 0.6 so the dot
         // reads as a signal rather than a smudge.
-        style={hasDraft && !open ? { ...BF.trigger, opacity: 0.9 } : BF.trigger}
+        style={{ ...BF.trigger, ...(compact ? BF.triggerCompact : null), ...(hasDraft && !open ? { opacity: 0.9 } : null) }}
         // A toggle: the same link that opened the panel puts it away.
         onClick={() => (open ? close({ returnFocus: true }) : onOpen?.())}
         aria-expanded={open}
-        title={hasDraft && !open ? "You have an unsent draft" : undefined}
+        title={hasDraft && !open ? "You have an unsent draft" : compact ? "Send feedback" : undefined}
+        aria-label={compact ? "Send feedback" : undefined}
       >
-        Send feedback
+        {/* In the minimized sidebar the trigger is an icon under the avatar. */}
+        {compact ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M8 9h8M8 13h6" />
+            <path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-5l-5 3v-3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z" />
+          </svg>
+        ) : "Send feedback"}
         {hasDraft && !open && <span data-feedback-draft style={BF.draftDot} aria-label="(draft saved)" />}
       </button>
 
@@ -591,6 +600,7 @@ const BF = {
     textAlign: "left",
     opacity: 0.6,
   },
+  triggerCompact: { position: "relative", padding: 6, gap: 0, opacity: 0.75 },
   draftDot: {
     width: 6,
     height: 6,
