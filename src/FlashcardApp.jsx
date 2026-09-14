@@ -2502,71 +2502,78 @@ export default function FlashcardApp({ user, onSignOut }) {
                       {typeResult==="wrong" && (typedAnswer.trim() ? `✗ You wrote: ${typedAnswer.trim()}` : `✗ Answer: ${back}`)}
                       {typeResult==="revealed" && `Answer: ${back}`}
                     </div>
-                    {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
-                      <div style={feedbackState === null ? S.typeLinksRow : S.feedbackRow}>
-                        {feedbackState === null && (
-                          <>
-                            <button style={S.typeLink} onClick={submitFeedback}>
-                              My answer should have been accepted
-                            </button>
-                            {/* The other thing you want after a miss: not "I
-                                was right", but "why was I wrong?". Sits in the
-                                SAME row as the dispute link — belowCard is a
-                                measured 170px well and a new line would push
-                                the card off its one fixed position. */}
-                            <button
-                              data-tutor-toggle
-                              style={S.typeLink}
-                              onClick={() =>
-                                // The miss reaches the tutor through tutorCard,
-                                // which carries the typed answer and the
-                                // verdict. Passing the card starts a fresh
-                                // thread if the last one was about another.
-                                openChat(card)
-                              }
-                            >
-                              Ask the tutor
-                            </button>
-                          </>
-                        )}
-                        {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
-                        {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
-                          <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
-                        )}
-                        {feedbackState === "submitted" && (feedbackVerdict?.verdict === "reject" || feedbackVerdict?.verdict === "uncertain") && (
-                          <div style={S.feedbackMsg}>
-                            <div style={S.feedbackReasoning}>{feedbackVerdict.reasoning}</div>
-                            <button style={S.feedbackOverrideBtn} onClick={forceAcceptAnswer}>
-                              Accept anyway
-                            </button>
-                          </div>
-                        )}
-                        {feedbackState === "accepted" && (
-                          <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
-                        )}
-                        {feedbackState === "error" && <span style={S.feedbackErr}>{feedbackErrMsg || "Couldn't send — try again"}</span>}
-                      </div>
-                    )}
                     {(() => {
                       const gotIt = typedGotIt(typeResult);
+                      const missed = typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle";
                       return (
                         <>
-                          {gotIt && (
-                            <div style={S.typeLinksRow}>
-                              <button
-                                style={{ ...S.typeLink, ...S.typeLinkMuted }}
-                                onClick={() => answer(false, "typed")}
-                                title="Record as incorrect and keep this card near the top of the queue"
-                              >
-                                Actually, mark for review
-                              </button>
-                            </div>
-                          )}
                           {/* Centred, at its own size — not stretched to the
                               column, and not pushed to its right edge. */}
                           <button style={S.continueBtn} onClick={() => answer(gotIt, "typed")}>
                             Continue →
                           </button>
+                          {/* The follow-ups sit BELOW Continue, in one centred
+                              row at 12px: Continue is what you press nearly
+                              every time, so it comes first after the result.
+                              One row for all three rather than a row each,
+                              because belowCard is a fixed 170px well and every
+                              extra line would push the card off its place.
+                              A dispute in progress replaces the row with its
+                              status, in the same spot. */}
+                          {feedbackState === null ? (
+                            (missed || gotIt) && (
+                              <div data-graded-links style={S.typeLinksRow}>
+                                {missed && (
+                                  <button style={S.typeLink} onClick={submitFeedback}>
+                                    My answer should be accepted
+                                  </button>
+                                )}
+                                {gotIt && (
+                                  <button
+                                    style={{ ...S.typeLink, ...S.typeLinkMuted }}
+                                    onClick={() => answer(false, "typed")}
+                                    title="Record as incorrect and keep this card near the top of the queue"
+                                  >
+                                    Mark for review
+                                  </button>
+                                )}
+                                {missed && (
+                                  <button
+                                    data-tutor-toggle
+                                    style={S.typeLink}
+                                    onClick={() =>
+                                      // The miss reaches the tutor through tutorCard,
+                                      // which carries the typed answer and the
+                                      // verdict. Passing the card starts a fresh
+                                      // thread if the last one was about another.
+                                      openChat(card)
+                                    }
+                                  >
+                                    Ask the tutor
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          ) : missed && (
+                            <div style={S.feedbackRow}>
+                              {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
+                              {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
+                                <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
+                              )}
+                              {feedbackState === "submitted" && (feedbackVerdict?.verdict === "reject" || feedbackVerdict?.verdict === "uncertain") && (
+                                <div style={S.feedbackMsg}>
+                                  <div style={S.feedbackReasoning}>{feedbackVerdict.reasoning}</div>
+                                  <button style={S.feedbackOverrideBtn} onClick={forceAcceptAnswer}>
+                                    Accept anyway
+                                  </button>
+                                </div>
+                              )}
+                              {feedbackState === "accepted" && (
+                                <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
+                              )}
+                              {feedbackState === "error" && <span style={S.feedbackErr}>{feedbackErrMsg || "Couldn't send — try again"}</span>}
+                            </div>
+                          )}
                         </>
                       );
                     })()}
@@ -3840,7 +3847,7 @@ const S = {
   typeRevealed: { textAlign:"center", padding:"13px 14px", background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
   typeWrong: { textAlign:"center", padding:"13px 14px", background:T.color.errorContainer, color:T.color.onErrorContainer, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
   // Links at either end of the column, their text on its edges.
-  typeLinksRow: { display:"flex", alignItems:"center", justifyContent:"space-between", minHeight:24, fontFamily:T.font.sans },
+  typeLinksRow: { display:"flex", alignItems:"center", justifyContent:"center", flexWrap:"wrap", columnGap:32, rowGap:4, minHeight:24, fontFamily:T.font.sans },
   typeLink: { padding:"4px 0", background:"transparent", border:"none", color:T.color.secondary, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, textDecoration:"underline", textUnderlineOffset:3 },
   typeLinkMuted: { color:T.color.onSurfaceVariant, fontWeight:500, opacity:0.8 },
   typeBtnRow: { display:"flex", gap:12, marginTop:8 },

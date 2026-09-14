@@ -528,16 +528,23 @@ of these were "fixed" against an assumption and shipped broken.
 - **Everything under the card sits in a fixed-height well** (`S.belowCard`,
   170px — measured, being the height of the tallest state: a wrong graded
   answer stacks a result banner, the dispute link and the Continue row). *(Since
-  2026-09-13 the tallest is a "close enough" answer at 168px — banner, both
-  link rows, Continue — and a wrong one is 133px; see the next note but one.)* The
+  2026-09-13 every graded state is 133px on a desktop window, the links being
+  one row under Continue; the tallest is a "close" answer on a phone, 162px,
+  where that row wraps. See the next note.)* The
   card area centres its contents, so without the well, swapping the typed-answer
   input for the graded state re-centred the whole column and the card jumped
   45px up the page mid-answer. The card now holds one position in every state.
 - **Type mode's graded state is one 420px column** (`S.typeFeedback`), the
-  width of Again and Got It: the result banner fills it, the links row puts
-  "My answer should have been accepted" and "Ask the tutor" at either end (or
-  "Actually, mark for review" on the left when you were right), and Continue
-  keeps its own size, centred. It was four widths stacked — banner 520, links
+  width of Again and Got It: the result banner fills it, Continue keeps its own
+  size, centred, and **below Continue** one centred row of 12px links, 32px
+  apart — "My answer should be accepted", "Mark for review", "Ask the tutor",
+  each shown only where it applies (a wrong answer has the outer two, a correct
+  one only the middle, a "close" one all three). The owner's order: Continue is
+  pressed nearly every time, so it comes straight after the result. Measured
+  2026-09-13 at 1400px: 133px for every state, links on one line, card moved
+  0px; at 390px a "close" answer wraps "Ask the tutor" onto a second centred
+  line, 162px, still inside the well. Before that, the links sat above Continue
+  in two rows. It was four widths stacked — banner 520, links
   as centred text, Continue pushed right in a 480 row — sharing no edge.
   Measured: a wrong answer's column is 133px and a "close" one, which carries
   both link rows, 168px; both inside the 170px well. The old wrong state was

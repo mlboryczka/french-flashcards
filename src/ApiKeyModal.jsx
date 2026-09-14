@@ -72,7 +72,7 @@ export default function ApiKeyModal({ open, onClose, user }) {
       <div style={S.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Connect your Claude account">
         <div style={S.title}>Connect your Claude account</div>
         <p style={S.body}>
-          The tutor, the &ldquo;my answer should have been accepted&rdquo; review and
+          The tutor, the &ldquo;my answer should be accepted&rdquo; review and
           the document parser all call Claude, which costs money per request.
           Add your own Anthropic API key and those requests bill your account.
         </p>
