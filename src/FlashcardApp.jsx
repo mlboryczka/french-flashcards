@@ -3892,7 +3892,10 @@ const S = {
   // Absolute, so the image never sets the row height: the thumbnail follows the card beside it.
   fbEntryThumbImg: { position:"absolute", inset:0, display:"block", width:"100%", height:"100%", objectFit:"cover", objectPosition:"center top" },
   fbLightbox: { position:"fixed", inset:0, background:"rgba(3,22,50,0.72)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:24, cursor:"zoom-out" },
-  fbLightboxImg: { maxWidth:"100%", maxHeight:"100%", borderRadius:T.radius.lg, boxShadow:"0 32px 96px rgba(0,0,0,0.35)" },
+  // Capped, not fitted to the window. Screenshots come off retina screens at
+  // twice their on-screen size, and filling the viewport showed a card
+  // screenshot bigger than the app it was taken from.
+  fbLightboxImg: { width:"auto", height:"auto", maxWidth:"min(820px, 100%)", maxHeight:"min(640px, 100%)", objectFit:"contain", borderRadius:T.radius.lg, boxShadow:"0 32px 96px rgba(0,0,0,0.35)" },
   // Feedback review modal
   feedbackModalOverlay: { position:"fixed", inset:0, background:"rgba(3,22,50,0.4)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:16 },
   feedbackModalBox: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, maxWidth:600, width:"100%", padding:"24px 28px 8px", boxShadow:"0 32px 96px rgba(3,22,50,0.18)", fontFamily:T.font.sans, maxHeight:"80vh", overflow:"hidden", display:"flex", flexDirection:"column" },
