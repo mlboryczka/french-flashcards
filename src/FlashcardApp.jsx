@@ -2058,20 +2058,24 @@ export default function FlashcardApp({ user, onSignOut }) {
     // that your vocabulary is fine and your conjugations are not.
     const byType = CARD_TYPES.map((type) => {
       const cards = userCards.filter((c) => classifyCard(c) === type);
-      let seen = 0, got = 0;
+      // Of the cards seen, how many were right the last time they were
+      // answered — read off the same FSRS rows as the rest of the page.
+      //
+      // This was the lifetime tally in card_progress, which went back to the
+      // box system and never forgets: after the 2026-09-14 reset it still
+      // counted old answers on 1,200 cards now "not yet seen", and read 55%
+      // beside a Right first time today of 70%.
+      let answered = 0, right = 0;
       for (const c of cards) {
-        // Accuracy comes from card_progress, the running right/wrong tally,
-        // which is the one thing FSRS doesn't keep — it models memory, not
-        // history.
-        const pr = progress[c.id];
-        if (!pr || !pr.seen) continue;
-        seen += pr.seen;
-        got += pr.got ?? 0;
+        if ((c.fsrs_state ?? State.New) === State.New || c.last_answer_correct == null) continue;
+        answered++;
+        if (c.last_answer_correct === true) right++;
       }
       return {
         type,
         summary: summarize(cards, now),
-        accuracy: seen > 0 ? Math.round((got / seen) * 100) : null,
+        accuracy: answered > 0 ? Math.round((right / answered) * 100) : null,
+        answered,
       };
     }).filter((t) => t.summary.total > 0);
 
@@ -2184,7 +2188,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <div style={S.typeSub}>
                         {t.summary.seen === 0
                           ? `${t.summary.total.toLocaleString()} card${t.summary.total === 1 ? "" : "s"} · none studied yet`
-                          : `${t.accuracy === null ? "" : "accuracy · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · about ${aboutRemembered(t.summary).toLocaleString()} remembered`}
+                          : `${t.accuracy === null ? "" : "right last time · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · about ${aboutRemembered(t.summary).toLocaleString()} remembered`}
                       </div>
                       <div style={{marginTop:10}}>{bands(t.summary, TYPE_COLOR[t.type], 4)}</div>
                     </div>

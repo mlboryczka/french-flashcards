@@ -107,6 +107,18 @@ ck("cards due today are only those whose date is today",
 ck("older cards still waiting are counted apart",
    coming.includes("4 older cards still waiting from earlier days"), coming.slice(0, 160));
 
+console.log("\n  by type");
+// Right last time, over the cards seen, from the same rows as everything else
+// on the page — never the lifetime tally, which still counted answers on
+// cards since reset to not yet seen.
+{
+  const vocab = rows.filter((r) => r.category === "V" && r.fsrs_state !== 0 && r.last_answer_correct != null);
+  const pct = Math.round((vocab.filter((r) => r.last_answer_correct === true).length / vocab.length) * 100);
+  const typeText = text.slice(text.indexOf("By type"));
+  ck("vocab reads right last time from the cards' own last answers",
+     new RegExp(`VOCAB ${pct}% right last time`, "i").test(typeText), typeText.slice(0, 200));
+}
+
 console.log("\n  the old vocabulary is gone");
 ck("no \"mastered\" anywhere on the page", !/mastered/i.test(text));
 ck("no \"learning\" stage label", !/\d+ learning\b/i.test(text));

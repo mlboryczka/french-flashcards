@@ -937,7 +937,9 @@ ways, and where they disagree, this paragraph wins:
   how many cards came due today and, separately, how many older cards are
   still waiting from earlier days, then the cards due on each of the next
   seven days; *By type* with seen / about remembered in place
-  of "mastered"; Hardest cards and Reset unchanged. Guarded by the `stats`
+  of "mastered", and "right last time" — of the cards seen, how many were right
+  on their last answer, off the same FSRS rows — in place of the lifetime
+  `card_progress` accuracy; Hardest cards and Reset unchanged. Guarded by the `stats`
   suite, whose expected figures are counted from its own fixture.
 - **No finish estimates.** See the open item.
 
@@ -2000,6 +2002,24 @@ counter reads Retry"; `session` checks a missed card's retry is the block's
 last answer with one card displaced and no extra write; `stats` checks today's
 and older due cards are counted apart. Full suite on the Mac: 18 of 19, the one
 failure `reflow`, which fails two runs in three on unchanged `main` too.
+
+**Checked against the owner's real deck, not just the mock.** A read-only
+snapshot of the owner's 3,929 cards (and `card_progress`) was served to the app
+locally, every write answered in the browser and recorded, nothing sent to
+Supabase. A block missing every third card ended at exactly 50 answers, 15 of
+them retries shown inside it, no "Retry N of M", 35 cards recorded once each;
+Continue dealt a fresh 50. Every Stats figure was then recounted independently
+from the snapshot plus those 35 writes and matched: 82 answered today, 57 right;
+237 seen, 3,692 not yet seen; due today and older waiting; each of the next
+seven days; L'impératif 43 of 108 seen. Stepping `buildSession` forward on the
+same data: the next block is 50 reviews, the one after is 35 reviews and 15
+new, then all new, led by words from recent classes and the most classes.
+
+**Found by that check:** *By type* still read accuracy off the lifetime
+`card_progress` tally — 58% / 55% / 51%, including old answers on cards now
+reset — beside "right first time today 70%". It now reads "right last time"
+from the FSRS rows (88% / 89% / 82% on that data, matching an independent
+count). `stats` checks it.
 
 Not verified: the live app, signed in, after the fix. See the open item.
 
