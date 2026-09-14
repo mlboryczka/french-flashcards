@@ -32,6 +32,10 @@ ck("gloss stripped from the prompt", glossed.front === "je suis allé", JSON.str
 ck("the answer side keeps the full translation", /I went/.test(glossed.back), JSON.stringify(glossed.back));
 
 await page.unroute("**/rest/v1/user_cards*");
+// The first block after a reload is built from the deck saved in the browser,
+// which still holds the one-card deck above. Clear it, so the block is dealt
+// from the mock's full deck.
+await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("deck-cache")).forEach((k) => localStorage.removeItem(k)));
 await page.reload({ waitUntil: "commit" });
 await page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
 await page.click('button:has-text("FR→EN")');

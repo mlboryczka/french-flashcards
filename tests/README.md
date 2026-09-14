@@ -29,6 +29,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `motion` | the page holding still on every frame of the feedback panel's open and close, the panel fading rather than popping, and the tutor on the same clock as the page it moves | yes |
 | `regressions` | bugs found by driving the app, each with the check that would have caught it | yes |
 | `reflow` | what the reflow drags with it: the chrome above the card holding still, the card animating rather than popping, the feedback sheet staying inside the window, and panel/page agreeing across the reflow floor | yes |
+| `answering` | an answer reaching FSRS off the happy path: accepted disputes, correcting a grade with Previous card, Escape and tapping with an answer typed, failed saves shown and retried, direction changes mid-block, typing as the remembered default | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
 | `stats` | the Stats page: today's answers, seen / about remembered / not yet seen for the deck and each area, cards due today counted apart from older ones still waiting, cards coming up, By type's right-last-time read from the FSRS rows, and no "mastered" — every expected figure counted from its own fixture | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |

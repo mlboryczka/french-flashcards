@@ -221,6 +221,23 @@ function matchAnswer(typed, correct, extraAlts = []) {
   return { match: false };
 }
 
+// The columns an answer changes, as they stood before it — so a corrected
+// grade can be recomputed from the card as it was, not from the answer being
+// replaced.
+// Which side of a card is shown. Grammar and pronunciation cards are rules with
+// examples, not translations, so they are always shown as written.
+const STUDY_MODE_KEY = "study-mode";
+
+function directionFor(flippable, dir) {
+  if (!flippable) return "fr";
+  return dir === "mix" ? (Math.random() < 0.5 ? "fr" : "en") : dir;
+}
+
+function fsrsFieldsOf(card) {
+  const { stability, difficulty, fsrs_state, reps, lapses, next_due_at, last_review, last_answer_correct } = card;
+  return { stability, difficulty, fsrs_state, reps, lapses, next_due_at, last_review, last_answer_correct };
+}
+
 // A typed answer counts as recalled unless the user gave up ("revealed") or
 // got it wrong. Shared by the Continue button and by tapping the card, which
 // does the same thing.
@@ -269,6 +286,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Progress when the current block was dealt, so the checkpoint can say what
   // the block changed.
   const blockStartRef = useRef(null);
+  // Each card answered in this block: its FSRS state before the answer that
+  // was recorded (null if nothing was recorded), and the grade given. Lets
+  // Previous card correct a grade rather than be ignored. Cleared per block.
+  const blockAnswersRef = useRef(new Map());
   // The queue has been worked to the end. Not derivable from `idx` alone:
   // idx sits on the last card both before and after that card is answered.
   const [sessionDone, setSessionDone] = useState(false);
@@ -282,7 +303,18 @@ export default function FlashcardApp({ user, onSignOut }) {
   // from, so the lesson still schedules through FSRS normally.
   const [lessonFilter, setLessonFilter] = useState("all");
   const [dir, setDir] = useState("mix"); // fr | en | mix
-  const [typeMode, setTypeMode] = useState(false);
+  // The direction setting as blocks are dealt, read through a ref so that
+  // changing it does not rebuild the block.
+  const dirRef = useRef(dir);
+  // Typing is the default: it is checked, so FSRS gets real evidence, and
+  // producing the answer is what makes it stick. The student's last choice is
+  // remembered on this browser.
+  const [typeMode, setTypeMode] = useState(() => {
+    try { return localStorage.getItem(STUDY_MODE_KEY) !== "flip"; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(STUDY_MODE_KEY, typeMode ? "type" : "flip"); } catch { /* storage blocked */ }
+  }, [typeMode]);
   const [typedAnswer, setTypedAnswer] = useState("");
   const [typeResult, setTypeResult] = useState(null); // null | 'correct' | 'wrong'
   const studyInputRef = useRef(null);
@@ -477,6 +509,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Feedback & alternates state
   const [alternates, setAlternates] = useState({}); // { "cardId:direction": ["alt1", "alt2"] }
   const [feedbackState, setFeedbackState] = useState(null); // null | 'submitting' | 'submitted' | 'error'
+  const [feedbackErrMsg, setFeedbackErrMsg] = useState("");
+  const [feedbackVerdict, setFeedbackVerdict] = useState(null); // {verdict, reasoning}
   const autoAdvanceTimer = useRef(null);
   const isAdmin = !!(user?.email && user.email.toLowerCase() === ADMIN_EMAIL);
 
@@ -547,7 +581,10 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   useEffect(() => {
     if (!loaded) return;
-    const filterSig = `${dir}|${typeFilter}|${lessonFilter}`;
+    // Direction is not part of this: changing it relabels the cards still to
+    // come (see the effect below) instead of dealing a new block, which threw
+    // away the block's running count and a missed card's pending retry.
+    const filterSig = `${typeFilter}|${lessonFilter}`;
     const filterChanged = filterSigRef.current !== filterSig;
     filterSigRef.current = filterSig;
 
@@ -565,7 +602,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         .map(c => {
           const u = byRow.get(c.row_id);
           return u
-            ? { ...u, shownDir: c.shownDir, flippable: c.flippable, _bucket: c._bucket, _retry: c._retry }
+            ? { ...u, shownDir: c.shownDir, flippable: c.flippable, _bucket: c._bucket, _retry: c._retry, _rid: c._rid }
             : null;
         })
         .filter(Boolean);
@@ -589,7 +626,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     // always show front-as-written.
     const cards = queue.map(c => {
       const flippable = c.cat === "vocab" || c.cat === "expr";
-      const shownDir = !flippable ? "fr" : (dir === "mix" ? (Math.random() < 0.5 ? "fr" : "en") : dir);
+      const shownDir = directionFor(flippable, dirRef.current);
       return { ...c, shownDir, flippable };
     });
     // A full rebuild is a NEW block — first load, a filter or direction
@@ -608,6 +645,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       : -1;
     if (preservedIdx > 0) cards.unshift(cards.splice(preservedIdx, 1)[0]);
     else if (preservedIdx < 0) setFlipped(false);
+    blockAnswersRef.current = new Map();
     setDeck(cards);
     setSessionCounts(counts);
     setIdx(0);
@@ -615,7 +653,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setSessionDone(false);
     setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, dir, typeFilter, lessonFilter, userCards, blockSeq]);
+  }, [loaded, typeFilter, lessonFilter, userCards, blockSeq]);
 
   const card = deck[idx];
 
@@ -636,23 +674,13 @@ export default function FlashcardApp({ user, onSignOut }) {
       lessonRank,
     });
     const endToday = endOfLocalDay(new Date(now));
-    const startToday = startOfLocalDay(new Date(now));
     const dueAt = (c) => (c.fsrs_state ?? State.New) !== State.New && c.next_due_at
       ? new Date(c.next_due_at).getTime() : null;
     const waiting = lessonFilter === "all" ? 0 : userCards.filter((c) => {
       const t = dueAt(c);
       return t !== null && t <= endToday && lessonIdOf(c) !== lessonFilter;
     }).length;
-    // The review work still ahead in this selection, split the way a student
-    // reads it: what came due today, and what is left over from earlier days.
-    // One number read as "708 due today" once, which no one can do in a day.
-    let dueToday = 0, dueEarlier = 0;
-    for (const c of candidatesFrom(userCards)) {
-      const t = dueAt(c);
-      if (t === null || t > endToday) continue;
-      if (t >= startToday) dueToday++; else dueEarlier++;
-    }
-    return { after, changes, next, waiting, dueToday, dueEarlier };
+    return { after, changes, next, waiting };
   }, [sessionDone, userCards, candidatesFrom, lessonFilter]);
   // Keep the ref in sync so deck rebuilds can find the current card.
   useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
@@ -677,6 +705,31 @@ export default function FlashcardApp({ user, onSignOut }) {
   // the answer is seen, the switch is immediate.
   const [pendingTypeMode, setPendingTypeMode] = useState(null);
   const answerSeen = !!card && (flipped || !!typeResult || revealedSlot === cardSlot);
+  // Whether a typed answer counts as recalled: the matcher's verdict, or a
+  // "my answer should be accepted" dispute that was accepted. An accepted
+  // dispute used to save the alternate for next time and still record today's
+  // answer as a miss, because Continue read only the matcher's verdict.
+  const disputeAccepted =
+    feedbackState === "accepted" ||
+    (feedbackState === "submitted" && feedbackVerdict?.verdict === "accept");
+  const typedRecalled = typedGotIt(typeResult) || disputeAccepted;
+
+  // Changing direction applies to the cards still to come — and to the card on
+  // screen only if its answer hasn't been seen, for the same reason as the
+  // flip/type switch. It used to deal a new block.
+  useEffect(() => {
+    if (dirRef.current === dir) return;
+    dirRef.current = dir;
+    if (!deck.length) return;
+    const keepCurrent = answerSeen;
+    setDeck((prev) => prev.map((c, i) =>
+      i > idx || (i === idx && !keepCurrent) ? { ...c, shownDir: directionFor(c.flippable, dir) } : c
+    ));
+    if (!keepCurrent) setTypedAnswer("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dir]);
+  const directionPending =
+    !!card && card.flippable && answerSeen && !sessionDone && dir !== "mix" && card.shownDir !== dir;
   useEffect(() => {
     if (pendingTypeMode === null) return;
     setTypeMode(pendingTypeMode);
@@ -847,6 +900,52 @@ export default function FlashcardApp({ user, onSignOut }) {
   //
   // Wrong answers also re-queue the card later in the same session so the
   // user gets another shot before the session ends.
+  // Saving an answer, visibly. The write to user_cards used to be
+  // fire-and-forget with its error sent to the console: the screen moved on as
+  // if it had saved, and a reload brought the card back with the answer gone.
+  // Now a failed write is kept and retried, with backoff, and the student is
+  // told while any answer is unsaved. A newer write for the same card replaces
+  // an older one waiting to be retried.
+  const unsavedRef = useRef(new Map()); // row_id -> { sr, failed }
+  const [unsavedCount, setUnsavedCount] = useState(0);
+  const retryTimerRef = useRef(null);
+  const retryDelayRef = useRef(3000);
+  const countFailed = () =>
+    setUnsavedCount([...unsavedRef.current.values()].filter((e) => e.failed).length);
+  const attemptSave = async (rowId, sr) => {
+    const { error } = await supabase.from("user_cards").update(sr).eq("id", rowId);
+    const entry = unsavedRef.current.get(rowId);
+    if (!entry || entry.sr !== sr) return; // superseded by a newer answer
+    if (error) {
+      console.error("SR update failed:", error);
+      entry.failed = true;
+      countFailed();
+      if (!retryTimerRef.current) {
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          retryDelayRef.current = Math.min(retryDelayRef.current * 2, 60000);
+          for (const [id, e] of unsavedRef.current) attemptSave(id, e.sr);
+        }, retryDelayRef.current);
+      }
+    } else {
+      unsavedRef.current.delete(rowId);
+      if (unsavedRef.current.size === 0) retryDelayRef.current = 3000;
+      countFailed();
+    }
+  };
+  const saveReview = (rowId, sr) => {
+    unsavedRef.current.set(rowId, { sr, failed: false });
+    attemptSave(rowId, sr);
+  };
+  // Leaving with answers unsaved asks first.
+  useEffect(() => {
+    if (!unsavedCount) return;
+    const onLeave = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onLeave);
+    return () => window.removeEventListener("beforeunload", onLeave);
+  }, [unsavedCount]);
+  useEffect(() => () => clearTimeout(retryTimerRef.current), []);
+
   const answer = (got, source = "flip") => {
     if (!card) return;
     // Once the queue is worked out the last card stays on screen behind the
@@ -878,18 +977,37 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Optimistic local deck patch first so the in-memory card carries today's
     // last_review into its retry; DB update is fire-and-forget (errors
     // logged, not surfaced).
-    const recordsReview = !reviewedToday(card.last_review);
-    const sr = recordsReview ? applyAnswer(card, got) : null;
+    //
+    // A card answered again with Previous card is a CORRECTION, not a second
+    // review: if its first answer in this block was the one recorded, the new
+    // grade replaces it, recomputed from the card's state before that answer.
+    // Without this, a mistaken Got It stood — the day's answer was already in,
+    // so the corrected Again was shown and never recorded. Retries are never
+    // corrections; they stay practice.
+    const slotKey = card._retry ? `retry:${card._rid}` : `card:${card.row_id}`;
+    const earlier = blockAnswersRef.current.get(slotKey);
+    const isCorrection = !!earlier;
+    let recordsReview = false;
+    let sr = null;
+    if (isCorrection) {
+      if (earlier.before && earlier.got !== got) {
+        sr = applyAnswer({ ...card, ...earlier.before }, got);
+      }
+    } else {
+      recordsReview = !card._retry && !reviewedToday(card.last_review);
+      if (recordsReview) sr = applyAnswer(card, got);
+    }
+    blockAnswersRef.current.set(slotKey, {
+      before: isCorrection ? earlier.before : recordsReview ? fsrsFieldsOf(card) : null,
+      got,
+    });
     if (sr) {
       setDeck(prev => prev.map(c =>
         c.row_id === card.row_id ? { ...c, ...sr } : c
       ));
       // And the deck the next block is built from — see patch() in useUserDeck.
       patchDeckCard(card.row_id, sr);
-      if (card.row_id != null) {
-        supabase.from("user_cards").update(sr).eq("id", card.row_id)
-          .then(({ error }) => { if (error) console.error("SR update failed:", error); });
-      }
+      if (card.row_id != null) saveReview(card.row_id, sr);
     }
     // Record today's review date for streak tracking.
     // Write to Supabase (persists across devices) and update local state so
@@ -915,11 +1033,15 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Accuracy counts typed answers only — those are verifiable, and a
     // flip-mode "got it" is self-reported. `answered` counts both, so the
     // end of a flip-only session still has something true to report.
+    // A correction changes the block's count of right answers, never its count
+    // of answers: the checkpoint's "50 answers" is the block's own length.
+    const recordedBefore = isCorrection && !!earlier.before;
     setStats(s => ({
       ...s,
-      answered: s.answered + 1,
+      answered: s.answered + (isCorrection ? 0 : 1),
       firstAnswered: s.firstAnswered + (recordsReview ? 1 : 0),
-      firstGot: s.firstGot + (recordsReview && got ? 1 : 0),
+      firstGot: s.firstGot + (recordsReview && got ? 1 : 0)
+        + (recordedBefore ? (got ? 1 : 0) - (earlier.got ? 1 : 0) : 0),
       ...(source === "typed"
         ? { seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }
         : null),
@@ -928,8 +1050,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     // the block, taking the place of the block's last unseen card — see
     // placeRetry. The block never grows past its length. Splice runs after
     // setDeck above so we use the post-SR-patch deck.
-    if (!got) {
-      setDeck(prev => placeRetry(prev, idx, { ...card, ...(sr || {}) }, RE_QUEUE_OFFSET));
+    if (!got && !(isCorrection && earlier.got === false)) {
+      setDeck(prev =>
+        // A correction to a miss gets a retry only if the card has none coming.
+        prev.slice(idx + 1).some((c) => c._retry && c.row_id === card.row_id)
+          ? prev
+          : placeRetry(prev, idx, { ...card, ...(sr || {}), _rid: Math.random().toString(36).slice(2) }, RE_QUEUE_OFFSET)
+      );
     }
 
     // Skip the un-flip animation — snap instantly to the next card's front
@@ -1094,12 +1221,18 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (tutorHasKeyboard()) return;
       if (e.key === " ") { e.preventDefault(); flipRef.current(); }
+      // A card is only graded once its answer has been seen. Before that the
+      // grading keys turn it over instead — they used to record Got It (or
+      // Again) on a card whose answer was never on screen.
+      else if (!answerSeen && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Enter")) {
+        e.preventDefault(); flipRef.current();
+      }
       else if (e.key === "ArrowLeft") { e.preventDefault(); answerRef.current(false); }
       else if (e.key === "ArrowRight" || e.key === "Enter") { e.preventDefault(); answerRef.current(true); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [card, mode, typeMode, overlayOpen, sessionDone]);
+  }, [card, mode, typeMode, overlayOpen, sessionDone, answerSeen]);
 
   // In type mode, after a result is showing (input gone), Enter/Space/→
   // auto-commits the matcher's verdict and advances to the next card.
@@ -1108,7 +1241,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (mode !== "study" || !typeMode || !typeResult || overlayOpen || sessionDone) return;
     // One rule, one place. This was a second copy of typedGotIt's logic, so
     // the two could — and did — disagree about what counts as recall.
-    const gotIt = typedGotIt(typeResult);
+    const gotIt = typedRecalled;
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (tutorHasKeyboard()) return;
@@ -1119,11 +1252,9 @@ export default function FlashcardApp({ user, onSignOut }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [mode, typeMode, typeResult, overlayOpen, sessionDone]);
+  }, [mode, typeMode, typeResult, typedRecalled, overlayOpen, sessionDone]);
 
   // Submit a feedback claim: "my answer should have been accepted"
-  const [feedbackErrMsg, setFeedbackErrMsg] = useState("");
-  const [feedbackVerdict, setFeedbackVerdict] = useState(null); // {verdict, reasoning}
 
   const submitFeedback = async () => {
     if (!card || !typedAnswer.trim()) return;
@@ -2284,8 +2415,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Answers, not cards: a block of 50 includes its retries. Right first time
   // counts each card's first answer of the day.
   const blockSummary = stats.firstAnswered > 0
-    ? `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}, ${stats.firstGot} right first time.`
-    : `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}.`;
+    ? `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}, ${stats.firstGot} right first time`
+    : `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}`;
   const areaLabel = (area) =>
     area === "recent" ? "Your recent classes"
       : area === "earlier" ? "Your earlier notes"
@@ -2318,8 +2449,10 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const onCardClick = () => {
     if (!effectiveTypeMode) return flip();
-    if (!typeResult) return giveUpTyped();
-    answer(typedGotIt(typeResult), "typed");
+    // With an answer typed but not checked, tapping the card checks it. It
+    // used to be Show answer: the typed text was ignored and a miss recorded.
+    if (!typeResult) return typedAnswer.trim() ? submitTyped() : giveUpTyped();
+    answer(typedRecalled, "typed");
   };
 
   return (
@@ -2401,6 +2534,11 @@ export default function FlashcardApp({ user, onSignOut }) {
           >
             Type answer
           </button>
+          {directionPending && pendingTypeMode === null && (
+            <span style={S.pendingSwitch} data-pending-direction>
+              The new direction starts from the next card
+            </span>
+          )}
           {pendingTypeMode !== null && (
             <span style={S.pendingSwitch} data-pending-switch>
               {pendingTypeMode ? "Typing starts from the next card" : "Flipping starts from the next card"}
@@ -2442,6 +2580,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <div style={S.subToolbarRight}>
                   {/* Where you are in the block. Gone at the checkpoint, where
                       the last card's position means nothing. */}
+                  {unsavedCount > 0 && (
+                    <span style={S.unsavedNotice} data-unsaved role="status">
+                      {unsavedCount === 1 ? "1 answer not saved yet" : `${unsavedCount} answers not saved yet`} — retrying
+                    </span>
+                  )}
                   {!sessionDone && <span style={S.counter}>
                     {`Card ${idx+1} of ${deck.length}`}
                     {card._retry && (
@@ -2496,20 +2639,12 @@ export default function FlashcardApp({ user, onSignOut }) {
                     ))}
                   </div>
                 )}
-                {checkpoint && checkpoint.next.queue.length === 0 ? (
+                {checkpoint && checkpoint.next.queue.length === 0 && (
                   <p style={S.checkpointNote}>
                     <strong>You're all caught up.</strong> Nothing is due, and there are no new cards
                     {lessonFilter !== "all" ? " left in this lesson" : ""}.
                   </p>
-                ) : checkpoint && checkpoint.next.counts.new === 0 && checkpoint.next.newAvailable > 0 ? (
-                  <p style={S.checkpointNote}>
-                    <strong>You're in a review phase.</strong>{" "}
-                    {[
-                      checkpoint.dueToday > 0 && `${checkpoint.dueToday.toLocaleString()} ${checkpoint.dueToday === 1 ? "card" : "cards"} came due today`,
-                      checkpoint.dueEarlier > 0 && `${checkpoint.dueEarlier.toLocaleString()} older ${checkpoint.dueEarlier === 1 ? "card is" : "cards are"} still waiting from earlier days`,
-                    ].filter(Boolean).join(", and ")}, so the next blocks are reviews only. New cards come back once those are done.
-                  </p>
-                ) : null}
+                )}
                 {checkpoint?.waiting > 0 && (
                   <p style={S.checkpointNote}>
                     {checkpoint.waiting.toLocaleString()} {checkpoint.waiting === 1 ? "card" : "cards"} from the rest of your deck {checkpoint.waiting === 1 ? "is" : "are"} due.
@@ -2623,7 +2758,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       {typeResult==="revealed" && `Answer: ${back}`}
                     </div>
                     {(() => {
-                      const gotIt = typedGotIt(typeResult);
+                      const gotIt = typedRecalled;
                       const missed = typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle";
                       return (
                         <>
@@ -2706,7 +2841,13 @@ export default function FlashcardApp({ user, onSignOut }) {
                         style={S.typeInput}
                         value={typedAnswer}
                         onChange={e => setTypedAnswer(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter") submitTyped(); else if (e.key === "Escape") { e.target.blur(); giveUpTyped(); } }}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") submitTyped();
+                          // Escape clears the box. It used to be Show answer,
+                          // which threw away what was typed and recorded a
+                          // miss — and Escape is the reflex for clearing a field.
+                          else if (e.key === "Escape") setTypedAnswer("");
+                        }}
                         placeholder={`Type ${answerLang(card)}…`}
                         autoFocus
                       />
@@ -2721,14 +2862,29 @@ export default function FlashcardApp({ user, onSignOut }) {
                 )
               ) : (
                 <>
-                  <div style={S.actionRow}>
-                    <button style={S.actionAgainRect} onClick={() => answer(false)}>
-                      Again
-                    </button>
-                    <button style={S.actionGotRect} onClick={() => answer(true)}>
-                      Got It
-                    </button>
-                  </div>
+                  {/* Grading is offered only once the answer has been seen —
+                      Got It on an unturned card is a recall FSRS records
+                      without one having happened. Before that, one button
+                      turns the card, in the same row so nothing moves. */}
+                  {answerSeen ? (
+                    <>
+                      <div style={S.actionRow}>
+                        <button style={S.actionAgainRect} onClick={() => answer(false)}>
+                          Again
+                        </button>
+                        <button style={S.actionGotRect} onClick={() => answer(true)}>
+                          Got It
+                        </button>
+                      </div>
+                      <p style={S.flipHint}>Only press Got It if you knew it before turning the card.</p>
+                    </>
+                  ) : (
+                    <div style={S.actionRow}>
+                      <button style={S.actionGotRect} onClick={flip} data-show-answer>
+                        Show answer
+                      </button>
+                    </div>
+                  )}
                   </>
               )}
               </div>
@@ -3627,6 +3783,8 @@ const S = {
   // The button itself is a borderless flex column. The colored 80×80
   // box wraps the SVG, and the uppercase label sits below it.
   // ── Rectangular action buttons: AGAIN / GOT IT ─────────────────────
+  unsavedNotice: { fontSize:11, fontFamily:T.font.sans, fontWeight:600, color:T.color.secondary, whiteSpace:"nowrap", marginRight:12 },
+  flipHint: { fontSize:11.5, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:"10px 0 0", textAlign:"center" },
   actionRow: { display:"flex", gap:12, justifyContent:"center", marginTop:0, marginBottom:0, width:"100%", maxWidth:420, alignSelf:"center", flexShrink:0 },
   actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"13px 24px", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, background:"transparent", color:T.color.onSurfaceVariant, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", transition:"all 0.15s" },
   actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"13px 24px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },

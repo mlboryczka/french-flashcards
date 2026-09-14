@@ -38,7 +38,11 @@ const SESSION = {
   },
 };
 
-export async function openApp({ width = 1400, height = 900, route } = {}) {
+// studyMode: the app opens in typing mode for a new student and remembers the
+// last choice. Suites were written against flip mode, so that is what they get
+// unless they ask; pass null to open as a brand-new student with no choice
+// stored.
+export async function openApp({ width = 1400, height = 900, route, studyMode = "flip" } = {}) {
   const browser = await chromium.launch({
     executablePath: CHROME,
     args: ["--no-sandbox"],
@@ -48,6 +52,10 @@ export async function openApp({ width = 1400, height = 900, route } = {}) {
   page.on("dialog", (d) => d.accept());
 
   await page.goto(APP);
+  await page.evaluate((mode) => {
+    if (mode) localStorage.setItem("study-mode", mode);
+    else localStorage.removeItem("study-mode");
+  }, studyMode);
   await page.evaluate((s) => {
     localStorage.setItem(
       "sb-127-auth-token",

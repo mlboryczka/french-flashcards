@@ -184,15 +184,12 @@ misses ran to 71 cards and read "Retry 1 of 21" before its checkpoint.
 
 After the last card of a block, `data-checkpoint` replaces the card (it
 replaced "Session complete!" and the New Session button). It says how the
-block went ("50 answers, 43 right first time" — answers because a block
+block went ("50 answers, 43 right first time", no full stop — answers because a block
 includes its retries, right first time counting first answers of the day in
 either mode), what each area moved (`progressChanges`: lesson, recent classes,
-earlier notes), and then one of:
+earlier notes), and then either:
 
 - **Continue**, which deals the next block;
-- **"You're in a review phase"**, when the next block would have no new cards
-  but new cards exist. It splits the review work the way a student reads it:
-  cards that came due today, and older cards still waiting from earlier days;
 - **"You're all caught up"**, with no Continue, when nothing is due and nothing
   is unseen;
 
@@ -235,13 +232,34 @@ carries those double counts, and with no review log it cannot be corrected.
 Two ways to answer, both recorded to FSRS the same way, under the same one
 answer per card per day rule:
 
-- **Flipping** (the default). The student turns the card and grades
-  themselves with Got It or Again. FSRS learns only what that press says; it
-  cannot tell whether the answer was really known. Just turning a card records
-  nothing, and there is no way on to the next card without grading.
-- **Typing.** The matcher grades: a small typo is right ("close enough"), a
-  wrong article is wrong, Show answer is wrong. Checked, so it is the stronger
-  evidence.
+- **Typing** (the default for a new student). The matcher grades: a small
+  typo is right ("close enough"), a wrong article is wrong, Show answer is
+  wrong. Checked, so it is the stronger evidence. Tapping the card with an
+  answer typed checks it; Escape clears the box and gives nothing up. An
+  accepted "my answer should be accepted" dispute is recorded as right.
+- **Flipping.** The student turns the card and grades themselves. Got It and
+  Again are offered only once the answer has been seen — before that the one
+  button is Show answer, and the grading keys turn the card instead — with
+  "Only press Got It if you knew it before turning the card." beneath. FSRS
+  learns only what that press says. Just turning a card records nothing.
+
+The last choice is remembered on the browser (`localStorage` `study-mode`).
+Tests open in flip mode unless they ask (`openApp({ studyMode })`), because
+the suites were written against it.
+
+**Previous card corrects a grade.** Going back and grading a card differently
+replaces that day's answer, recomputed from the card's state before it
+(`blockAnswersRef`, cleared per block). The block's answer count doesn't move.
+Retries are never corrections.
+
+**A failed save is shown and retried** (`saveReview`): "1 answer not saved yet
+— retrying" beside the counter, backoff from 3s to 60s, a newer answer for the
+same card replacing an older one waiting, and a prompt before leaving the page
+while anything is unsaved.
+
+**Changing direction applies from the next card** (`directionFor`, `dirRef`),
+and to the card on screen only if its answer hasn't been seen. It used to deal
+a new block.
 
 **Switching waits once the answer has been seen** (`toggleTypeMode`,
 `pendingTypeMode`). Before the answer is seen, the switch is immediate. After —
@@ -2069,37 +2087,29 @@ take:
 - Changing direction or the type filter mid-block deals a new block and loses
   the block's running count.
 
+**All seven then fixed the same day**, with the owner's go-ahead, plus
+remembering the mode and typing as the default — see *Flipping and typing*.
+The new `answering` suite judges each by the writes: an accepted dispute
+records a hit; Got It → Previous card → Again records the correction,
+recomputed from the prior state (sooner due date, same reps); Escape clears
+and records nothing, a tap checks what was typed; a 503 shows the notice and
+the retry saves once the server is back; direction keeps the block's count; a
+new student opens typing and a chosen flip survives a reload. `session` checks
+an unturned card is turned, not graded, by the first key. Tests that answered
+with one key press now use two.
+
+One found along the way: after a reload the first block is dealt from the deck
+saved in the browser, so cards added or due since that save wait for the next
+block. `cards` had relied on a direction change to rebuild; it now clears the
+saved deck.
+
+The owner also had the checkpoint's review-phase paragraph removed, and the
+full stop after "right first time". Stats' *Coming up* still separates due
+today from older cards.
+
 ---
 
 ## Open items
-
-- **Flip mode grades cards that were never turned.** Got It and Again show
-  before the flip, and ArrowRight / Enter record a hit on an unturned card —
-  measured: one write, `last_answer_correct: true`, with the answer never on
-  screen. The grade should only be offered once the answer is showing.
-- **An accepted dispute is recorded as a miss.** "My answer should be
-  accepted" → "Accepted — this answer will be remembered" → Continue still
-  sends `answer(typedGotIt(typeResult))` with `typeResult` "wrong", so FSRS
-  gets Again. The alternate is saved for next time; today's grade isn't
-  corrected. Continue should record a hit once the dispute is accepted.
-- **A mistaken grade can't be corrected.** Previous card and a different
-  grade is shown but not recorded — the one-answer-per-day rule sees the card
-  already reviewed. Keeping each card's state from before its first answer in
-  the block would let a regrade replace that day's answer instead.
-- **An unchecked typed answer is discarded.** Tapping the card or pressing
-  Escape with text in the box is Show answer: the text is ignored and a miss
-  recorded. Tapping should check what was typed; Escape with text should clear
-  the box rather than give up.
-- **Failed saves are silent.** A PATCH that errors goes to `console.error`;
-  the screen moves on as if it saved, and the answer is lost on reload. A
-  small "Not saved — retrying" notice and a retry would make it visible.
-- **Changing direction or the type filter mid-block deals a new block.** The
-  counter and the checkpoint's counts start again, and a missed card's
-  pending retry is lost (it is still due tomorrow). Direction could apply from
-  the next card instead, like the mode switch.
-- **Typing isn't remembered between visits.** The app opens in flip mode every
-  time. Recommended to the owner: remember the last mode, and make typing the
-  default for a new student.
 
 - **The retry and reset fixes of 2026-09-14 have not been seen on the live
   app.** The owner found both problems by studying on the live app; the fixes

@@ -89,12 +89,17 @@ const ck = checker();
 
   const start = await counter();
   const total = start.total;
+  // Each answer is two presses: the first turns the card, the second grades.
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForTimeout(60);
   await page.keyboard.press("ArrowLeft"); // miss card 1 — the only miss
   await settled(page);
   const afterMiss = await counter();
   ck("a miss does not lengthen the block", afterMiss.total === total, `${start.text} → ${afterMiss.text}`);
   let answers = 1;
   while (!(await page.$("[data-checkpoint]")) && answers < total * 3) {
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(60);
     await page.keyboard.press("ArrowRight");
     await page.waitForTimeout(60);
     answers++;

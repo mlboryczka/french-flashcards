@@ -58,6 +58,7 @@ async function pressInto(headingRe) {
   await page.waitForTimeout(500);
 }
 const gotItButton = () => page.$('button:has-text("Got It")');
+const cardOnScreen = async () => !(await page.$("[data-checkpoint]")) && (await cardBox(page)) !== null;
 const tapCard = () =>
   page.evaluate(() => {
     const el = [...document.querySelectorAll("div")].find(
@@ -69,16 +70,18 @@ const tapCard = () =>
 // Flip through the queue until there is nothing left to grade. Guarded well
 // above the deck size: if the session never ends, that IS the bug, and the
 // guard is what stops the suite hanging instead of reporting it.
+// Got It is only offered once the card is turned, so each answer is a tap to
+// turn it and a click on Got It.
 async function workTheQueue(limit = DECK_SIZE * 3) {
   let taps = 0;
-  while (taps < limit) {
+  while (taps < limit && (await cardOnScreen())) {
+    if (!(await gotItButton())) {
+      await tapCard();
+      await page.waitForTimeout(120);
+    }
     const btn = await gotItButton();
     if (!btn) break;
-    await tapCard();
-    await page.waitForTimeout(90);
-    const still = await gotItButton();
-    if (!still) break;
-    await still.click();
+    await btn.click();
     await page.waitForTimeout(200);
     taps++;
   }
@@ -131,10 +134,17 @@ await page.waitForTimeout(2000);
 // Without this the next two checks would pass on a broken app that had simply
 // stopped listening altogether.
 {
+  // An unturned card is never graded: the first press turns it over, and only
+  // the second, with the answer showing, records anything.
   const before = writes.length;
+  ck("before the card is turned, Got It is not offered", !(await gotItButton()));
   await page.keyboard.press("ArrowRight");
   await page.waitForTimeout(400);
-  ck("with nothing open, ArrowRight grades the card", writes.length === before + 1, `${writes.length - before} writes`);
+  ck("on an unturned card, ArrowRight turns it and records nothing", writes.length === before && !!(await gotItButton()),
+     `${writes.length - before} writes`);
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(400);
+  ck("with the answer showing, ArrowRight grades the card", writes.length === before + 1, `${writes.length - before} writes`);
 }
 
 // A modal. Enter is how you submit in a dialog; it used to also mark the card
@@ -218,7 +228,10 @@ console.log("\n  FSRS gets one answer per card per day");
       }),
   });
   const has = (re) => page.evaluate(([s, f]) => new RegExp(s, f).test(document.body.innerText), [re.source, re.flags]);
-  const press = async (key) => { await page.keyboard.press(key); await page.waitForTimeout(150); };
+  // One answer: the first press turns the card, the second grades it.
+  const press = async (key) => {
+    for (let i = 0; i < 2; i++) { await page.keyboard.press(key); await page.waitForTimeout(150); }
+  };
 
   const total = (await sessionCounter(page))?.total;
   ck("a session is on screen", total === DECK_SIZE, JSON.stringify(await sessionCounter(page)));
@@ -281,7 +294,9 @@ console.log("\n  Continue deals the next block, and never the same card twice");
   // Let the load-time lesson sync finish before answering: its reload would
   // re-serve this fixture's original state over the answers.
   await page.waitForTimeout(2500);
-  const press = async (key) => { await page.keyboard.press(key); await page.waitForTimeout(110); };
+  const press = async (key) => {
+    for (let i = 0; i < 2; i++) { await page.keyboard.press(key); await page.waitForTimeout(90); }
+  };
   const has = (re) => page.evaluate(([s, f]) => new RegExp(s, f).test(document.body.innerText), [re.source, re.flags]);
   const workBlock = async () => {
     const c = await sessionCounter(page);
@@ -300,16 +315,11 @@ console.log("\n  Continue deals the next block, and never the same card twice");
   ck("after 50 answers, the checkpoint", !!(await page.$("[data-checkpoint]")));
   ck("says how the block went", await has(/50 answers, 50 right first time/), "expected \"50 answers, 50 right first time\"");
   ck("and what it moved", await has(/Your earlier notes/));
-  // The fixture's cards fell due yesterday, so they are left over from an
-  // earlier day — and must be described that way, not as today's work.
-  ck("60 still due, so it says the next blocks are reviews only", await has(/review phase/i));
-  ck("and calls them older cards still waiting, not cards due today",
-     await has(/60 older cards are still waiting from earlier days/) && !(await has(/came due today/)));
+  ck("the count has no full stop after it", !(await has(/right first time\./)));
   ck("and offers Continue", await clickContinue());
 
   const b2 = await workBlock();
   ck("Continue deals the next 50", b2?.index === 1 && b2?.total === 50, JSON.stringify(b2));
-  ck("10 due and 3 new left: new cards fit, so no review-phase message", !(await has(/review phase/i)));
   await clickContinue();
 
   const b3 = await workBlock();
