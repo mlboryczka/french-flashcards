@@ -3,7 +3,7 @@
 // because every one of these bugs looked right on screen.
 //
 // Found on 2026-09-14 by driving every exception path in a study session.
-import { openApp, finish, checker, sessionCounter, cardBox, servedDeck, gotoStats } from "../harness.mjs";
+import { openApp, finish, checker, sessionCounter, cardBox, servedDeck, gotoStats, nullViolation } from "../harness.mjs";
 import { SIDE_FIELDS } from "../../src/lib/directions.js";
 
 const ck = checker();
@@ -26,6 +26,11 @@ async function open({ patchStatus, api, studyMode, rows } = {}) {
           writes.push({ at: Date.now(), status: state.patchStatus, url: r.request().url(), body });
           if (state.patchStatus !== 200) {
             return r.fulfill({ status: state.patchStatus, contentType: "application/json", headers: CORS, body: '{"message":"unavailable"}' });
+          }
+          const bad = nullViolation(body);
+          if (bad) {
+            writes[writes.length - 1].status = 400;
+            return r.fulfill({ status: 400, contentType: "application/json", headers: CORS, body: JSON.stringify({ code: "23502", message: `null value in column "${bad}" violates not-null constraint` }) });
           }
           if (rows) {
             const q = new URL(r.request().url()).searchParams;
@@ -261,11 +266,19 @@ console.log("\n  Reset all progress resets both ways round, on every card");
   await t.click("Reset all progress"); await t.wait(1500);
   const reset = t.writes.find((w) => /user_id=eq\./.test(w.url));
   const expected = [...SIDE_FIELDS, ...EN_FIELDS];
-  ck("one write, for every card of this student", !!reset, JSON.stringify(t.writes.map((w) => w.url.split("?")[1])));
+  ck("one write, for every card of this student, and the database accepts it",
+     !!reset && reset.status === 200, JSON.stringify(t.writes.map((w) => [w.status, w.url.split("?")[1]])));
+  // Every schedule column is written. Counts go to 0 and the rest to empty —
+  // except the French side's due date, which the table won't hold empty; for a
+  // never-answered card it is never read.
+  const zeroes = ["fsrs_state", "reps", "lapses", "en_fsrs_state", "en_reps", "en_lapses"];
   ck("clearing every schedule column, both ways",
      !!reset && expected.every((k) => k in reset.body) &&
-       expected.every((k) => ["fsrs_state", "reps", "lapses", "en_fsrs_state", "en_reps", "en_lapses"].includes(k) ? reset.body[k] === 0 : reset.body[k] === null),
+       expected.every((k) => zeroes.includes(k) ? reset.body[k] === 0
+         : k === "next_due_at" ? !Number.isNaN(Date.parse(reset.body[k]))
+         : reset.body[k] === null),
      JSON.stringify(reset?.body));
+  ck("no error shown", !(await t.has(/couldn't be reset/)));
   await gotoStats(t.page);
   const all = await t.page.evaluate(() => document.querySelector("[data-stats-all]")?.innerText.replace(/\s+/g, " ") || "");
   ck("and afterwards every card reads not yet seen", all.includes(`${deck.length} not yet seen`), all);

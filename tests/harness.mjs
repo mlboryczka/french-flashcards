@@ -105,6 +105,17 @@ export function firstBlockItems(rows, direction = "mix") {
   return out;
 }
 
+// user_cards columns the live table declares NOT NULL (read off its schema on
+// 2026-09-14). A write setting one to null is refused by Postgres, the whole
+// statement with it — which the mock never did, so a reset that sent
+// next_due_at: null passed every suite and failed on the live app.
+export const USER_CARDS_NOT_NULL = Object.freeze([
+  "front", "back", "category", "dates", "flagged_for_review", "box", "next_due_at",
+  "lapses", "fsrs_state", "reps", "en_fsrs_state", "en_reps", "en_lapses",
+]);
+export const nullViolation = (body) =>
+  USER_CARDS_NOT_NULL.find((k) => body && k in body && body[k] === null) || null;
+
 export async function finish(browser, ck) {
   // Suites that open a browser per case have already closed theirs and pass
   // null; the tally below is the part they still want.

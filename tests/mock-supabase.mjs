@@ -45,6 +45,11 @@ http.createServer((req,res)=>{
     const j=(c,o)=>{res.writeHead(c,{...cors,'Content-Type':'application/json'});res.end(JSON.stringify(o));};
     if(req.method==='PATCH'&&req.url.includes('/rest/v1/user_cards')){
       console.log('[SCHEDULER WRITE]',req.url.split('?')[1]||'', body);
+      // As the live table does: NOT NULL columns refuse null, and the whole
+      // write fails. Kept in step with USER_CARDS_NOT_NULL in harness.mjs.
+      let parsed={}; try{parsed=JSON.parse(body||'{}');}catch{}
+      const bad=['front','back','category','dates','flagged_for_review','box','next_due_at','lapses','fsrs_state','reps','en_fsrs_state','en_reps','en_lapses'].find(k=>k in parsed&&parsed[k]===null);
+      if(bad) return j(400,{code:'23502',message:`null value in column "${bad}" of relation "user_cards" violates not-null constraint`});
       return j(200,[]);
     }
     if(req.url.includes('/rest/v1/user_cards')&&req.method==='GET') return j(200,deck);

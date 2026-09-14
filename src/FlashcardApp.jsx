@@ -59,7 +59,7 @@ import { localISODate, reviewedToday, endOfLocalDay, startOfLocalDay } from "./l
 import { progressByArea, progressChanges, about, summarize } from "./lib/progress";
 import { buildSession, applyAnswer, placeRetry, countBuckets } from "./lib/sessionQueue";
 import { RE_QUEUE_OFFSET, State } from "./lib/spacedRepetition";
-import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, RESET_COLUMNS } from "./lib/directions";
+import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, resetColumns } from "./lib/directions";
 import { newReviewId, reviewRow } from "./lib/reviewLog";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
@@ -1423,7 +1423,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   // could see. The record of past answers (card_reviews) is history, and stays.
   const resetAll = async () => {
     if (!confirm("Reset all of your progress? Every card goes back to not yet seen, both ways round. This can't be undone.")) return;
-    const { error } = await supabase.from("user_cards").update(RESET_COLUMNS).eq("user_id", user.id);
+    const reset = resetColumns();
+    const { error } = await supabase.from("user_cards").update(reset).eq("user_id", user.id);
     if (error) {
       console.error("Reset failed:", error);
       alert("Your progress couldn't be reset, and nothing was changed. Please try again.");
@@ -1432,7 +1433,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     // An answer still waiting to be saved would put its schedule back.
     for (const k of [...unsavedRef.current.keys()]) if (k.startsWith("card:")) unsavedRef.current.delete(k);
     countFailed();
-    patchAllDeckCards(RESET_COLUMNS);
+    patchAllDeckCards(reset);
     await resetAllProgress();
     resetSession();
   };

@@ -66,26 +66,28 @@ export function sideColumns(fields, dir = "fr") {
 }
 
 // Both directions back to never answered: what "Reset all progress" writes.
-export const RESET_COLUMNS = Object.freeze(
-  Object.assign(
-    {},
-    ...DIRECTIONS.map((dir) =>
-      sideColumns(
-        {
-          stability: null,
-          difficulty: null,
-          fsrs_state: 0,
-          reps: 0,
-          lapses: 0,
-          next_due_at: null,
-          last_review: null,
-          last_answer_correct: null,
-        },
-        dir
-      )
-    )
-  )
-);
+//
+// The French side's next_due_at is NOT NULL (migration_005 made it `not null
+// default now()`), so it is set to the moment of the reset rather than
+// cleared. A never-answered side's due date is never read — New is decided by
+// fsrs_state alone — so the value is only there to satisfy the column. The
+// first version sent null, and the live database refused the whole reset
+// (2026-09-14); en_next_due_at is nullable and is cleared.
+export function resetColumns(now = new Date()) {
+  const blank = {
+    stability: null,
+    difficulty: null,
+    fsrs_state: 0,
+    reps: 0,
+    lapses: 0,
+    last_review: null,
+    last_answer_correct: null,
+  };
+  return {
+    ...sideColumns({ ...blank, next_due_at: new Date(now).toISOString() }, "fr"),
+    ...sideColumns({ ...blank, next_due_at: null }, "en"),
+  };
+}
 
 // A card asked one way: the unit a block is made of. The same card can be in a
 // block twice, once each way, so anything that tells queue entries apart —

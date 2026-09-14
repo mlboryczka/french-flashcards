@@ -1053,7 +1053,7 @@ ways, and where they disagree, this paragraph wins:
   on their last answer, off the same FSRS rows — in place of the lifetime
   `card_progress` accuracy; Hardest cards, which adds up forgetting either way
   round; and Reset all progress, which since 2026-09-14 sets both directions'
-  schedules on every card back to new (one update, `RESET_COLUMNS`) as well as
+  schedules on every card back to new (one update, `resetColumns()`) as well as
   clearing `card_progress` — before, it cleared only that legacy tally and every
   schedule survived. It leaves `card_reviews` alone. Guarded by the `stats`
   suite, whose expected figures are counted from its own fixture.
@@ -2253,6 +2253,19 @@ suite on the Mac: all 20 suites passed, `reflow` included this time.
 
 The migration is run by the owner in the SQL editor, and the columns were
 checked read-only before this was pushed.
+
+**The reset failed on the live app, first press.** "Your progress couldn't be
+reset, and nothing was changed." The update cleared `next_due_at` to null, and
+the live column is `not null default now()` (migration_005); Postgres refused
+the whole statement, so nothing changed, as the message said. Every check had
+passed: the mock accepted any write, and the local dry run of migration_010 had
+built `user_cards` with that column nullable. Fixed by setting the French
+side's due date to the moment of the reset — a never-answered side's due date
+is never read. The mock and `answering` now refuse null in every column the
+live table declares NOT NULL (`USER_CARDS_NOT_NULL` in the harness, read off
+its schema), and the reset check fails against the old code the way the live
+app did. **When testing a write, check it against the live table's
+constraints, not against a table rebuilt from the migrations.**
 
 ## Open items
 
