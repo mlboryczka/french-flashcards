@@ -167,17 +167,32 @@ Brunmair & Richter's (2019) meta-analysis of 59 studies.
 
 Guarded by the `serving` suite (no browser), one check per rule.
 
+**A block is 50 answers, retries included** (`placeRetry`). A missed card
+comes back `RE_QUEUE_OFFSET` (20) cards later, or at the end of the block if
+fewer are left, and takes the place of the block's last card not yet shown —
+which is dealt in the next block instead, since it is still unanswered. The
+block never grows, the counter is one running "Card N of 50", and a retry says
+"· retry" beside it. No retry when the miss is one of the last two cards, or
+when every card still to come is a retry: the card is due again tomorrow, first
+in that day's block. A retry is practice; FSRS already has the day's answer.
+
+This replaced appending retries after the block. With blocks of 50, every miss
+after card 30 landed past the end, so on 2026-09-14 the owner's block with 21
+misses ran to 71 cards and read "Retry 1 of 21" before its checkpoint.
+
 ### The checkpoint
 
 After the last card of a block, `data-checkpoint` replaces the card (it
 replaced "Session complete!" and the New Session button). It says how the
-block went ("50 cards, 43 right first time" — first answers of the day, either
-mode), what each area moved (`progressChanges`: lesson, recent classes,
+block went ("50 answers, 43 right first time" — answers because a block
+includes its retries, right first time counting first answers of the day in
+either mode), what each area moved (`progressChanges`: lesson, recent classes,
 earlier notes), and then one of:
 
 - **Continue**, which deals the next block;
 - **"You're in a review phase"**, when the next block would have no new cards
-  but new cards exist;
+  but new cards exist. It splits the review work the way a student reads it:
+  cards that came due today, and older cards still waiting from earlier days;
 - **"You're all caught up"**, with no Continue, when nothing is due and nothing
   is unseen;
 
@@ -400,6 +415,7 @@ writing nothing** — `--apply` is what makes them write.
 | `fix-multi-sense.mjs` | The multi-sense cleanup end to end: scan, audit, apply. `DECK_USER_ID` narrows it to one deck; omit it for every user |
 | `resolve-disputes.mjs` | Works the backlog of "my answer should have been accepted" claims left in `feedback_submissions` |
 | `resolve-feedback.mjs` | Lists open `beta_feedback`, and marks entries resolved (`--note`, `--apply`) once they are fixed. Needs `migration_009` |
+| `reset-fsrs-seed.mjs` | Puts cards still carrying `migration_007`'s guessed state — due at exactly the instant it ran, never answered since — back to not yet seen. `--apply` backs every row up to `backups/` (gitignored) first. Run for all decks on 2026-09-14; a dry run now finds none |
 
 Two things worth knowing about them:
 
@@ -917,8 +933,10 @@ ways, and where they disagree, this paragraph wins:
   `data-stats-coming-up`) has: Today and Right first time today, counted off
   each card's `last_review` — exact, because FSRS gets one answer per card per
   day; the streak; one three-band bar for the whole deck; *Your progress*, a
-  row per lesson, recent classes and earlier notes; *Coming up*, cards due on
-  each of the next seven days; *By type* with seen / about remembered in place
+  row per lesson, recent classes and earlier notes; *Coming up*, which says
+  how many cards came due today and, separately, how many older cards are
+  still waiting from earlier days, then the cards due on each of the next
+  seven days; *By type* with seen / about remembered in place
   of "mastered"; Hardest cards and Reset unchanged. Guarded by the `stats`
   suite, whose expected figures are counted from its own fixture.
 - **No finish estimates.** See the open item.
@@ -1940,21 +1958,66 @@ widens the sidebar for as long as the panel is open. Measured at 1400px:
 under the avatar, the account menu fully clickable past the rail, the choice
 surviving a reload. New suite `sidebar`, 19 in all.
 
+### 2026-09-14 — the first real blocks: retries past the end, and the FSRS switch's pile
+
+The owner studied on the live app and found the flow "not working", with a
+screenshot reading **Retry 1 of 21**. Two causes, neither covered by the
+strategy agreed on 2026-09-12, both found by reading the live data before
+changing anything.
+
+**Retries ran past the block.** A missed card was re-queued 20 cards later, and
+with blocks of 50 every miss after card 30 was appended after card 50. The
+owner's block had 21 misses, so it ran to 71 cards with the checkpoint at the
+end. The strategy said "a block of 50" and never said what a retry does to
+that. Now a block is 50 answers, retries included — see *How a session is
+built*. The checkpoint says "50 answers" rather than "50 cards".
+
+**708 cards "due today", 582 of them stamped by the FSRS switch.**
+`migration_007` gave every card answered under the box system a guessed state
+(stability from its box, mostly 1 day) and made all of them due at the instant
+it ran, 2026-09-05 04:19 UTC. Nine days on, none had been answered, FSRS put
+recall at about 69%, and the owner was missing around 40%. Under "due first,
+new only when due runs out" that meant about fourteen blocks of them before a
+single new card. The owner's question was the right one — "I can't possibly
+have 700+ cards due in a single day" — because "due" had been counted as one
+number: cards whose date is today, and everything left over from earlier days.
+
+Two fixes. **The data:** `scripts/reset-fsrs-seed.mjs` reset those cards to not
+yet seen on every deck, with the owner's go-ahead for all decks — 1,200 cards
+across 8 decks, 581 on the owner's (one had been answered since the count), 516
+on one other. Identified by exact `next_due_at` and the migration's own
+`last_review` arithmetic, backed up whole to `backups/` first; a second run
+finds none. The owner's deck went from 708 due to 30 due today and 90 older.
+They come back through the new-card order, which is honest: the state was a
+guess and the cards were not remembered. **The wording:** the checkpoint's
+review-phase message and the Stats page's *Coming up* now give "due today" and
+"older cards still waiting from earlier days" separately.
+
+Tests: `serving` gains the retry placement rules (including 21 misses in a
+block of 50 staying 50); `regressions` replaces the old retry-counter check
+with "the checkpoint comes after exactly the block's length in answers, and no
+counter reads Retry"; `session` checks a missed card's retry is the block's
+last answer with one card displaced and no extra write; `stats` checks today's
+and older due cards are counted apart. Full suite on the Mac: 18 of 19, the one
+failure `reflow`, which fails two runs in three on unchanged `main` too.
+
+Not verified: the live app, signed in, after the fix. See the open item.
+
 ---
 
 ## Open items
 
-- **The new serving strategy has not been checked on the live app, signed
-  in.** Everything from 2026-09-12 was tested against the mock and confirmed
-  in the deployed bundle, never on a real account with a real deck. Worth
-  looking at: the first block is 50 or fewer, due cards before new ones; the
-  checkpoint appears after 50 and Continue deals different cards; L'impératif
-  starts at card 1 with "about N of 108 remembered" in its bar; the Stats
-  figures are believable for an 8,700-card deck. Answering cards on the
-  owner's account writes real reviews, so either look without answering or
-  use a throwaway account.
-- **One browser suite fails on the owner's Mac and passes in the container.**
-  `reflow` — see *Working protocol*. (`layout`'s long-standing failure turned
+- **The retry and reset fixes of 2026-09-14 have not been seen on the live
+  app.** The owner found both problems by studying on the live app; the fixes
+  were tested against the mock only. Worth checking signed in: a block with
+  misses still ends at 50 answers with no "Retry N of M" run; the checkpoint
+  and Stats say due today and older still waiting separately; new cards start
+  arriving once the owner's ~120 remaining due cards are worked through.
+- **One browser suite fails on and off on the owner's Mac and passes in the
+  container.** `reflow` — see *Working protocol*. On 2026-09-14 it failed two
+  runs in three on unchanged `main` ("the tutor reflow actually ran — 0px of
+  padding", once a `page.goto` timeout instead), so a failure there is not a
+  signal either way. (`layout`'s long-standing failure turned
   out to be a real 5px card shift, fixed 2026-09-13.) They measure movement frame
   by frame, and this machine's headless Chrome delivers far fewer frames:
   sampling the feedback panel's open measured five in 600ms. `motion` was the

@@ -236,6 +236,40 @@ export function buildSession(cards, opts = {}) {
   };
 }
 
+// Where a missed card goes for its retry, inside the block.
+//
+// A block is 50 ANSWERS, retries included. The missed card comes back `offset`
+// cards later, or at the end of the block if fewer are left, and it takes the
+// place of the last card in the block not yet shown — which is simply dealt
+// in the next block instead, since it is still unanswered. So the block never
+// grows and the checkpoint always comes after the block's own length.
+//
+// This replaces appending retries to the end. With blocks of 50, every miss
+// after card 30 landed past the end, so a block with 21 misses ran to 71
+// cards and read "Retry 1 of 21" before its checkpoint (2026-09-14, the
+// owner's own deck).
+//
+// No retry when there is no room: the missed card is the last one, or every
+// card still to come is itself a retry. It isn't lost — a miss is due again
+// tomorrow and goes to the front of that day's first block.
+//
+// `deck` is the block, `idx` the position of the card just missed. Returns a
+// new array of the same length, or the same array if there is no room.
+export function placeRetry(deck, idx, card, offset = 20) {
+  let displace = -1;
+  for (let j = deck.length - 1; j > idx; j--) {
+    if (!deck[j]._retry) { displace = j; break; }
+  }
+  // Keep at least one other card between the miss and its retry: straight
+  // back is massed practice, and proves nothing.
+  if (displace === -1 || deck.length - 1 - idx < 2) return deck;
+  const next = [...deck];
+  next.splice(displace, 1);
+  const insertAt = Math.min(idx + 1 + offset, next.length);
+  next.splice(insertAt, 0, { ...card, _retry: true, _bucket: "lapse" });
+  return next;
+}
+
 // Compute the new scheduling state for a card after an answer.
 //
 // The app grades binary — you typed it right or you didn't — so we map onto

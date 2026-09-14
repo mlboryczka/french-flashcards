@@ -95,8 +95,8 @@ ck("a checkpoint replaces the card", await checkpointShown());
 ck("the card is gone, not left sitting there", (await cardBox(page)) === null);
 ck(
   "it says how the block went, counting first answers in either mode",
-  await bodyHas(new RegExp(`${DECK_SIZE} cards, ${DECK_SIZE} right first time`)),
-  `expected "${DECK_SIZE} cards, ${DECK_SIZE} right first time"`
+  await bodyHas(new RegExp(`${DECK_SIZE} answers, ${DECK_SIZE} right first time`)),
+  `expected "${DECK_SIZE} answers, ${DECK_SIZE} right first time"`
 );
 // The fixture is smaller than a block, so working it through leaves nothing
 // due and nothing new. Offering another block would deal an empty one.
@@ -223,19 +223,25 @@ console.log("\n  FSRS gets one answer per card per day");
   const total = (await sessionCounter(page))?.total;
   ck("a session is on screen", total === DECK_SIZE, JSON.stringify(await sessionCounter(page)));
 
-  await press("ArrowLeft"); // miss the first card
-  for (let i = 1; i < total; i++) await press("ArrowRight");
-  ck("the missed card comes back as a retry, so the next check proves something",
-     await has(/Retry 1 of 1/i));
-  ck("every card so far written once", oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
+  // Miss the first card. Its retry takes the last place in the block, and the
+  // card that was there waits for the next block: the block stays `total`
+  // answers long, with no tail of retries after it.
+  await press("ArrowLeft");
+  for (let i = 1; i < total - 1; i++) await press("ArrowRight");
+  const onRetry = await sessionCounter(page);
+  ck("the last card in the block is the missed card, back for its retry",
+     onRetry?.index === total && onRetry?.total === total && !!(await page.$("[data-retry]")),
+     JSON.stringify(onRetry));
+  ck("every card so far written once: one of them made way for the retry",
+     oneADay.length === total - 1, `${oneADay.length} writes for ${total - 1} cards shown`);
 
   await press("ArrowRight"); // get the retry right
-  ck("answering the retry ends the block", !!(await page.$("[data-checkpoint]")));
+  ck("answering the retry ends the block, at exactly its length", !!(await page.$("[data-checkpoint]")));
   ck("and writes nothing: that card already had today's review",
-     oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
+     oneADay.length === total - 1, `${oneADay.length} writes`);
 
-  // Stepping back from the end lands on the last original card, with the
-  // retry still after it — two answers to finish, both cards already
+  // Stepping back from the end lands on the last card before the retry, with
+  // the retry still after it — two answers to finish, both cards already
   // reviewed today.
   await page.click('button:has-text("Previous card")');
   await page.waitForTimeout(400);
@@ -243,7 +249,7 @@ console.log("\n  FSRS gets one answer per card per day");
   await press("ArrowRight");
   await press("ArrowRight");
   ck("answering both again is graded on screen", !!(await page.$("[data-checkpoint]")));
-  ck("but writes nothing either", oneADay.length === total, `${oneADay.length} writes for ${total} cards`);
+  ck("but writes nothing either", oneADay.length === total - 1, `${oneADay.length} writes`);
 
   await browser.close();
 }
@@ -292,9 +298,13 @@ console.log("\n  Continue deals the next block, and never the same card twice");
   const b1 = await workBlock();
   ck("a 110-card backlog deals a block of 50", b1?.total === 50, JSON.stringify(b1));
   ck("after 50 answers, the checkpoint", !!(await page.$("[data-checkpoint]")));
-  ck("says how the block went", await has(/50 cards, 50 right first time/), "expected \"50 cards, 50 right first time\"");
+  ck("says how the block went", await has(/50 answers, 50 right first time/), "expected \"50 answers, 50 right first time\"");
   ck("and what it moved", await has(/Your earlier notes/));
-  ck("60 still due, so it says the next blocks are reviews only", await has(/review phase/i) && await has(/60 cards/));
+  // The fixture's cards fell due yesterday, so they are left over from an
+  // earlier day — and must be described that way, not as today's work.
+  ck("60 still due, so it says the next blocks are reviews only", await has(/review phase/i));
+  ck("and calls them older cards still waiting, not cards due today",
+     await has(/60 older cards are still waiting from earlier days/) && !(await has(/came due today/)));
   ck("and offers Continue", await clickContinue());
 
   const b2 = await workBlock();

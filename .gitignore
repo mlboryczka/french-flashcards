@@ -11,3 +11,7 @@ dist-ssr
 
 # Screenshots taken while driving the app. Scratch output, never a deliverable.
 shot-*.png
+
+# Row backups written by maintenance scripts before they change data. They
+# hold other users' cards, so they never go in git.
+backups/

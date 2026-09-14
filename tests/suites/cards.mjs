@@ -60,16 +60,14 @@ ck(
 console.log("\n  tapping the card continues");
 // Compared on the counter's own words, not on index + 1.
 //
-// The counter is not one running number: past the initial deck size it
-// switches to "Retry 1 of 1" and starts again from one. So when the shuffle
-// happened to leave the suite on the LAST card, a wrong answer re-queued it,
-// tapping advanced correctly onto that retry, and the arithmetic read
-// 15 → 1 and called a working app broken. It failed about one run in fifteen,
-// which is exactly often enough to be dismissed as a flake.
+// The counter used to switch to "Retry 1 of 1" past the block's length and
+// start again from one, and index + 1 then called a working app broken about
+// one run in fifteen. Retries now sit inside the block, but the check still
+// reads the counter's own words rather than doing arithmetic on it.
 //
 // Read after grading and before the tap, so the tap is the only thing that
 // happened in between — reading it before the answer would also pick up the
-// "· 1 retry pending" the grade itself adds.
+// "· 1 retry to come" the grade itself adds.
 const counterText = () =>
   page.evaluate(() => {
     const m = document.body.innerText.match(/(?:Card|Retry) \d+ of \d+[^\n]*/i);

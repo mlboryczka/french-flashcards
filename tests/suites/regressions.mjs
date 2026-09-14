@@ -73,31 +73,35 @@ const ck = checker();
 // ever stops being viewport-sized, this becomes testable and should get a
 // check then.
 
-// ── The retry counter counts the retries that exist ──────────────────────
+// ── A missed card's retry stays inside the block ─────────────────────────
 //
-// Miss one card and the tail read "Retry 1 of 2": the total added your
-// position within the tail to the number of re-queued cards, counting the
-// card in front of you twice.
+// Retries used to be appended after the block. With blocks of 50, every miss
+// after card 30 landed past the end: a block with 21 misses ran to 71 cards
+// and read "Retry 1 of 21" before its checkpoint. The requirement is that the
+// block is its own length in answers, retries included.
 {
   const { browser, page } = await openApp({ width: 1400, height: 900 });
   const counter = () =>
     page.evaluate(() => {
-      const el = [...document.querySelectorAll("span")].find((s) =>
-        /^(Card|Retry) \d+ of \d+/.test(s.textContent || "")
-      );
-      return el ? el.textContent.split("·")[0].trim() : null;
+      const m = document.body.innerText.match(/(?:Card|Retry) (\d+) of (\d+)/i);
+      return m ? { text: m[0], index: +m[1], total: +m[2] } : null;
     });
 
-  const total = Number((await counter()).match(/of (\d+)/)[1]);
+  const start = await counter();
+  const total = start.total;
   await page.keyboard.press("ArrowLeft"); // miss card 1 — the only miss
   await settled(page);
-  for (let i = 1; i < total; i++) {
+  const afterMiss = await counter();
+  ck("a miss does not lengthen the block", afterMiss.total === total, `${start.text} → ${afterMiss.text}`);
+  let answers = 1;
+  while (!(await page.$("[data-checkpoint]")) && answers < total * 3) {
     await page.keyboard.press("ArrowRight");
     await page.waitForTimeout(60);
+    answers++;
   }
-  const tail = await counter();
-  ck("one card missed reads as one retry", tail === "Retry 1 of 1",
-     `${tail} after exactly 1 miss in a ${total}-card session`);
+  ck("the checkpoint comes after exactly the block's length in answers", answers === total,
+     `${answers} answers for a ${total}-card block`);
+  ck("and no counter ever read Retry", !/Retry \d+ of/i.test(await page.evaluate(() => document.body.innerText)));
   await browser.close();
 }
 

@@ -9,7 +9,7 @@
 // wave through a UTC bug.
 process.env.TZ = "America/New_York";
 
-import { buildSession, orderNewCards, classDaysOf } from "../../src/lib/sessionQueue.js";
+import { buildSession, orderNewCards, classDaysOf, placeRetry } from "../../src/lib/sessionQueue.js";
 import { localISODate, localISODateDaysAgo } from "../../src/lib/studyDay.js";
 import { lessonRank } from "../../src/data/lessons/index.js";
 import LESSON from "../../src/data/lessons/imperatif.js";
@@ -200,6 +200,39 @@ console.log("\n  outside a lesson, unseen lesson cards wait behind the notes");
   const onlyLesson = build(lessonCards, { lessonRank });
   ck("a student with no notes yet still gets the lesson, not an empty screen, in lesson order",
      onlyLesson.counts.new === 50 && onlyLesson.queue.every((c) => first50.has(c.id)), JSON.stringify(onlyLesson.counts));
+}
+
+// ── Retries stay inside the block ───────────────────────────────────────
+console.log("\n  a missed card is retried inside the block, never after it");
+{
+  const block = (n) => Array.from({ length: n }, (_, i) => ({ id: `b${i}` }));
+  const at = (deck, id) => deck.findIndex((c) => c.id === id && c._retry);
+
+  const d1 = placeRetry(block(50), 5, { id: "b5" }, 20);
+  ck("the block stays 50 long", d1.length === 50, `${d1.length}`);
+  ck("the retry comes 20 cards later", at(d1, "b5") === 26, `${at(d1, "b5")}`);
+  ck("and the block's last unseen card makes way, for the next block", !d1.some((c) => c.id === "b49"));
+
+  const d2 = placeRetry(block(50), 40, { id: "b40" }, 20);
+  ck("a miss at card 41 is retried at the end, not past it", d2.length === 50 && at(d2, "b40") === 49, `${at(d2, "b40")}`);
+
+  // 21 misses in a 50-card block, the case that ran to 71 cards: every
+  // card missed, retries included, until 21 retries have been placed.
+  let d = block(50), placed = 0;
+  for (let i = 0; i < 50 && placed < 21; i++) {
+    const before = d;
+    d = placeRetry(d, i, d[i], 20);
+    if (d !== before) placed++;
+  }
+  ck("21 misses placed, still 50 answers to the checkpoint", placed === 21 && d.length === 50, `${placed} placed, ${d.length} long`);
+
+  ck("a miss on the last card has no room, and the block does not grow",
+     placeRetry(block(50), 49, { id: "b49" }, 20).length === 50 && at(placeRetry(block(50), 49, { id: "b49" }, 20), "b49") === -1);
+  ck("nor on the second-to-last: a retry straight after the miss proves nothing",
+     at(placeRetry(block(50), 48, { id: "b48" }, 20), "b48") === -1);
+  const allRetries = [...block(10), { id: "x", _retry: true }, { id: "y", _retry: true }];
+  ck("a retry never displaces another retry",
+     placeRetry(allRetries, 9, { id: "b9" }, 20) === allRetries);
 }
 
 const n = ck.fails();

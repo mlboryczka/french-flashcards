@@ -19,7 +19,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `apply-splits` | the write endpoint: ownership, malformed splits, which row keeps its scheduling history | no |
 | `auth` | the guard on every endpoint that spends money: no verified session, no Anthropic request | no |
 | `dates` | which day a review counts towards, and whether a card has already had today's review, run under a pinned timezone so the bug isn't invisible from the one it was written in | no |
-| `serving` | which cards make a block of 50: due today first, new cards only once those run out, and the order new cards arrive in — lessons by teaching order, notes by recent classes then most-repeated words | no |
+| `serving` | which cards make a block of 50: due today first, new cards only once those run out, the order new cards arrive in — lessons by teaching order, notes by recent classes then most-repeated words — and where a missed card's retry goes, always inside the block | no |
 | `progress` | seen, about N remembered and not yet seen: FSRS's recall estimate, which area a card counts towards, and what a block changed | no |
 | `layout` | card fits the window at 7 heights; the tutor moves the content column and **not** the sidebar; the feedback panel moves nothing, on Cards and on Stats | yes |
 | `panels` | tutor/feedback mutual exclusion, outside-click dismissal, the tutor's reflow axis; the feedback panel sitting in the sidebar and never over the card, its draft surviving every close, sending clearing it with a toast, and the flag on the card opening it about that card | yes |
@@ -30,7 +30,7 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 | `regressions` | bugs found by driving the app, each with the check that would have caught it | yes |
 | `reflow` | what the reflow drags with it: the chrome above the card holding still, the card animating rather than popping, the feedback sheet staying inside the window, and panel/page agreeing across the reflow floor | yes |
 | `cards` | gloss stripped from the French prompt, banner shows your answer, tapping the card continues | yes |
-| `stats` | the Stats page: today's answers, seen / about remembered / not yet seen for the deck and each area, cards coming up, and no "mastered" — every expected figure counted from its own fixture | yes |
+| `stats` | the Stats page: today's answers, seen / about remembered / not yet seen for the deck and each area, cards due today counted apart from older ones still waiting, cards coming up, and no "mastered" — every expected figure counted from its own fixture | yes |
 | `types` | the Grammar/Vocab/Phrases filter and the By type panel | yes |
 | `session` | working a block to its checkpoint, Continue dealing the next block without repeating a card, what the keyboard is allowed to touch, and FSRS getting one answer per card per day | yes |
 | `tutor` | the answer rendering as it streams, the deck context the endpoint is sent, editing a proposed card before it is written | yes |

@@ -55,9 +55,9 @@ import {
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
-import { localISODate, reviewedToday, endOfLocalDay } from "./lib/studyDay";
+import { localISODate, reviewedToday, endOfLocalDay, startOfLocalDay } from "./lib/studyDay";
 import { progressByArea, progressChanges, aboutRemembered, summarize } from "./lib/progress";
-import { buildSession, applyAnswer } from "./lib/sessionQueue";
+import { buildSession, applyAnswer, placeRetry } from "./lib/sessionQueue";
 import { RE_QUEUE_OFFSET, State } from "./lib/spacedRepetition";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
@@ -243,11 +243,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
   const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
-  // Number of cards in the deck at session-build time. Stays fixed even
-  // when in-session re-queues splice extra entries onto the end. The
-  // counter UI uses this so "Card N of M" doesn't tick up every time you
-  // miss one (which would feel like the session was getting longer).
-  const [initialDeckSize, setInitialDeckSize] = useState(0);
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const skipFlipAnim = useRef(false); // temporarily disables the card flip transition
@@ -570,7 +565,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         .map(c => {
           const u = byRow.get(c.row_id);
           return u
-            ? { ...u, shownDir: c.shownDir, flippable: c.flippable, _bucket: c._bucket }
+            ? { ...u, shownDir: c.shownDir, flippable: c.flippable, _bucket: c._bucket, _retry: c._retry }
             : null;
         })
         .filter(Boolean);
@@ -615,7 +610,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     else if (preservedIdx < 0) setFlipped(false);
     setDeck(cards);
     setSessionCounts(counts);
-    setInitialDeckSize(cards.length);
     setIdx(0);
     // A rebuilt queue is unworked, whatever the last one's state was.
     setSessionDone(false);
@@ -642,12 +636,23 @@ export default function FlashcardApp({ user, onSignOut }) {
       lessonRank,
     });
     const endToday = endOfLocalDay(new Date(now));
-    const waiting = lessonFilter === "all" ? 0 : userCards.filter((c) =>
-      (c.fsrs_state ?? State.New) !== State.New &&
-      lessonIdOf(c) !== lessonFilter &&
-      c.next_due_at && new Date(c.next_due_at).getTime() <= endToday
-    ).length;
-    return { after, changes, next, waiting };
+    const startToday = startOfLocalDay(new Date(now));
+    const dueAt = (c) => (c.fsrs_state ?? State.New) !== State.New && c.next_due_at
+      ? new Date(c.next_due_at).getTime() : null;
+    const waiting = lessonFilter === "all" ? 0 : userCards.filter((c) => {
+      const t = dueAt(c);
+      return t !== null && t <= endToday && lessonIdOf(c) !== lessonFilter;
+    }).length;
+    // The review work still ahead in this selection, split the way a student
+    // reads it: what came due today, and what is left over from earlier days.
+    // One number read as "708 due today" once, which no one can do in a day.
+    let dueToday = 0, dueEarlier = 0;
+    for (const c of candidatesFrom(userCards)) {
+      const t = dueAt(c);
+      if (t === null || t > endToday) continue;
+      if (t >= startToday) dueToday++; else dueEarlier++;
+    }
+    return { after, changes, next, waiting, dueToday, dueEarlier };
   }, [sessionDone, userCards, candidatesFrom, lessonFilter]);
   // Keep the ref in sync so deck rebuilds can find the current card.
   useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
@@ -890,17 +895,12 @@ export default function FlashcardApp({ user, onSignOut }) {
         ? { seen: s.seen+1, got: s.got+(got?1:0), missed: s.missed+(got?0:1) }
         : null),
     }));
-    // Wrong answers: re-queue the card RE_QUEUE_OFFSET positions later in
-    // the session so the user gets another shot before the session ends.
-    // Splice runs after setDeck above so we use the post-SR-patch deck.
+    // Wrong answers: the card comes back RE_QUEUE_OFFSET cards later, INSIDE
+    // the block, taking the place of the block's last unseen card — see
+    // placeRetry. The block never grows past its length. Splice runs after
+    // setDeck above so we use the post-SR-patch deck.
     if (!got) {
-      setDeck(prev => {
-        const next = [...prev];
-        const insertAt = Math.min(next.length, idx + 1 + RE_QUEUE_OFFSET);
-        const reCard = { ...card, ...(sr || {}), _bucket: "lapse" };
-        next.splice(insertAt, 0, reCard);
-        return next;
-      });
+      setDeck(prev => placeRetry(prev, idx, { ...card, ...(sr || {}) }, RE_QUEUE_OFFSET));
     }
 
     // Skip the un-flip animation — snap instantly to the next card's front
@@ -909,15 +909,14 @@ export default function FlashcardApp({ user, onSignOut }) {
     setTypeResult(null);
     setTypedAnswer("");
     setFeedbackState(null); setFeedbackVerdict(null);
-    // Cap at last index. On a wrong answer the splice above grew the deck
-    // by 1, so this lands on the freshly-re-queued card. On a correct
-    // answer at the end of the deck idx stays put, and `sessionDone` below
-    // is what turns that into a visible end — the clamp alone can't, since
-    // idx reads the same before and after the last card is answered.
-    setIdx(i => Math.min(i + 1, (got ? deck.length : deck.length + 1) - 1));
-    // A correct answer on the last card empties the queue; a wrong one
-    // re-queued it, so there is still work left.
-    if (got && wasLastCard) setSessionDone(true);
+    // Cap at last index. The block's length never changes (a retry replaces
+    // an unseen card), so the last card stays put, and `sessionDone` below is
+    // what turns that into a visible end — the clamp alone can't, since idx
+    // reads the same before and after the last card is answered.
+    setIdx(i => Math.min(i + 1, deck.length - 1));
+    // Any answer to the last card ends the block. A miss there has no room
+    // for a retry; it is due again tomorrow, first in that day's block.
+    if (wasLastCard) setSessionDone(true);
     // Re-enable the flip animation on the next frame
     requestAnimationFrame(() => { skipFlipAnim.current = false; });
   };
@@ -975,7 +974,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Without this, "New Session" would re-show the cards you just finished
     // (patched but still in old order) until the next filter change.
     setDeck([]);
-    setInitialDeckSize(0);
     setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
     currentCardIdRef.current = null;
     setFlipped(false);
@@ -995,7 +993,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   const startNextBlock = () => {
     setIdx(0);
     setDeck([]);
-    setInitialDeckSize(0);
     setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
     currentCardIdRef.current = null;
     setFlipped(false);
@@ -2030,10 +2027,18 @@ export default function FlashcardApp({ user, onSignOut }) {
       { key: "earlier", label: "Your earlier notes", sub: "Everything older", summary: areas.earlier },
     ].filter((r) => r.summary.total > 0);
 
-    // Coming up: cards due on each of the next seven days, starting tomorrow.
-    const dueToday = userCards.filter((c) =>
-      isSeenCard(c) && c.next_due_at && new Date(c.next_due_at).getTime() <= endToday
-    ).length;
+    // Coming up. Today's work is split in two: cards whose date is today, and
+    // cards left over from earlier days. Counted together this once read
+    // "708 due today" — almost all of them stamped due on one day by the
+    // move to FSRS — which reads as a day's work no one could do.
+    const startToday = startOfLocalDay(new Date(now));
+    let dueToday = 0, dueEarlier = 0;
+    for (const c of userCards) {
+      if (!isSeenCard(c) || !c.next_due_at) continue;
+      const t = new Date(c.next_due_at).getTime();
+      if (t > endToday) continue;
+      if (t >= startToday) dueToday++; else dueEarlier++;
+    }
     const week = Array.from({ length: 7 }, (_, i) => {
       const d = new Date(now);
       d.setDate(d.getDate() + i + 1);
@@ -2147,7 +2152,9 @@ export default function FlashcardApp({ user, onSignOut }) {
             <div style={{marginTop:24}} data-stats-coming-up>
               <h3 style={S.statsSectionTitle}>Coming up</h3>
               <p style={S.statsSectionSub}>
-                {dueToday.toLocaleString()} due today. {week[0].count.toLocaleString()} due tomorrow, {weekTotal.toLocaleString()} over the next seven days.
+                {dueToday.toLocaleString()} due today
+                {dueEarlier > 0 ? `, and ${dueEarlier.toLocaleString()} older ${dueEarlier === 1 ? "card" : "cards"} still waiting from earlier days` : ""}.
+                {" "}{week[0].count.toLocaleString()} due tomorrow, {weekTotal.toLocaleString()} over the next seven days.
               </p>
               <div style={S.weekChart}>
                 {week.map((w) => (
@@ -2241,9 +2248,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   // What the completion panel says it did. Accuracy needs a denominator you
   // can trust, so it is only offered when something was actually typed;
   // otherwise the honest report is a count of what you worked through.
+  // Answers, not cards: a block of 50 includes its retries. Right first time
+  // counts each card's first answer of the day.
   const blockSummary = stats.firstAnswered > 0
-    ? `${stats.firstAnswered} ${stats.firstAnswered === 1 ? "card" : "cards"}, ${stats.firstGot} right first time.`
-    : `${stats.answered} ${stats.answered === 1 ? "card" : "cards"}.`;
+    ? `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}, ${stats.firstGot} right first time.`
+    : `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}.`;
   const areaLabel = (area) =>
     area === "recent" ? "Your recent classes"
       : area === "earlier" ? "Your earlier notes"
@@ -2373,12 +2382,10 @@ export default function FlashcardApp({ user, onSignOut }) {
           {/* Sub-toolbar: session counter and back control */}
           <div style={S.subToolbar} className="chip-row">
             {card && (() => {
-              // The counter shows progress against the *initial* deck size
-              // so re-queued retries don't make the session look longer.
-              // Once the user passes that point they're working through the
-              // retry tail — surface it explicitly with "Retry N".
-              const inOriginal = idx < initialDeckSize;
-              const retriesPending = Math.max(0, deck.length - initialDeckSize);
+              // Where you are in the block. Retries sit inside the block rather
+              // than after it, so this is one running count to the checkpoint;
+              // a retry says so beside the count.
+              const retriesComing = deck.slice(idx + 1).filter((c) => c._retry).length;
               const hasBreakdown =
                 sessionCounts.lapse + sessionCounts.review + sessionCounts.new + sessionCounts.spot > 0;
               return (
@@ -2396,14 +2403,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                   {/* Where you are in the block. Gone at the checkpoint, where
                       the last card's position means nothing. */}
                   {!sessionDone && <span style={S.counter}>
-                    {inOriginal
-                      ? `Card ${idx+1} of ${initialDeckSize}`
-                      // retriesPending IS the total number of re-queued cards.
-                      // Adding your position within the tail to it counted the
-                      // card in front of you twice, so missing one card read
-                      // "Retry 1 of 2".
-                      : `Retry ${idx + 1 - initialDeckSize} of ${retriesPending}`}
-                    {inOriginal && hasBreakdown && (
+                    {`Card ${idx+1} of ${deck.length}`}
+                    {card._retry && (
+                      <span style={S.counterBreakdown} data-retry>{" · retry"}</span>
+                    )}
+                    {!card._retry && hasBreakdown && (
                       <span style={S.counterBreakdown}>
                         {" · "}
                         {[
@@ -2414,9 +2418,9 @@ export default function FlashcardApp({ user, onSignOut }) {
                         ].filter(Boolean).join(" · ")}
                       </span>
                     )}
-                    {inOriginal && retriesPending > 0 && (
+                    {retriesComing > 0 && (
                       <span style={S.counterBreakdown}>
-                        {` · ${retriesPending} retry pending`}
+                        {` · ${retriesComing} ${retriesComing === 1 ? "retry" : "retries"} to come`}
                       </span>
                     )}
                   </span>}
@@ -2460,8 +2464,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                 ) : checkpoint && checkpoint.next.counts.new === 0 && checkpoint.next.newAvailable > 0 ? (
                   <p style={S.checkpointNote}>
                     <strong>You're in a review phase.</strong>{" "}
-                    {(checkpoint.next.counts.lapse + checkpoint.next.counts.review + checkpoint.next.dueRemaining).toLocaleString()} cards
-                    are due, so the next blocks are reviews only. New cards come back once those are done.
+                    {[
+                      checkpoint.dueToday > 0 && `${checkpoint.dueToday.toLocaleString()} ${checkpoint.dueToday === 1 ? "card" : "cards"} came due today`,
+                      checkpoint.dueEarlier > 0 && `${checkpoint.dueEarlier.toLocaleString()} older ${checkpoint.dueEarlier === 1 ? "card is" : "cards are"} still waiting from earlier days`,
+                    ].filter(Boolean).join(", and ")}, so the next blocks are reviews only. New cards come back once those are done.
                   </p>
                 ) : null}
                 {checkpoint?.waiting > 0 && (

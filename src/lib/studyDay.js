@@ -54,6 +54,14 @@ export function endOfLocalDay(now = new Date()) {
   return d.getTime();
 }
 
+// The first millisecond of the student's day. Before this, a due card is one
+// left over from an earlier day, not today's work.
+export function startOfLocalDay(now = new Date()) {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 // The student's local date `days` before `now`, as YYYY-MM-DD — the same
 // shape class dates are stored in, so the two compare as strings.
 export function localISODateDaysAgo(days, now = new Date()) {

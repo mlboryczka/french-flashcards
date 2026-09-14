@@ -43,6 +43,18 @@ LESSON.cards.forEach(([front, back, category], i) => {
   });
 });
 
+// Review work: 4 cards left over from earlier days, 2 that came due today.
+const startOfToday = (() => { const d = new Date(now); d.setHours(0, 0, 1, 0); return d.getTime(); })();
+for (let i = 0; i < 6; i++) {
+  rows.push({
+    id: id++, front: `révision ${i}`, back: `review ${i}`, category: "V", dates: [daysAgo(60)],
+    flagged_for_review: false, batch_id: null, source: "cahier-upload",
+    fsrs_state: 2, stability: 1, difficulty: 5, reps: 1, lapses: 0,
+    last_review: new Date(now - 10 * DAY).toISOString(), last_answer_correct: true,
+    next_due_at: new Date(i < 4 ? now - 3 * DAY : startOfToday).toISOString(),
+  });
+}
+
 const isSeen = (r) => r.fsrs_state !== 0;
 const today = localDay(now);
 const answeredToday = rows.filter((r) => r.last_review && localDay(r.last_review) === today);
@@ -89,6 +101,11 @@ row("Your earlier notes", earlier);
 console.log("\n  coming up");
 const coming = await within("[data-stats-coming-up]");
 ck("cards due tomorrow", coming.includes(`${dueTomorrow} due tomorrow`), coming.slice(0, 120));
+// A pile left from earlier days is not today's work, and must not read as it.
+ck("cards due today are only those whose date is today",
+   coming.includes("2 due today"), coming.slice(0, 160));
+ck("older cards still waiting are counted apart",
+   coming.includes("4 older cards still waiting from earlier days"), coming.slice(0, 160));
 
 console.log("\n  the old vocabulary is gone");
 ck("no \"mastered\" anywhere on the page", !/mastered/i.test(text));
