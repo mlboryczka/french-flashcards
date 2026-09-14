@@ -2503,10 +2503,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                       {typeResult==="revealed" && `Answer: ${back}`}
                     </div>
                     {(typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle") && (
-                      <div style={S.feedbackRow}>
+                      <div style={feedbackState === null ? S.typeLinksRow : S.feedbackRow}>
                         {feedbackState === null && (
                           <>
-                            <button style={S.feedbackBtn} onClick={submitFeedback}>
+                            <button style={S.typeLink} onClick={submitFeedback}>
                               My answer should have been accepted
                             </button>
                             {/* The other thing you want after a miss: not "I
@@ -2516,7 +2516,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                                 the card off its one fixed position. */}
                             <button
                               data-tutor-toggle
-                              style={S.feedbackBtn}
+                              style={S.typeLink}
                               onClick={() =>
                                 // The miss reaches the tutor through tutorCard,
                                 // which carries the typed answer and the
@@ -2550,20 +2550,24 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {(() => {
                       const gotIt = typedGotIt(typeResult);
                       return (
-                        <div style={S.typeAdvanceRow}>
+                        <>
                           {gotIt && (
-                            <button
-                              style={S.markReviewLink}
-                              onClick={() => answer(false, "typed")}
-                              title="Record as incorrect and keep this card near the top of the queue"
-                            >
-                              Actually, mark for review
-                            </button>
+                            <div style={S.typeLinksRow}>
+                              <button
+                                style={{ ...S.typeLink, ...S.typeLinkMuted }}
+                                onClick={() => answer(false, "typed")}
+                                title="Record as incorrect and keep this card near the top of the queue"
+                              >
+                                Actually, mark for review
+                              </button>
+                            </div>
                           )}
+                          {/* Centred, at its own size — not stretched to the
+                              column, and not pushed to its right edge. */}
                           <button style={S.continueBtn} onClick={() => answer(gotIt, "typed")}>
                             Continue →
                           </button>
-                        </div>
+                        </>
                       );
                     })()}
                   </div>
@@ -3156,7 +3160,7 @@ function ReportCardButton({ onReport, nextToInfo = false }) {
     <button
       type="button"
       data-report-card
-      style={{ ...S.reportCardBtn, right: nextToInfo ? 46 : 18, opacity: hover ? 0.7 : 0.25 }}
+      style={{ ...S.reportCardBtn, right: nextToInfo ? 50 : 14, opacity: hover ? 0.7 : 0.25 }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onMouseDown={(e) => e.stopPropagation()}
@@ -3477,7 +3481,9 @@ const S = {
   cardAudioBtn: { width:52, height:52, display:"flex", alignItems:"center", justifyContent:"center", border:"none", borderRadius:"50%", background:T.color.surfaceLow, cursor:"pointer", fontSize:20, color:T.color.primary, transition:"all 0.15s" },
   cardAudioMic: { background:T.color.surfaceLow, color:T.color.secondary },
   cardAudioMicActive: { background:T.color.secondary, color:T.color.onSecondary, animation:"pulse 1.2s infinite" },
-  cardActionsFloat: { position:"absolute", top:18, right:18, display:"flex", gap:6 },
+  // The pencil, the flag and the ⓘ are matching 30px circles 14px in from the
+  // card's edges, so the pencil and the flag share a centre line.
+  cardActionsFloat: { position:"absolute", top:14, right:14, display:"flex", gap:6 },
 
   // ── Big icon-button actions: AGAIN / GOT IT ───────────────────────
   // The button itself is a borderless flex column. The colored 80×80
@@ -3488,10 +3494,10 @@ const S = {
   actionGotRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"13px 24px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 8px 24px rgba(3,22,50,0.15)", transition:"all 0.15s" },
 
   // ── Info tooltip (ⓘ keyboard shortcuts) ───────────────────────────
-  infoWrap: { position:"absolute", bottom:14, right:18, zIndex:5 },
-  reportCardBtn: { position:"absolute", bottom:14, width:22, height:22, padding:0, border:"none", borderRadius:"50%", background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:T.color.onSurfaceVariant, transition:"opacity 0.15s", zIndex:5 },
-  infoBtn: { width:22, height:22, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.25, transition:"opacity 0.15s", userSelect:"none" },
-  infoTip: { position:"absolute", bottom:30, right:0, background:T.color.surfaceLow, color:T.color.onSurfaceVariant, padding:"12px 16px", borderRadius:T.radius.lg, fontSize:11, fontFamily:T.font.sans, lineHeight:1.8, whiteSpace:"nowrap", boxShadow:"0 4px 16px rgba(3,22,50,0.08)", zIndex:10 },
+  infoWrap: { position:"absolute", bottom:14, right:14, zIndex:5 },
+  reportCardBtn: { position:"absolute", bottom:14, width:30, height:30, padding:0, border:"none", borderRadius:"50%", background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:T.color.onSurfaceVariant, transition:"opacity 0.15s", zIndex:5 },
+  infoBtn: { width:30, height:30, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.25, transition:"opacity 0.15s", userSelect:"none" },
+  infoTip: { position:"absolute", bottom:36, right:0, background:T.color.surfaceLow, color:T.color.onSurfaceVariant, padding:"12px 16px", borderRadius:T.radius.lg, fontSize:11, fontFamily:T.font.sans, lineHeight:1.8, whiteSpace:"nowrap", boxShadow:"0 4px 16px rgba(3,22,50,0.08)", zIndex:10 },
 
   // Legacy action styles (kept for reference, no longer rendered)
   actionBtn: { display:"flex", flexDirection:"column", alignItems:"center", gap:12, background:"transparent", border:"none", cursor:"pointer", padding:0, fontFamily:T.font.sans },
@@ -3788,7 +3794,7 @@ const S = {
   headerBtn: { padding:"6px 12px", background:T.color.surfaceHigh, border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:12, color:T.color.primary, fontFamily:T.font.sans, fontWeight:500 },
   // Per-card action buttons (edit / flag)
   cardActions: { display:"flex", gap:10, justifyContent:"center", marginTop:18 },
-  cardActionBtn: { background:T.color.surfaceLow, border:"none", borderRadius:T.radius.full, padding:"6px 14px", fontSize:11, cursor:"pointer", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
+  cardActionBtn: { width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", background:T.color.surfaceLow, border:"none", borderRadius:"50%", padding:0, fontSize:13, cursor:"pointer", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
   cardActionBtnFlagged: { background:T.color.tertiaryFixed, color:T.color.onSecondaryContainer, cursor:"default", fontWeight:700 },
   // Type mode (study input)
   typeInputRow: { display:"flex", gap:10, justifyContent:"center", marginBottom:10 },
@@ -3824,14 +3830,21 @@ const S = {
   pronRetryBtn: { padding:"9px 20px", background:T.color.surfaceHigh, border:"none", color:T.color.primary, borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontFamily:T.font.sans, fontWeight:600 },
   pronDismissBtn: { padding:"9px 20px", background:"transparent", border:"none", color:T.color.onSurfaceVariant, borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontFamily:T.font.sans, fontWeight:500 },
   // Typing feedback
-  typeFeedback: { marginBottom:12, width:"100%", maxWidth:520, alignSelf:"center" },
-  typeCorrect: { textAlign:"center", padding:14, background:T.color.tertiaryFixed, color:T.color.onSecondaryContainer, borderRadius:T.radius.lg, fontSize:15, fontWeight:600, marginBottom:12, fontFamily:T.font.sans },
-  typeClose: { textAlign:"center", padding:14, background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
-  typeRevealed: { textAlign:"center", padding:14, background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
-  typeWrong: { textAlign:"center", padding:14, background:T.color.errorContainer, color:T.color.onErrorContainer, borderRadius:T.radius.lg, fontSize:14, fontWeight:500, marginBottom:12, fontFamily:T.font.sans },
+  // One 420px column under the card in type mode — the width of Again and Got
+  // It — so the result banner and the link rows share both edges, and Continue
+  // sits centred in it. It used to be four widths stacked: card 600, banner
+  // 520, links as centred text, Continue pushed right in a 480 row.
+  typeFeedback: { width:"100%", maxWidth:420, alignSelf:"center", display:"flex", flexDirection:"column", gap:10 },
+  typeCorrect: { textAlign:"center", padding:"13px 14px", background:"#dcece5", color:"#1f5446", borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
+  typeClose: { textAlign:"center", padding:"13px 14px", background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
+  typeRevealed: { textAlign:"center", padding:"13px 14px", background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
+  typeWrong: { textAlign:"center", padding:"13px 14px", background:T.color.errorContainer, color:T.color.onErrorContainer, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
+  // Links at either end of the column, their text on its edges.
+  typeLinksRow: { display:"flex", alignItems:"center", justifyContent:"space-between", minHeight:24, fontFamily:T.font.sans },
+  typeLink: { padding:"4px 0", background:"transparent", border:"none", color:T.color.secondary, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, textDecoration:"underline", textUnderlineOffset:3 },
+  typeLinkMuted: { color:T.color.onSurfaceVariant, fontWeight:500, opacity:0.8 },
   typeBtnRow: { display:"flex", gap:12, marginTop:8 },
-  feedbackRow: { textAlign:"center", marginBottom:10, fontFamily:T.font.sans, fontSize:12 },
-  feedbackBtn: { padding:"7px 16px", background:"transparent", border:"none", color:T.color.secondary, borderRadius:T.radius.md, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, textDecoration:"underline" },
+  feedbackRow: { textAlign:"center", fontFamily:T.font.sans, fontSize:12 },
   feedbackPending: { color:T.color.onSurfaceVariant },
   feedbackOk: { color:T.color.primary, fontWeight:500 },
   feedbackAccept: { color:"#1d9e75", fontWeight:600, fontSize:12, fontFamily:T.font.sans },
@@ -3843,9 +3856,7 @@ const S = {
   // Type-mode advance row (replaces Again/Got It). The matcher's verdict
   // auto-commits; this row just holds the Continue button plus an optional
   // "mark for review" override link when the matcher accepted the answer.
-  typeAdvanceRow: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, marginTop:8, marginBottom:24, width:"100%", maxWidth:480, alignSelf:"center" },
-  markReviewLink: { padding:"6px 2px", background:"transparent", border:"none", color:T.color.onSurfaceVariant, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:500, textDecoration:"underline", textUnderlineOffset:3, opacity:0.75, letterSpacing:"0.01em" },
-  continueBtn: { marginLeft:"auto", display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"11px 26px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 6px 20px rgba(3,22,50,0.14)", transition:"all 0.15s" },
+  continueBtn: { alignSelf:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"11px 26px", border:"none", borderRadius:T.radius.md, background:T.gradient.ink, color:T.color.onPrimary, fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", boxShadow:"0 6px 20px rgba(3,22,50,0.14)", transition:"all 0.15s" },
   // Feedback admin view
   feedbackList: { display:"flex", flexDirection:"column", gap:18 },
   feedbackItem: { padding:22, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, fontFamily:T.font.sans, boxShadow:T.shadow.card },

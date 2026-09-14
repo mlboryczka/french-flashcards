@@ -104,12 +104,14 @@ that is mid-assertion.
   `~/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`.
   The default path in `tests/harness.mjs` is the Linux container's.
 
-**On the Mac, 16 of 18 pass, and that is the baseline.** `layout` (type mode:
-the card moves 5px when graded) and `reflow` (the tutor reflow ran 0px) fail
-the same way on `9b95052`, which passed all of them in the container. So it is
-this machine's headless Chrome, not the code — see the open item. A new failure
-in any other suite is real. (`motion` was the third until 2026-09-12; its
-feedback checks now read the running transition instead of counting frames.)
+**On the Mac, 17 of 18 pass, and that is the baseline.** `reflow` (the tutor
+reflow ran 0px) fails the same way on `9b95052`, which passed it in the
+container, so that one is this machine's headless Chrome — see the open item.
+A new failure in any other suite is real. (`motion` was a Mac failure until
+2026-09-12; its feedback checks now read the running transition instead of
+counting frames. `layout`'s "card does not move when graded", 264 → 259, was
+filed here as the Mac too, and wasn't: the wrong-answer state was ~174px in a
+170px well. It passes since the graded state became one column, 2026-09-13.)
 
 ---
 
@@ -529,6 +531,22 @@ of these were "fixed" against an assumption and shipped broken.
   card area centres its contents, so without the well, swapping the typed-answer
   input for the graded state re-centred the whole column and the card jumped
   45px up the page mid-answer. The card now holds one position in every state.
+- **Type mode's graded state is one 420px column** (`S.typeFeedback`), the
+  width of Again and Got It: the result banner fills it, the links row puts
+  "My answer should have been accepted" and "Ask the tutor" at either end (or
+  "Actually, mark for review" on the left when you were right), and Continue
+  keeps its own size, centred. It was four widths stacked — banner 520, links
+  as centred text, Continue pushed right in a 480 row — sharing no edge.
+  Measured: a wrong answer's column is 133px and a "close" one, which carries
+  both link rows, 168px; both inside the 170px well. The old wrong state was
+  ~174px, which is what `layout`'s "the card does not move when graded" had
+  been catching all along (264 → 259) — see the Mac baseline note. A correct
+  answer's banner is green (`#dcece5` on `#1f5446`, the Grammar green's
+  family) rather than peach.
+- **The card's corner controls are matching 30px circles 14px in**: the
+  pencil top-right, the flag bottom-right, and in flip mode the ⓘ bottom-right
+  with the flag beside it. The pencil was a 42×26 pill and the flag a 22px box,
+  so their centres sat 10px apart on the same edge.
 - **`cardWrap` uses `align-items: safe center`, not `center`.** Once the well
   reserved 170px, a short window left the card taller than its wrapper, and
   plain centring overflowed it upward into the counter and back button. Safe
@@ -1858,6 +1876,27 @@ the keys beside the panel, and a cut-off stream. Full run on the Mac: 16 of 18,
 `layout` the baseline and `session` the failure above; after the fix `session`,
 `tutor`, `panels` and `logic` all pass. `reflow` passed on this run.
 
+### 2026-09-13 — below the card, aligned
+
+The feedback log's full-size screenshot filled the window; capped at 820×640
+it looked unchanged on a laptop, so it is 560×420 now. Its thumbnail's focus
+ring, handed back when Escape closes the lightbox, was clipped down the right
+by the scrolling list and read as a white bar through the image.
+
+Then the graded typed-answer state, mocked at real size first and adjusted
+twice with the owner — Continue keeps its own size rather than filling the
+column, and is centred rather than right-aligned; "Correct!" is green. The
+owner asked whether to keep "Ask the tutor": kept, because it opens the tutor
+already carrying the card, the typed answer and the verdict, and shares the
+dispute link's row, so it costs no height. The flag was explained, not changed
+beyond its size.
+
+`cards`, `session`, `layout`, `regressions`, `panels` and `types` pass on the
+Mac — `layout` in full for the first time on this machine (see the baseline
+note). Measured in the app: banner, links and column 420px on the same edges,
+Continue centred on the column's centre, the card top unmoved through wrong,
+correct and close answers, pencil and flag centred on the same x.
+
 ---
 
 ## Open items
@@ -1871,15 +1910,16 @@ the keys beside the panel, and a cut-off stream. Full run on the Mac: 16 of 18,
   figures are believable for an 8,700-card deck. Answering cards on the
   owner's account writes real reviews, so either look without answering or
   use a throwaway account.
-- **Two browser suites fail on the owner's Mac and pass in the container.**
-  `layout` and `reflow` — see *Working protocol*. They measure movement frame
+- **One browser suite fails on the owner's Mac and passes in the container.**
+  `reflow` — see *Working protocol*. (`layout`'s long-standing failure turned
+  out to be a real 5px card shift, fixed 2026-09-13.) They measure movement frame
   by frame, and this machine's headless Chrome delivers far fewer frames:
   sampling the feedback panel's open measured five in 600ms. `motion` was the
   third, and was fixed by asking the animation itself
   (`getAnimations()`, polled on a 10ms timer rather than rAF) instead of
-  counting sampled frames — the same fix would likely rescue the other two.
-  Until then, layout and animation changes made on the Mac have no working
-  check for those two, so measure by hand in a browser.
+  counting sampled frames — the same fix would likely rescue `reflow`.
+  Until then, reflow changes made on the Mac have no working check, so measure
+  by hand in a browser.
 - **The feedback panel has not been used signed in on the live app.** It was
   tested against the mock and confirmed in the deployed bundle, not by sending
   a real note from the owner's account. Worth one real send with a screenshot
