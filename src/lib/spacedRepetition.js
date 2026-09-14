@@ -69,10 +69,12 @@ export const SPOT_CHECK_MIN_STABILITY_DAYS = 60;
 
 // ── Conversion between the DB row shape and ts-fsrs's Card ─────────────
 //
-// useUserDeck shapes rows into { ...stability, difficulty, fsrs_state, reps,
-// lapses, next_due_at, last_review }. ts-fsrs wants a Card with Date objects
-// and its own field names. These two functions are the only place that
-// mapping lives.
+// These take and return ONE direction's state under the plain field names
+// (stability, difficulty, fsrs_state, reps, lapses, next_due_at, last_review):
+// sideOf() in lib/directions.js reads a direction off a card, and sideColumns()
+// maps the result back to that direction's columns. ts-fsrs wants a Card with
+// Date objects and its own field names; these two functions are the only place
+// that mapping lives.
 
 export function toFsrsCard(card) {
   const state = card.fsrs_state ?? State.New;
@@ -94,8 +96,8 @@ export function toFsrsCard(card) {
   };
 }
 
-// The inverse: an FSRS Card back into the exact column set that
-// user_cards accepts, ready for a Supabase .update().
+// The inverse: an FSRS Card back into one direction's state, under the plain
+// field names. sideColumns() turns it into that direction's columns.
 //
 // `got` is carried through as last_answer_correct because FSRS itself can't
 // tell us. Its Relearning state would be the natural place to read "you just

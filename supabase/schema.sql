@@ -150,7 +150,9 @@ create policy "Users manage their own alternates"
 --   migration_002 → batch_id
 --   migration_005 → box, next_due_at, lapses
 --   migration_006 → stability, difficulty, fsrs_state, reps, last_review,
---                   last_answer_correct
+--                   last_answer_correct (French → English)
+--   migration_010 → the same eight again with an en_ prefix (English →
+--                   French), and the card_reviews table of every answer
 -- Run this file first, then the migrations in order.
 
 create table if not exists public.user_cards (

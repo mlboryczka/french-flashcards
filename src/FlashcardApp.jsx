@@ -56,9 +56,11 @@ import {
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
 import { localISODate, reviewedToday, endOfLocalDay, startOfLocalDay } from "./lib/studyDay";
-import { progressByArea, progressChanges, aboutRemembered, summarize } from "./lib/progress";
-import { buildSession, applyAnswer, placeRetry } from "./lib/sessionQueue";
+import { progressByArea, progressChanges, about, summarize } from "./lib/progress";
+import { buildSession, applyAnswer, placeRetry, countBuckets } from "./lib/sessionQueue";
 import { RE_QUEUE_OFFSET, State } from "./lib/spacedRepetition";
+import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, RESET_COLUMNS } from "./lib/directions";
+import { newReviewId, reviewRow } from "./lib/reviewLog";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -224,18 +226,21 @@ function matchAnswer(typed, correct, extraAlts = []) {
 // The columns an answer changes, as they stood before it — so a corrected
 // grade can be recomputed from the card as it was, not from the answer being
 // replaced.
-// Which side of a card is shown. Grammar and pronunciation cards are rules with
-// examples, not translations, so they are always shown as written.
 const STUDY_MODE_KEY = "study-mode";
 
-function directionFor(flippable, dir) {
-  if (!flippable) return "fr";
-  return dir === "mix" ? (Math.random() < 0.5 ? "fr" : "en") : dir;
-}
+// An answer's place in the block, for telling a correction from a first
+// answer. A retry is its own slot; otherwise it is the card asked that way
+// round, because both ways of one card can be in the same block.
+const slotKeyOf = (entry) => (entry._retry ? `retry:${entry._rid}` : `card:${itemKey(entry)}`);
 
-function fsrsFieldsOf(card) {
-  const { stability, difficulty, fsrs_state, reps, lapses, next_due_at, last_review, last_answer_correct } = card;
-  return { stability, difficulty, fsrs_state, reps, lapses, next_due_at, last_review, last_answer_correct };
+// "about 40 you'd understand · about 25 you could say" for any set of cards.
+// The second only where the set has words or phrases: grammar is never asked
+// in English, and "about 0 you could say" would read as a failing.
+function estimates(summary) {
+  const understand = `about ${about(summary.understood).toLocaleString()} you'd understand`;
+  return summary.twoWay > 0
+    ? `${understand} · about ${about(summary.said).toLocaleString()} you could say`
+    : understand;
 }
 
 // A typed answer counts as recalled unless the user gave up ("revealed") or
@@ -256,14 +261,14 @@ function typedGotIt(typeResult) {
 
 export default function FlashcardApp({ user, onSignOut }) {
   const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
-  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, add: addDeckCard } = useUserDeck(user);
+  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, patchAll: patchAllDeckCards, add: addDeckCard } = useUserDeck(user);
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
   const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const skipFlipAnim = useRef(false); // temporarily disables the card flip transition
-  // Tracks the currently-displayed card id so the deck-build effect can
+  // Tracks the currently-displayed entry (card and way round, itemKey) so the deck-build effect can
   // preserve the user's position when userCards re-references on a
   // background refetch (e.g. when the browser tab regains focus). Without
   // this, every refetch reshuffles and snaps the user back to card 0.
@@ -286,9 +291,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Progress when the current block was dealt, so the checkpoint can say what
   // the block changed.
   const blockStartRef = useRef(null);
-  // Each card answered in this block: its FSRS state before the answer that
-  // was recorded (null if nothing was recorded), and the grade given. Lets
-  // Previous card correct a grade rather than be ignored. Cleared per block.
+  // Each card answered in this block, per way round: the shown direction's
+  // FSRS state before the answer that was recorded (null if nothing was
+  // recorded), the grade given, and the id of its answer record. Lets Previous
+  // card correct a grade rather than be ignored. Cleared per block.
   const blockAnswersRef = useRef(new Map());
   // The queue has been worked to the end. Not derivable from `idx` alone:
   // idx sits on the last card both before and after that card is answered.
@@ -304,7 +310,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [lessonFilter, setLessonFilter] = useState("all");
   const [dir, setDir] = useState("mix"); // fr | en | mix
   // The direction setting as blocks are dealt, read through a ref so that
-  // changing it does not rebuild the block.
+  // changing it does not deal a new block (see the effect on `dir`).
   const dirRef = useRef(dir);
   // Typing is the default: it is checked, so FSRS gets real evidence, and
   // producing the answer is what makes it stick. The student's last choice is
@@ -581,7 +587,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   useEffect(() => {
     if (!loaded) return;
-    // Direction is not part of this: changing it relabels the cards still to
+    // Direction is not part of this: changing it re-deals the cards still to
     // come (see the effect below) instead of dealing a new block, which threw
     // away the block's running count and a missed card's pending retry.
     const filterSig = `${typeFilter}|${lessonFilter}`;
@@ -601,9 +607,10 @@ export default function FlashcardApp({ user, onSignOut }) {
       const patched = deck
         .map(c => {
           const u = byRow.get(c.row_id);
-          return u
-            ? { ...u, shownDir: c.shownDir, flippable: c.flippable, _bucket: c._bucket, _retry: c._retry, _rid: c._rid }
-            : null;
+          // A card edited into grammar is asked only as written: its English-
+          // side entry would record to a state the card no longer uses.
+          if (!u || (c.shownDir === "en" && !isTwoWay(u))) return null;
+          return { ...u, shownDir: c.shownDir, flippable: isTwoWay(u), _bucket: c._bucket, _retry: c._retry, _rid: c._rid };
         })
         .filter(Boolean);
       setDeck(patched);
@@ -615,20 +622,17 @@ export default function FlashcardApp({ user, onSignOut }) {
     // (which clears deck so the next refetch takes this branch).
     // Inside a lesson, new cards come in the lesson's teaching order; outside,
     // from the student's notes, recent classes first. See orderNewCards.
-    const { queue, counts } = buildSession(candidates, {
+    // Each entry is a card asked one way round; the direction setting decides
+    // which ways of words and phrases are dealt. Grammar and pronunciation
+    // cards are rules with examples, not translations — always shown as
+    // written, whatever the setting.
+    const { queue: cards, counts } = buildSession(candidates, {
+      direction: dirRef.current,
       lessonMode: lessonFilter !== "all",
       lessonRank,
     });
     blockStartRef.current = progressByArea(userCards);
 
-    // Assign a per-card direction (stable within session). Grammar &
-    // pronunciation cards are rules with examples, not translations —
-    // always show front-as-written.
-    const cards = queue.map(c => {
-      const flippable = c.cat === "vocab" || c.cat === "expr";
-      const shownDir = directionFor(flippable, dirRef.current);
-      return { ...c, shownDir, flippable };
-    });
     // A full rebuild is a NEW block — first load, a filter or direction
     // change, Continue — so it starts at card 1 with nothing counted yet.
     //
@@ -638,10 +642,11 @@ export default function FlashcardApp({ user, onSignOut }) {
     // lesson could start the student at card 35 of 50: the first 34 were
     // skipped, and the checkpoint came after 16 answers. Tracked by row_id
     // (DB pk) because card.id is derived from front text and changes whenever
-    // the admin edits the French side.
-    const preservedRowId = currentCardIdRef.current;
-    const preservedIdx = preservedRowId != null
-      ? cards.findIndex(c => c.row_id === preservedRowId)
+    // the admin edits the French side — and by the way round, because the
+    // same card can be in the new block both ways.
+    const preservedKey = currentCardIdRef.current;
+    const preservedIdx = preservedKey != null
+      ? cards.findIndex(c => itemKey(c) === preservedKey)
       : -1;
     if (preservedIdx > 0) cards.unshift(cards.splice(preservedIdx, 1)[0]);
     else if (preservedIdx < 0) setFlipped(false);
@@ -659,7 +664,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // What the checkpoint after a block shows. Computed once when the block
   // ends (and again if the deck changes under it), never per answer.
-  //   changes   the areas the block moved: seen and about-remembered deltas
+  //   changes   the areas the block moved: seen, understood and said deltas
   //   next      the block Continue would deal, to say "reviews only" or
   //             "all caught up" before the student presses anything
   //   waiting   inside a lesson, cards due today elsewhere in the deck
@@ -670,20 +675,29 @@ export default function FlashcardApp({ user, onSignOut }) {
     const changes = blockStartRef.current ? progressChanges(blockStartRef.current, after) : [];
     const next = buildSession(candidatesFrom(userCards), {
       now,
+      direction: dir,
       lessonMode: lessonFilter !== "all",
       lessonRank,
     });
     const endToday = endOfLocalDay(new Date(now));
-    const dueAt = (c) => (c.fsrs_state ?? State.New) !== State.New && c.next_due_at
-      ? new Date(c.next_due_at).getTime() : null;
-    const waiting = lessonFilter === "all" ? 0 : userCards.filter((c) => {
-      const t = dueAt(c);
-      return t !== null && t <= endToday && lessonIdOf(c) !== lessonFilter;
-    }).length;
+    // Counted the way the student is studying: in EN→FR, a word due only
+    // French side up is not waiting for them.
+    const dueToday = (side) => (side.fsrs_state ?? State.New) !== State.New && !!side.next_due_at &&
+      new Date(side.next_due_at).getTime() <= endToday;
+    let waiting = 0;
+    if (lessonFilter !== "all") {
+      for (const c of userCards) {
+        if (lessonIdOf(c) === lessonFilter) continue;
+        for (const d of directionsOf(c)) {
+          if (isTwoWay(c) && dir !== "mix" && d !== dir) continue;
+          if (dueToday(sideOf(c, d))) waiting++;
+        }
+      }
+    }
     return { after, changes, next, waiting };
-  }, [sessionDone, userCards, candidatesFrom, lessonFilter]);
+  }, [sessionDone, userCards, candidatesFrom, lessonFilter, dir]);
   // Keep the ref in sync so deck rebuilds can find the current card.
-  useEffect(() => { currentCardIdRef.current = card?.row_id ?? null; }, [card]);
+  useEffect(() => { currentCardIdRef.current = card ? itemKey(card) : null; }, [card]);
   // The card on screen as the tutor needs it: what it asks, and whether its
   // answer has been shown. Until it has, the tutor's header shows only the
   // prompt and the tutor is told not to give the answer away — a recall FSRS
@@ -692,7 +706,7 @@ export default function FlashcardApp({ user, onSignOut }) {
   // "Answered" sticks for this appearance of the card: flip it back over and
   // the answer has still been seen. Keyed on the queue position as well as
   // the row, so the same card re-queued after a miss starts unanswered again.
-  const cardSlot = card ? `${idx}:${card.row_id}` : null;
+  const cardSlot = card ? `${idx}:${itemKey(card)}` : null;
   const [revealedSlot, setRevealedSlot] = useState(null);
   useEffect(() => {
     if (cardSlot && (flipped || typeResult)) setRevealedSlot(cardSlot);
@@ -716,16 +730,45 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // Changing direction applies to the cards still to come — and to the card on
   // screen only if its answer hasn't been seen, for the same reason as the
-  // flip/type switch. It used to deal a new block.
+  // flip/type switch. It used to deal a new block, and then to turn the
+  // remaining cards round; neither works now each way round is its own entry
+  // with its own schedule (the other way may already be in the block, or
+  // answered today).
+  //
+  // So the rest of the block is re-dealt under the new setting. Entries it
+  // still asks stay where they are, as does anything already answered; the
+  // others are replaced from the deck, by the same rules as any block. The
+  // block keeps its count, its length where the deck allows, and its retries.
   useEffect(() => {
     if (dirRef.current === dir) return;
     dirRef.current = dir;
-    if (!deck.length) return;
-    const keepCurrent = answerSeen;
-    setDeck((prev) => prev.map((c, i) =>
-      i > idx || (i === idx && !keepCurrent) ? { ...c, shownDir: directionFor(c.flippable, dir) } : c
-    ));
-    if (!keepCurrent) setTypedAnswer("");
+    if (!deck.length || sessionDone) return;
+    const firstOpen = answerSeen ? idx + 1 : idx;
+    const asked = (c) => !c.flippable || dir === "mix" || c.shownDir === dir;
+    const head = deck.slice(0, firstOpen);
+    const tail = deck.slice(firstOpen);
+    const kept = new Set(tail.filter((c) => asked(c) || blockAnswersRef.current.has(slotKeyOf(c))));
+    const room = tail.length - kept.size;
+    const fill = room > 0
+      ? buildSession(candidatesFrom(userCards), {
+          direction: dir,
+          target: room,
+          spotCheckSlots: 0,
+          lessonMode: lessonFilter !== "all",
+          lessonRank,
+          inBlock: [...head, ...kept],
+        }).queue
+      : [];
+    let f = 0;
+    const next = [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
+    setDeck(next);
+    setSessionCounts(countBuckets(next));
+    if (next.length <= idx) {
+      // Nothing left to ask this way round: the block ends where it is.
+      setIdx(Math.max(0, next.length - 1));
+      if (next.length > 0) setSessionDone(true);
+    }
+    if (!answerSeen) setTypedAnswer("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dir]);
   const directionPending =
@@ -904,38 +947,45 @@ export default function FlashcardApp({ user, onSignOut }) {
   // fire-and-forget with its error sent to the console: the screen moved on as
   // if it had saved, and a reload brought the card back with the answer gone.
   // Now a failed write is kept and retried, with backoff, and the student is
-  // told while any answer is unsaved. A newer write for the same card replaces
-  // an older one waiting to be retried.
-  const unsavedRef = useRef(new Map()); // row_id -> { sr, failed }
+  // told while any answer is unsaved.
+  //
+  // Each write is kept under a key, and a newer write under the same key
+  // replaces an older one waiting to be retried. A schedule's key is the card
+  // AND the way round it was asked — keyed by the card alone, a French-side
+  // answer waiting to be retried was replaced by an English-side answer to the
+  // same card, and lost. An answer's record is keyed by its own id. `answer`
+  // groups an answer's writes, so the notice counts answers, not writes.
+  const unsavedRef = useRef(new Map()); // key -> { answer, send, failed }
   const [unsavedCount, setUnsavedCount] = useState(0);
   const retryTimerRef = useRef(null);
   const retryDelayRef = useRef(3000);
   const countFailed = () =>
-    setUnsavedCount([...unsavedRef.current.values()].filter((e) => e.failed).length);
-  const attemptSave = async (rowId, sr) => {
-    const { error } = await supabase.from("user_cards").update(sr).eq("id", rowId);
-    const entry = unsavedRef.current.get(rowId);
-    if (!entry || entry.sr !== sr) return; // superseded by a newer answer
+    setUnsavedCount(new Set([...unsavedRef.current.values()].filter((e) => e.failed).map((e) => e.answer)).size);
+  const attemptSave = async (key, entry) => {
+    const { error } = await entry.send();
+    if (unsavedRef.current.get(key) !== entry) return; // superseded by a newer write
     if (error) {
-      console.error("SR update failed:", error);
+      console.error("Saving an answer failed:", key, error);
       entry.failed = true;
       countFailed();
       if (!retryTimerRef.current) {
         retryTimerRef.current = setTimeout(() => {
           retryTimerRef.current = null;
           retryDelayRef.current = Math.min(retryDelayRef.current * 2, 60000);
-          for (const [id, e] of unsavedRef.current) attemptSave(id, e.sr);
+          for (const [k, e] of unsavedRef.current) attemptSave(k, e);
         }, retryDelayRef.current);
       }
     } else {
-      unsavedRef.current.delete(rowId);
+      unsavedRef.current.delete(key);
       if (unsavedRef.current.size === 0) retryDelayRef.current = 3000;
       countFailed();
     }
   };
-  const saveReview = (rowId, sr) => {
-    unsavedRef.current.set(rowId, { sr, failed: false });
-    attemptSave(rowId, sr);
+  // `send` makes a fresh request each time: a retry sends it again.
+  const save = (key, answer, send) => {
+    const entry = { answer, send, failed: false };
+    unsavedRef.current.set(key, entry);
+    attemptSave(key, entry);
   };
   // Leaving with answers unsaved asks first.
   useEffect(() => {
@@ -984,30 +1034,48 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Without this, a mistaken Got It stood — the day's answer was already in,
     // so the corrected Again was shown and never recorded. Retries are never
     // corrections; they stay practice.
-    const slotKey = card._retry ? `retry:${card._rid}` : `card:${card.row_id}`;
+    //
+    // Everything here is for the way round the card was SHOWN: "la pomme → ?"
+    // is recorded to the French-side state and "apple → ?" to the English-side
+    // one, and the other is never touched. applyAnswer returns only the shown
+    // direction's columns, so patching every entry for this card with them is
+    // right even when the block holds it both ways.
+    const cardDir = card.shownDir ?? "fr";
+    const slotKey = slotKeyOf(card);
     const earlier = blockAnswersRef.current.get(slotKey);
     const isCorrection = !!earlier;
+    const answeredAt = Date.now();
     let recordsReview = false;
     let sr = null;
     if (isCorrection) {
       if (earlier.before && earlier.got !== got) {
-        sr = applyAnswer({ ...card, ...earlier.before }, got);
+        sr = applyAnswer({ ...card, ...earlier.before }, got, answeredAt, cardDir);
       }
     } else {
-      recordsReview = !card._retry && !reviewedToday(card.last_review);
-      if (recordsReview) sr = applyAnswer(card, got);
+      recordsReview = !card._retry && !reviewedToday(sideOf(card, cardDir).last_review);
+      if (recordsReview) sr = applyAnswer(card, got, answeredAt, cardDir);
     }
-    blockAnswersRef.current.set(slotKey, {
-      before: isCorrection ? earlier.before : recordsReview ? fsrsFieldsOf(card) : null,
-      got,
-    });
+    const before = isCorrection ? earlier.before : recordsReview ? sideColumns(sideOf(card, cardDir), cardDir) : null;
+    const reviewId = isCorrection ? earlier.reviewId : newReviewId();
+    blockAnswersRef.current.set(slotKey, { before, got, reviewId });
     if (sr) {
       setDeck(prev => prev.map(c =>
         c.row_id === card.row_id ? { ...c, ...sr } : c
       ));
       // And the deck the next block is built from — see patch() in useUserDeck.
       patchDeckCard(card.row_id, sr);
-      if (card.row_id != null) saveReview(card.row_id, sr);
+      if (card.row_id != null) {
+        save(`card:${itemKey(card)}`, reviewId, () => supabase.from("user_cards").update(sr).eq("id", card.row_id));
+      }
+    }
+    // The record of the answer: every answer, counted or not. A correction
+    // rewrites the same record, and only if the grade changed.
+    if (card.row_id != null && user?.id && (!isCorrection || earlier.got !== got)) {
+      const row = reviewRow({
+        id: reviewId, userId: user.id, cardId: card.row_id, dir: cardDir, got,
+        before, after: before ? sr : null, at: answeredAt,
+      });
+      save(`review:${reviewId}`, reviewId, () => supabase.from("card_reviews").upsert(row, { onConflict: "id" }));
     }
     // Record today's review date for streak tracking.
     // Write to Supabase (persists across devices) and update local state so
@@ -1053,7 +1121,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!got && !(isCorrection && earlier.got === false)) {
       setDeck(prev =>
         // A correction to a miss gets a retry only if the card has none coming.
-        prev.slice(idx + 1).some((c) => c._retry && c.row_id === card.row_id)
+        prev.slice(idx + 1).some((c) => c._retry && itemKey(c) === itemKey(card))
           ? prev
           : placeRetry(prev, idx, { ...card, ...(sr || {}), _rid: Math.random().toString(36).slice(2) }, RE_QUEUE_OFFSET)
       );
@@ -1349,8 +1417,22 @@ export default function FlashcardApp({ user, onSignOut }) {
     }
   };
 
+  // Every card back to not yet seen, both ways round, and the legacy tally
+  // with it. Until 2026-09-14 this cleared only that tally (card_progress):
+  // every card kept its FSRS schedule, so the button reset nothing a student
+  // could see. The record of past answers (card_reviews) is history, and stays.
   const resetAll = async () => {
-    if (!confirm("Reset all of your progress? This can't be undone.")) return;
+    if (!confirm("Reset all of your progress? Every card goes back to not yet seen, both ways round. This can't be undone.")) return;
+    const { error } = await supabase.from("user_cards").update(RESET_COLUMNS).eq("user_id", user.id);
+    if (error) {
+      console.error("Reset failed:", error);
+      alert("Your progress couldn't be reset, and nothing was changed. Please try again.");
+      return;
+    }
+    // An answer still waiting to be saved would put its schedule back.
+    for (const k of [...unsavedRef.current.keys()]) if (k.startsWith("card:")) unsavedRef.current.delete(k);
+    countFailed();
+    patchAllDeckCards(RESET_COLUMNS);
     await resetAllProgress();
     resetSession();
   };
@@ -2141,17 +2223,21 @@ export default function FlashcardApp({ user, onSignOut }) {
     const now = Date.now();
     const todayISO = localISODate();
     const endToday = endOfLocalDay(new Date(now));
-    const isSeenCard = (c) => (c.fsrs_state ?? State.New) !== State.New;
+    // Every card, each way round it is asked: a word is two schedules, and
+    // everything below that reads FSRS state reads them apart.
+    const sides = [];
+    for (const c of userCards) for (const d of directionsOf(c)) sides.push({ card: c, side: sideOf(c, d) });
+    const isSeenSide = (s) => (s.fsrs_state ?? State.New) !== State.New;
 
-    // Today. FSRS records one answer per card per day, so the cards whose last
-    // review falls today ARE today's answers, across every block, reload and
-    // device — and last_answer_correct on those is whether that first answer
-    // was right.
+    // Today. FSRS records one answer per card per way round per day, so the
+    // sides whose last review falls today ARE today's answers, across every
+    // block, reload and device — and last_answer_correct on those is whether
+    // that first answer was right.
     let answeredToday = 0, rightToday = 0;
-    for (const c of userCards) {
-      if (!reviewedToday(c.last_review, new Date(now))) continue;
+    for (const { side } of sides) {
+      if (!reviewedToday(side.last_review, new Date(now))) continue;
       answeredToday++;
-      if (c.last_answer_correct === true) rightToday++;
+      if (side.last_answer_correct === true) rightToday++;
     }
 
     // Streak: based on actual review days stored in Supabase
@@ -2172,13 +2258,22 @@ export default function FlashcardApp({ user, onSignOut }) {
     // unknown, which is the definition of a hard card. The old version looked
     // for a low score on the retired ladder, so it surfaced cards nobody had
     // answered since the migration and missed ones being missed today.
+    // Forgotten either way round counts: both ways are the same word.
     const hardest = userCards
-      .map(c => ({ ...c, _lapses: c.lapses ?? 0, _seen: progress[c.id]?.seen ?? 0 }))
+      .map(c => {
+        const ways = directionsOf(c).map((d) => sideOf(c, d));
+        return {
+          ...c,
+          _lapses: ways.reduce((n, w) => n + (w.lapses ?? 0), 0),
+          _difficulty: Math.max(...ways.map((w) => w.difficulty ?? 0)),
+          _seen: progress[c.id]?.seen ?? 0,
+        };
+      })
       .filter(c => c._lapses >= 1)
-      .sort((a, b) => b._lapses - a._lapses || (b.difficulty ?? 0) - (a.difficulty ?? 0))
+      .sort((a, b) => b._lapses - a._lapses || b._difficulty - a._difficulty)
       .slice(0, 4);
 
-    // Seen / about remembered / not yet seen, for the whole deck and each area.
+    // Seen / about understood and said / not yet seen, for the whole deck and each area.
     const areas = progressByArea(userCards, now);
     const areaRows = [
       ...LESSONS.filter((l) => areas.lessons[l.id]?.total > 0)
@@ -2193,9 +2288,9 @@ export default function FlashcardApp({ user, onSignOut }) {
     // move to FSRS — which reads as a day's work no one could do.
     const startToday = startOfLocalDay(new Date(now));
     let dueToday = 0, dueEarlier = 0;
-    for (const c of userCards) {
-      if (!isSeenCard(c) || !c.next_due_at) continue;
-      const t = new Date(c.next_due_at).getTime();
+    for (const { side } of sides) {
+      if (!isSeenSide(side) || !side.next_due_at) continue;
+      const t = new Date(side.next_due_at).getTime();
       if (t > endToday) continue;
       if (t >= startToday) dueToday++; else dueEarlier++;
     }
@@ -2205,9 +2300,9 @@ export default function FlashcardApp({ user, onSignOut }) {
       return { iso: localISODate(d), label: d.toLocaleDateString(undefined, { weekday: "short" }), count: 0 };
     });
     const weekIndex = new Map(week.map((w, i) => [w.iso, i]));
-    for (const c of userCards) {
-      if (!isSeenCard(c) || !c.next_due_at) continue;
-      const i = weekIndex.get(localISODate(new Date(c.next_due_at)));
+    for (const { side } of sides) {
+      if (!isSeenSide(side) || !side.next_due_at) continue;
+      const i = weekIndex.get(localISODate(new Date(side.next_due_at)));
       if (i !== undefined) week[i].count++;
     }
     const weekTotal = week.reduce((n, w) => n + w.count, 0);
@@ -2225,11 +2320,15 @@ export default function FlashcardApp({ user, onSignOut }) {
       // box system and never forgets: after the 2026-09-14 reset it still
       // counted old answers on 1,200 cards now "not yet seen", and read 55%
       // beside a Right first time today of 70%.
+      // Each way round a card has been answered is one last answer.
       let answered = 0, right = 0;
       for (const c of cards) {
-        if ((c.fsrs_state ?? State.New) === State.New || c.last_answer_correct == null) continue;
-        answered++;
-        if (c.last_answer_correct === true) right++;
+        for (const d of directionsOf(c)) {
+          const side = sideOf(c, d);
+          if (!isSeenSide(side) || side.last_answer_correct == null) continue;
+          answered++;
+          if (side.last_answer_correct === true) right++;
+        }
       }
       return {
         type,
@@ -2239,11 +2338,11 @@ export default function FlashcardApp({ user, onSignOut }) {
       };
     }).filter((t) => t.summary.total > 0);
 
-    // One bar, three bands: remembered (solid), seen but not currently
-    // remembered (light), not yet seen (the empty track).
+    // One bar, three bands: understood (solid), seen but not currently
+    // understood (light), not yet seen (the empty track).
     const bands = (summary, color, height) => {
       const total = Math.max(summary.total, 1);
-      const rem = Math.min(summary.remembered, summary.seen);
+      const rem = Math.min(summary.understood, summary.seen);
       return (
         <div style={{ ...S.bandTrack, height }}>
           <div style={{ width: `${(rem / total) * 100}%`, background: color }} />
@@ -2252,7 +2351,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       );
     };
     const figures = (summary) =>
-      `${summary.seen.toLocaleString()} seen · about ${aboutRemembered(summary).toLocaleString()} remembered · ${summary.total.toLocaleString()} cards`;
+      `${summary.seen.toLocaleString()} seen · ${estimates(summary)} · ${summary.total.toLocaleString()} cards`;
 
     return (
       <div style={shellStyle}>
@@ -2266,7 +2365,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.metricCard}>
                 <div style={S.metricLabel}>Today</div>
                 <div style={S.metricVal}>{answeredToday.toLocaleString()}</div>
-                <div style={S.metricSub}>{answeredToday === 1 ? "card answered" : "cards answered"}</div>
+                <div style={S.metricSub}>{answeredToday === 1 ? "answer" : "answers"}</div>
               </div>
               <div style={S.metricCard}>
                 <div style={S.metricLabel}>Right first time today</div>
@@ -2280,16 +2379,21 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
 
-            {/* All cards: seen / about remembered / not yet seen */}
+            {/* All cards: seen / about understood and said / not yet seen */}
             <div style={S.pipelineCard} data-stats-all>
               <div style={S.pipeTitle}>All your cards</div>
               {bands(areas.all, T.color.primary, 28)}
               <div style={S.pipeLegend}>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />about {aboutRemembered(areas.all).toLocaleString()} remembered</div>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary, opacity:0.3}} />{Math.max(0, areas.all.seen - aboutRemembered(areas.all)).toLocaleString()} seen, not currently remembered</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />about {about(areas.all.understood).toLocaleString()} you'd understand</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary, opacity:0.3}} />{Math.max(0, areas.all.seen - about(areas.all.understood)).toLocaleString()} seen, not currently understood</div>
                 <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.surfaceHigh}} />{areas.all.notSeen.toLocaleString()} not yet seen</div>
               </div>
-              <p style={S.statsFootnote}>Remembered is an estimate: how many cards you would probably get right today. It rises when you study and drifts down when you don't.</p>
+              {areas.all.twoWay > 0 && (
+                <p style={S.statsSayLine} data-stats-say>
+                  About {about(areas.all.said).toLocaleString()} of your {areas.all.twoWay.toLocaleString()} words and phrases you could say, asked in English.
+                </p>
+              )}
+              <p style={S.statsFootnote}>Both are estimates. Understand is how many cards you would probably get right today shown in French; say is how many words and phrases you would get right asked in English. They rise when you study and drift down when you don't.</p>
             </div>
 
             {/* Your progress: each lesson, recent classes, earlier notes */}
@@ -2348,7 +2452,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <div style={S.typeSub}>
                         {t.summary.seen === 0
                           ? `${t.summary.total.toLocaleString()} card${t.summary.total === 1 ? "" : "s"} · none studied yet`
-                          : `${t.accuracy === null ? "" : "right last time · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · about ${aboutRemembered(t.summary).toLocaleString()} remembered`}
+                          : `${t.accuracy === null ? "" : "right last time · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · ${estimates(t.summary)}`}
                       </div>
                       <div style={{marginTop:10}}>{bands(t.summary, TYPE_COLOR[t.type], 4)}</div>
                     </div>
@@ -2502,12 +2606,13 @@ export default function FlashcardApp({ user, onSignOut }) {
           {/* The lesson's progress. Read when the block was dealt and again at
               its checkpoint — never per answer, because a figure that moves
               on every card reads as noise rather than progress. "About",
-              because remembered is an estimate. */}
+              because both figures are estimates. */}
           {lessonFilter !== "all" && (() => {
             const snap = (sessionDone && checkpoint ? checkpoint.after : blockStartRef.current)?.lessons?.[lessonFilter];
             return snap ? (
               <div style={S.lessonProgress} data-lesson-progress>
-                about {aboutRemembered(snap).toLocaleString()} of {snap.total.toLocaleString()} remembered
+                about {about(snap.understood).toLocaleString()} of {snap.total.toLocaleString()} you'd understand
+                {snap.twoWay > 0 ? ` · about ${about(snap.said).toLocaleString()} you could say` : ""}
               </div>
             ) : null;
           })()}
@@ -2629,11 +2734,12 @@ export default function FlashcardApp({ user, onSignOut }) {
                         <div style={S.checkpointAreaDelta}>
                           {[
                             d.seenDelta !== 0 && `${d.seenDelta} more seen`,
-                            d.rememberedDelta !== 0 && moreOrFewer(d.rememberedDelta, "remembered"),
+                            d.understoodDelta !== 0 && moreOrFewer(d.understoodDelta, "you'd understand"),
+                            d.saidDelta !== 0 && moreOrFewer(d.saidDelta, "you could say"),
                           ].filter(Boolean).join(" · ")}
                         </div>
                         <div style={S.checkpointAreaTotal}>
-                          {d.after.seen.toLocaleString()} of {d.after.total.toLocaleString()} seen · about {aboutRemembered(d.after).toLocaleString()} remembered
+                          {d.after.seen.toLocaleString()} of {d.after.total.toLocaleString()} seen · {estimates(d.after)}
                         </div>
                       </div>
                     ))}
@@ -4012,6 +4118,7 @@ const S = {
   // Section titles
   bandTrack: { display:"flex", borderRadius:6, overflow:"hidden", background:T.color.surfaceHigh, marginBottom:10 },
   statsFootnote: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"12px 0 0", lineHeight:1.5 },
+  statsSayLine: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurface, margin:"12px 0 0", lineHeight:1.5 },
   areaList: { display:"flex", flexDirection:"column", gap:10 },
   areaRow: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"14px 18px", border:"1px solid rgba(3,22,50,0.06)" },
   areaHead: { display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:12, marginBottom:10, flexWrap:"wrap" },

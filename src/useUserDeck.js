@@ -12,7 +12,10 @@ import { isArchived } from "./lib/archive";
 //               progress survives reseeds as long as the front text is stable.
 //   row_id    — user_cards.id (bigint), used for edits / flagging / deletes.
 //   next_due_at, lapses, stability, difficulty, fsrs_state, reps,
-//   last_review — FSRS scheduling state (migration_006).
+//   last_review — FSRS scheduling state (migration_006), for the card shown
+//               French side up. The same eight with an en_ prefix are the
+//               English-side state (migration_010). Read them through sideOf()
+//               in lib/directions.js, never by name.
 
 // Last-known deck, kept so a fresh page can paint one immediately.
 //
@@ -30,7 +33,9 @@ import { isArchived } from "./lib/archive";
 // Everything here is wrapped: storage throws in private windows and when the
 // quota is full, and a deck of several thousand cards is not small.
 const CACHE_PREFIX = "deck-cache:";
-const CACHE_VERSION = 1;
+// 2: cards carry the English-side state (migration_010). A version-1 deck has
+// none, and would read every English-side question as never answered.
+const CACHE_VERSION = 2;
 
 function readCache(userId) {
   if (!userId) return null;
@@ -113,6 +118,15 @@ function shapeRow(row) {
     last_review: row.last_review || null,
     // null = unknown (pre-FSRS row); false = missed on the last attempt.
     last_answer_correct: row.last_answer_correct ?? null,
+    // The same, asked English side up (migration_010).
+    en_next_due_at: row.en_next_due_at || null,
+    en_lapses: row.en_lapses ?? 0,
+    en_stability: row.en_stability ?? null,
+    en_difficulty: row.en_difficulty ?? null,
+    en_fsrs_state: row.en_fsrs_state ?? 0,
+    en_reps: row.en_reps ?? 0,
+    en_last_review: row.en_last_review || null,
+    en_last_answer_correct: row.en_last_answer_correct ?? null,
   };
 }
 
@@ -164,7 +178,9 @@ export function useUserDeck(user) {
           .select(
             "id, front, back, category, dates, flagged_for_review, batch_id, source, " +
               "next_due_at, lapses, stability, difficulty, fsrs_state, reps, " +
-              "last_review, last_answer_correct, created_at"
+              "last_review, last_answer_correct, created_at, " +
+              "en_next_due_at, en_lapses, en_stability, en_difficulty, en_fsrs_state, " +
+              "en_reps, en_last_review, en_last_answer_correct"
           )
           .eq("user_id", userId)
           // ORDER BY is not decoration here. A deck of several thousand cards
@@ -239,5 +255,13 @@ export function useUserDeck(user) {
     setCards((prev) => [...prev.filter((c) => c.row_id !== card.row_id), card]);
   }, []);
 
-  return { cards, loaded, reload, patch, add };
+  // Apply the same fields to every card: "Reset all progress", once its write
+  // has succeeded. The cache is dropped rather than rewritten — the next load
+  // writes it from the server.
+  const patchAll = useCallback((fields) => {
+    setCards((prev) => prev.map((c) => ({ ...c, ...fields })));
+    try { if (userId) localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
+  }, [userId]);
+
+  return { cards, loaded, reload, patch, patchAll, add };
 }

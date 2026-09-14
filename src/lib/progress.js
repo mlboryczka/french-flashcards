@@ -1,62 +1,82 @@
-// How far a student has got, in the three words the app uses everywhere:
-// SEEN, ABOUT N REMEMBERED, and NOT YET SEEN. Pure: no React, no Supabase.
+// How far a student has got, in the words the app uses everywhere: SEEN,
+// ABOUT N YOU'D UNDERSTAND, ABOUT N YOU COULD SAY, and NOT YET SEEN. Pure: no
+// React, no Supabase.
 //
 // One calculation, shared by the checkpoint after each block, the lesson top
 // bar and the Stats page, so a figure can never disagree between screens.
 //
-//   seen         cards answered at least once. Only ever goes up.
-//   remembered   the sum, over the cards, of FSRS's own estimate that the
-//                student would recall each one right now (retrievability).
-//                That sum is the expected number currently known. It rises
-//                with study and drifts down without it, because that is what
-//                memory does. Shown as "about N", never a bare number — it
-//                is an estimate, and saying so is what stops it becoming the
-//                next "mastered".
+//   seen         cards answered at least once, either way round. Only ever
+//                goes up.
+//   understood   the sum, over the cards, of FSRS's own estimate that the
+//                student would recall each one right now shown in French
+//                (retrievability of the "fr" direction). That sum is the
+//                expected number currently known. It rises with study and
+//                drifts down without it, because that is what memory does.
+//   said         the same for words and phrases asked in English — "apple →
+//                ?" — the only cards that are asked that way. `twoWay` is how
+//                many of those there are, so a set with none (grammar) can
+//                leave the figure out rather than show "about 0".
 //   notSeen      what's left to learn.
+//
+// Both estimates are shown as "about N", never a bare number — saying so is
+// what stops one becoming the next "mastered". Until 2026-09-14 there was one
+// figure, "remembered", fed by both directions' answers at once.
 //
 // Retrievability is derived, not stored: it changes continuously with
 // elapsed time, so compute it when a figure is shown, not on every answer.
 
 import { scheduler, toFsrsCard, State } from "./spacedRepetition.js";
+import { sideOf, isTwoWay } from "./directions.js";
 import { classDaysOf } from "./sessionQueue.js";
 import { lessonIdOf } from "./lessonSource.js";
 import { localISODateDaysAgo } from "./studyDay.js";
 
 const RECENT_DAYS = 14;
 
-const isSeen = (card) => (card.fsrs_state ?? State.New) !== State.New;
+const isSeenSide = (side) => (side.fsrs_state ?? State.New) !== State.New;
+const isSeen = (card) =>
+  isSeenSide(sideOf(card, "fr")) || (isTwoWay(card) && isSeenSide(sideOf(card, "en")));
 
-// The probability, 0 to 1, that the student would recall this card now.
+// The probability, 0 to 1, that the student would recall this now. Takes one
+// direction's state under the plain field names — sideOf(card, dir).
 // Never-seen cards are 0. A seen row with no usable stability (a legacy row
 // the FSRS migration could not seed) is also 0 rather than NaN, so one bad
 // row cannot poison a sum across thousands.
 export function retrievability(card, now = Date.now()) {
-  if (!isSeen(card)) return 0;
+  if (!isSeenSide(card)) return 0;
   if (!(card.stability > 0) || !card.last_review) return 0;
   const r = scheduler.get_retrievability(toFsrsCard(card), new Date(now), false);
   return Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : 0;
 }
 
-// Seen / remembered / not yet seen for any set of cards.
+// Seen / understood / said / not yet seen for any set of cards.
 export function summarize(cards, now = Date.now()) {
   let seen = 0;
-  let remembered = 0;
+  let understood = 0;
+  let said = 0;
+  let twoWay = 0;
   for (const c of cards) {
+    const both = isTwoWay(c);
+    if (both) twoWay++;
     if (!isSeen(c)) continue;
     seen++;
-    remembered += retrievability(c, now);
+    understood += retrievability(sideOf(c, "fr"), now);
+    if (both) said += retrievability(sideOf(c, "en"), now);
   }
   return {
     total: cards.length,
     seen,
     // Kept unrounded so a before/after difference is honest; round only when
-    // displaying, via aboutRemembered().
-    remembered,
+    // displaying, via about().
+    understood,
+    said,
+    twoWay,
     notSeen: cards.length - seen,
   };
 }
 
-export const aboutRemembered = (summary) => Math.round(summary.remembered);
+// An estimate as it is shown: a whole number of cards.
+export const about = (n) => Math.round(n);
 
 // Which area a card's progress counts towards: its lesson, the student's
 // recent classes (the last two weeks, the same window new cards use), or
@@ -95,15 +115,17 @@ export function progressByArea(cards, now = Date.now()) {
 
 // What changed between two progressByArea() snapshots, for the areas where
 // anything did. The checkpoint shows these: "L'impératif: 8 more seen, about
-// 5 more remembered".
+// 5 more you'd understand".
+const EMPTY = Object.freeze({ total: 0, seen: 0, understood: 0, said: 0, twoWay: 0, notSeen: 0 });
+
 export function progressChanges(before, after) {
   const pairs = [
     ["recent", before.recent, after.recent],
     ["earlier", before.earlier, after.earlier],
     ...Object.keys({ ...before.lessons, ...after.lessons }).map((id) => [
       `lesson:${id}`,
-      before.lessons[id] || { total: 0, seen: 0, remembered: 0, notSeen: 0 },
-      after.lessons[id] || { total: 0, seen: 0, remembered: 0, notSeen: 0 },
+      before.lessons[id] || EMPTY,
+      after.lessons[id] || EMPTY,
     ]),
   ];
   return pairs
@@ -111,7 +133,8 @@ export function progressChanges(before, after) {
       area,
       after: a,
       seenDelta: a.seen - b.seen,
-      rememberedDelta: Math.round(a.remembered) - Math.round(b.remembered),
+      understoodDelta: about(a.understood) - about(b.understood),
+      saidDelta: about(a.said) - about(b.said),
     }))
-    .filter((d) => d.seenDelta !== 0 || d.rememberedDelta !== 0);
+    .filter((d) => d.seenDelta !== 0 || d.understoodDelta !== 0 || d.saidDelta !== 0);
 }

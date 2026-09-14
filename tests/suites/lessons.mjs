@@ -215,9 +215,10 @@ await page.waitForTimeout(700);
 ck("the ✕ closes the panel", (await page.$("[data-lesson-panel]")) === null);
 
 // ── The lesson's progress in its top bar ─────────────────────────────
-// Requirement: inside a lesson, the bar says about how many of its cards are
-// remembered, out of the lesson's size. It is read when a block is dealt and
-// at the checkpoint, never after each answer.
+// Requirement: inside a lesson, the bar says about how many of its cards you'd
+// understand, out of the lesson's size, and — since it has phrases, which are
+// asked in English too — about how many you could say. It is read when a block
+// is dealt and at the checkpoint, never after each answer.
 // Entering a lesson deals a new block, and a new block starts at its first
 // card. It used to keep the card on screen by jumping to wherever that card
 // landed in the shuffled block — card 35 of 50 on one run, skipping 34 cards
@@ -228,10 +229,11 @@ ck("the ✕ closes the panel", (await page.$("[data-lesson-panel]")) === null);
 }
 const barText = () => page.evaluate(() => document.querySelector("[data-lesson-progress]")?.textContent.trim() || null);
 const total = LESSON.cards.length;
-ck("the bar shows the lesson's progress", (await barText()) === `about 0 of ${total} remembered`, await barText());
+const startBar = `about 0 of ${total} you'd understand · about 0 you could say`;
+ck("the bar shows the lesson's progress", (await barText()) === startBar, await barText());
 await page.keyboard.press("ArrowRight");
 await page.waitForTimeout(300);
-ck("an answer does not move it", (await barText()) === `about 0 of ${total} remembered`, await barText());
+ck("an answer does not move it", (await barText()) === startBar, await barText());
 {
   // Work the rest of the block through to its checkpoint.
   let guard = 0;
@@ -242,10 +244,12 @@ ck("an answer does not move it", (await barText()) === `about 0 of ${total} reme
 }
 ck("the block ends in a checkpoint", !!(await page.$("[data-checkpoint]")));
 const shown = await barText();
-const n = Number(/about (\d+) of/.exec(shown || "")?.[1]);
-// 50 cards just answered right are each very likely recalled, so the sum
-// rounds to the block size.
-ck("at the checkpoint it moves to the block just learned", n === 50, shown);
+const understood = Number(/about (\d+) of/.exec(shown || "")?.[1]);
+const said = Number(/about (\d+) you could say/.exec(shown || "")?.[1]);
+// 50 cards just answered right, each one way round, are each very likely
+// recalled that way: between them the two figures add up to the block, give
+// or take each one's rounding.
+ck("at the checkpoint it moves to the block just learned", Math.abs(understood + said - 50) <= 1, shown);
 ck("and the checkpoint names the lesson as what moved", await page.evaluate((t) =>
   document.querySelector("[data-checkpoint]").innerText.includes(t), LESSON.title));
 

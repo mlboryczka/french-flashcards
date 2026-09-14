@@ -11,6 +11,7 @@
 // rows, so a scan per question is far cheaper than the request it rides on.
 
 import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./cardText.js";
+import { sideOf, directionsOf } from "./directions.js";
 
 // Function words carry no signal and match everything. English and French
 // together, since a question mixes both ("what does chouette mean"). Checked
@@ -97,10 +98,24 @@ export function findRelatedCards(question, cards, limit = 8) {
   return scored.slice(0, limit).map(({ card }) => ({ front: card.f, back: card.b }));
 }
 
+// When a card was last missed, either way round, or null if its last answer
+// both ways was not a miss. `last_answer_correct` is null on rows that predate
+// FSRS and on a direction never answered, and false only on a real miss, so
+// the strict comparison matters — a falsy test would sweep in every
+// unreviewed card.
+function lastMissedAt(card) {
+  let at = null;
+  for (const dir of directionsOf(card)) {
+    const side = sideOf(card, dir);
+    if (side.last_answer_correct !== false) continue;
+    const t = side.last_review ? new Date(side.last_review).getTime() : 0;
+    if (at === null || t > at) at = t;
+  }
+  return at;
+}
+
 /**
- * The cards most recently got wrong. `last_answer_correct` is null on rows
- * that predate FSRS and false only on a real miss, so the strict comparison
- * matters — `!c.last_answer_correct` would sweep in every unreviewed card.
+ * The cards most recently got wrong, either way round.
  *
  * @param {Array}  cards  shaped deck rows from useUserDeck
  * @param {number} limit  how many to return
@@ -109,8 +124,8 @@ export function findRelatedCards(question, cards, limit = 8) {
 export function recentMisses(cards, limit = 6) {
   if (!Array.isArray(cards)) return [];
   return cards
-    .filter((c) => c?.last_answer_correct === false && c.f)
-    .sort((a, b) => new Date(b.last_review || 0) - new Date(a.last_review || 0))
+    .filter((c) => c?.f && lastMissedAt(c) !== null)
+    .sort((a, b) => lastMissedAt(b) - lastMissedAt(a))
     .slice(0, limit)
     .map((c) => ({ front: c.f, back: c.b }));
 }
@@ -135,12 +150,12 @@ export function relevantMisses({ question, currentCard, cards, now = Date.now(),
   const since = now - MISS_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   return cards
     .filter((c) =>
-      c?.last_answer_correct === false && c.f &&
+      c?.f &&
       c.row_id !== currentCard?.row_id &&
-      c.last_review && new Date(c.last_review).getTime() >= since &&
+      (lastMissedAt(c) ?? 0) >= since &&
       words(`${c.f} ${c.b}`).some((w) => topic.has(fold(w)))
     )
-    .sort((a, b) => new Date(b.last_review) - new Date(a.last_review))
+    .sort((a, b) => lastMissedAt(b) - lastMissedAt(a))
     .slice(0, limit)
     .map((c) => ({ front: c.f, back: c.b }));
 }
@@ -194,7 +209,9 @@ export function buildTutorContext({ question, previousQuestion, cards, currentCa
       // every lapse card before the student had answered it.
       ...(currentCard.result ? { result: currentCard.result } : null),
       ...(currentCard.typed ? { typed: String(currentCard.typed).slice(0, 200) } : null),
-      missedLastTime: currentCard.last_answer_correct === false,
+      // The way round it is being asked now: missing "apple → ?" last time
+      // says nothing about "la pomme → ?".
+      missedLastTime: sideOf(currentCard, currentCard.shownDir).last_answer_correct === false,
     };
   }
 

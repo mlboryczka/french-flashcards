@@ -5,6 +5,14 @@
 // one BLOCK: up to 50 cards, after which the student sees how it went and can
 // carry on with the next.
 //
+// A block is made of ITEMS: a card asked one way round. A word or phrase card
+// is two items, "la pomme → ?" and "apple → ?", each with its own FSRS state
+// (lib/directions.js); a grammar or pronunciation card is one. Every rule
+// below — due, missed last time, new, well known, answered today — reads the
+// item's own direction. The direction setting chooses which items of two-way
+// cards are candidates: FR→EN the French-shown ones, EN→FR the English-shown
+// ones, Mixed both. One-way cards are candidates in every setting.
+//
 // FSRS decides when a card the student has seen comes back. It has no opinion
 // on which new card comes next or how many — those are this file's decisions,
 // agreed with the owner on 2026-09-12 (see the context doc's History).
@@ -32,9 +40,18 @@
 // blocked practice, which tests worse than interleaved practice for long-term
 // retention. So: pick by priority, then shuffle.
 //
-// Each entry is { ...card, _bucket: "lapse" | "review" | "new" | "spot" }.
-// FlashcardApp uses _bucket only for the counter; scoring is driven entirely
-// by FSRS state in applyAnswer().
+// Neither direction waits for the other: both of a new word's items are new
+// from the start (agreed with the owner, 2026-09-14 — which way is harder
+// differs per student). What IS kept apart is a word's two FIRST meetings:
+// once a card has been answered for the first time one way, its other way
+// waits for a later day, and a block never deals both new items of one card.
+// Otherwise the second answer comes straight after being shown the word, and
+// FSRS would schedule a recall that never happened. This decides only when an
+// item is first shown; FSRS schedules nothing until it has been answered.
+//
+// Each entry is { ...card, shownDir: "fr" | "en", flippable, _bucket: "lapse" |
+// "review" | "new" | "spot" }. FlashcardApp uses _bucket only for the counter;
+// scoring is driven entirely by FSRS state in applyAnswer().
 
 import {
   scheduler,
@@ -46,6 +63,7 @@ import {
 } from "./spacedRepetition.js";
 import { endOfLocalDay, localISODate, localISODateDaysAgo, reviewedToday } from "./studyDay.js";
 import { lessonIdOf } from "./lessonSource.js";
+import { sideOf, sideColumns, directionsOf, isTwoWay, otherDirection, itemKey } from "./directions.js";
 
 const DEFAULTS = Object.freeze({
   target: 50,
@@ -55,6 +73,7 @@ const DEFAULTS = Object.freeze({
   recentDays: 14,
 });
 
+// These three read one direction's state: sideOf(card, dir), not the card.
 function isNewCard(card) {
   // Never answered. fsrs_state is the only authority.
   //
@@ -73,6 +92,25 @@ function dueMs(card) {
 
 function isWellKnown(card) {
   return (card.stability ?? 0) >= SPOT_CHECK_MIN_STABILITY_DAYS;
+}
+
+// The candidates' items under a direction setting ("fr" | "en" | "mix").
+function itemDirections(card, direction) {
+  const dirs = directionsOf(card);
+  if (dirs.length === 1 || direction === "mix") return dirs;
+  return [direction === "en" ? "en" : "fr"];
+}
+
+// This card was answered for the very first time today the OTHER way round.
+// Its item this way is new, and waits for tomorrow — see the header.
+function metOtherWayToday(card, dir, now) {
+  if (!isTwoWay(card)) return false;
+  const other = sideOf(card, otherDirection(dir));
+  return (
+    (other.fsrs_state ?? State.New) !== State.New &&
+    (other.reps ?? 0) <= 1 &&
+    reviewedToday(other.last_review, new Date(now))
+  );
 }
 
 function shuffleInPlace(arr, rng = Math.random) {
@@ -154,62 +192,85 @@ export function orderNewCards(fresh, {
   ];
 }
 
+// `opts.direction` is the direction setting ("mix" when omitted).
+//
+// `opts.inBlock` is for re-dealing the rest of a block when the setting
+// changes mid-block: the entries staying in it. None of them is dealt again,
+// and a card whose new item is among them gets no second new item.
 export function buildSession(cards, opts = {}) {
   const { target, spotCheckSlots, recentDays } = { ...DEFAULTS, ...opts };
   const now = opts.now ?? Date.now();
   const rng = opts.rng ?? Math.random;
+  const direction = opts.direction ?? "mix";
   const endOfToday = endOfLocalDay(new Date(now));
+  const inBlock = opts.inBlock || [];
+  const taken = new Set(inBlock.map(itemKey));
+  const cardKey = (c) => c.row_id ?? c.id;
+  const newCardsTaken = new Set(inBlock.filter((c) => c._bucket === "new").map(cardKey));
 
   const lapses = [];
   const reviews = [];
   const fresh = [];
   const wellKnown = [];
 
-  for (const c of cards) {
-    const state = c.fsrs_state ?? State.New;
-    if (isNewCard(c)) {
-      fresh.push(c);
-    } else if (dueMs(c) <= endOfToday) {
-      // A card you missed last time. FSRS's Relearning state would say this
-      // for us, but it only exists with minute-scale relearning steps turned
-      // on, which this app doesn't use — so applyAnswer records the miss on
-      // the row instead. (State is still checked for robustness in case the
-      // scheduler config ever changes.)
-      const missedLastTime =
-        c.last_answer_correct === false ||
-        state === State.Relearning ||
-        state === State.Learning;
-      if (missedLastTime) lapses.push(c);
-      else reviews.push(c);
-    } else if (isWellKnown(c) && !reviewedToday(c.last_review, new Date(now))) {
-      // Not due, but known well enough that we can afford to sample it. Not
-      // one already answered today: FSRS would not record the answer.
-      wellKnown.push(c);
+  for (const card of cards) {
+    const flippable = isTwoWay(card);
+    for (const dir of itemDirections(card, direction)) {
+      const item = { ...card, shownDir: dir, flippable };
+      if (taken.has(itemKey(item))) continue;
+      const side = sideOf(card, dir);
+      const state = side.fsrs_state ?? State.New;
+      if (isNewCard(side)) {
+        if (!metOtherWayToday(card, dir, now)) fresh.push(item);
+      } else if (dueMs(side) <= endOfToday) {
+        // A card you missed last time. FSRS's Relearning state would say this
+        // for us, but it only exists with minute-scale relearning steps turned
+        // on, which this app doesn't use — so applyAnswer records the miss on
+        // the row instead. (State is still checked for robustness in case the
+        // scheduler config ever changes.)
+        const missedLastTime =
+          side.last_answer_correct === false ||
+          state === State.Relearning ||
+          state === State.Learning;
+        (missedLastTime ? lapses : reviews).push({ item, due: dueMs(side) });
+      } else if (isWellKnown(side) && !reviewedToday(side.last_review, new Date(now))) {
+        // Not due, but known well enough that we can afford to sample it. Not
+        // one already answered today: FSRS would not record the answer.
+        wellKnown.push(item);
+      }
     }
   }
 
   // Most overdue first, so the oldest reviews survive the cut.
-  reviews.sort((a, b) => dueMs(a) - dueMs(b));
+  reviews.sort((a, b) => a.due - b.due);
   shuffleInPlace(wellKnown, rng);
 
   const due = [
-    ...lapses.map((c) => ({ ...c, _bucket: "lapse" })),
-    ...reviews.map((c) => ({ ...c, _bucket: "review" })),
+    ...lapses.map(({ item }) => ({ ...item, _bucket: "lapse" })),
+    ...reviews.map(({ item }) => ({ ...item, _bucket: "review" })),
   ];
   const spotSlots = Math.min(spotCheckSlots, wellKnown.length);
   const dueTaken = due.slice(0, Math.max(0, target - spotSlots));
 
-  // New cards only in the room the due cards left.
+  // New cards only in the room the due cards left — and never both of one
+  // card's first meetings in the same block.
   const newSlots = Math.max(0, target - spotSlots - dueTaken.length);
-  const newTaken = newSlots > 0
-    ? orderNewCards(fresh, {
-        now,
-        lessonMode: !!opts.lessonMode,
-        lessonRank: opts.lessonRank,
-        recentDays,
-        rng,
-      }).slice(0, newSlots).map((c) => ({ ...c, _bucket: "new" }))
-    : [];
+  const newTaken = [];
+  if (newSlots > 0) {
+    const ordered = orderNewCards(fresh, {
+      now,
+      lessonMode: !!opts.lessonMode,
+      lessonRank: opts.lessonRank,
+      recentDays,
+      rng,
+    });
+    for (const item of ordered) {
+      if (newTaken.length >= newSlots) break;
+      if (newCardsTaken.has(cardKey(item))) continue;
+      newCardsTaken.add(cardKey(item));
+      newTaken.push({ ...item, _bucket: "new" });
+    }
+  }
 
   // Spot-checks ride along with real work. With nothing due and nothing new
   // the student is caught up, and a block of two random known cards would
@@ -223,17 +284,22 @@ export function buildSession(cards, opts = {}) {
   // Interleave: selection above was by priority, presentation is mixed.
   shuffleInPlace(tagged, rng);
 
-  const counts = { lapse: 0, review: 0, new: 0, spot: 0 };
-  for (const c of tagged) counts[c._bucket]++;
-
   return {
     queue: tagged,
-    counts,
+    counts: countBuckets(tagged),
     // How much due work is left beyond this block. The checkpoint (stage 4)
     // uses it to say "the next blocks are reviews only".
     dueRemaining: due.length - dueTaken.length,
     newAvailable: fresh.length,
   };
+}
+
+// What a block is made of, for the counter. Retries are the block's own cards
+// again, not more of them.
+export function countBuckets(entries) {
+  const counts = { lapse: 0, review: 0, new: 0, spot: 0 };
+  for (const c of entries) if (!c._retry && c._bucket in counts) counts[c._bucket]++;
+  return counts;
 }
 
 // Where a missed card goes for its retry, inside the block.
@@ -278,14 +344,18 @@ export function placeRetry(deck, idx, card, offset = 20) {
 // check is the grade, and inventing a confidence signal the user never gave
 // would only feed FSRS noise.
 //
-// Returns the exact column set user_cards accepts, so callers can use the
-// same object for the DB update and the optimistic in-memory patch.
-export function applyAnswer(card, got, nowMs = Date.now()) {
+// `dir` is the way round the card was shown, and the answer is recorded to
+// that direction's state only; it defaults to the item's own shownDir.
+//
+// Returns that direction's columns, exactly as user_cards accepts them, so
+// callers can use the same object for the DB update and the optimistic
+// in-memory patch.
+export function applyAnswer(card, got, nowMs = Date.now(), dir = card?.shownDir ?? "fr") {
   const now = new Date(nowMs);
   const { card: next } = scheduler.next(
-    toFsrsCard(card),
+    toFsrsCard(sideOf(card, dir)),
     now,
     got ? Rating.Good : Rating.Again
   );
-  return fromFsrsCard(next, got);
+  return sideColumns(fromFsrsCard(next, got), dir);
 }

@@ -23,186 +23,6 @@ the lesson-bar-by-section item. Don't read it as a description of the app.
 
 ---
 
-## ▶ NEXT TASK — schedule French → English and English → French separately
-
-**Status: agreed with the owner on 2026-09-14, not started.** This section is
-an instruction brief for the session that builds it. Nothing in it describes
-the app yet. When the work is done, move what was built into the reference
-sections, write a History entry, and delete this section.
-
-### Before starting
-
-- **Read *Working protocol* first and follow it.** Local copy first
-  (`~/Desktop/Projects/french-flashcards`, on `main`), `git fetch` and confirm
-  `main` is not behind, commit straight to `main`, push when a stage is done.
-  If the session was handed a feature branch, say so in the first reply.
-- **Run the tests from a copy of the repo**, never by moving `.env.local`, and
-  point `CHROME_PATH` at Playwright's Chromium — both explained under *Working
-  protocol*. On the Mac, `reflow` fails on and off on unchanged `main`; any
-  other failure is real.
-- **Talk to the owner in plain language.** Short paragraphs, what the student
-  will see, no code identifiers, no dense tables. Recommend, don't survey.
-- **Never answer cards on the owner's live account to test.** Every answer is
-  a real review. Test against the mock, and against a read-only snapshot of
-  the owner's deck served to the app locally (the 2026-09-14 History entries
-  describe how that was done: fetch the rows with the service role key, serve
-  them from a Playwright route honouring `offset`/`limit`, answer every write
-  in the browser and record it).
-
-### The problem
-
-Each card has one FSRS state, but a vocab or expression card is shown either
-way round: French → English (recognise the word) and English → French
-(produce it). Both directions feed the same stability and difficulty, though
-they are different skills — producing is usually harder, but not always, and
-there is no way to guess which per card. So a card that is easy to recognise
-gets pushed out while it still can't be produced, and in Mixed mode the grade
-depends on a coin toss. See the open item *One FSRS state covers both
-directions of a card*, which this task closes.
-
-**The fix: two FSRS states per two-way card**, so FSRS measures each direction
-from the student's own answers. On the owner's deck: 3,219 cards are two-way
-(stored category `V` or `E`, i.e. `cat` vocab or expr — the same test as
-`flippable` today); 710 grammar and pronunciation cards stay one-way, always
-shown as written.
-
-### Decisions (agreed — don't reopen)
-
-1. **Existing history becomes French → English.** The app never recorded which
-   direction was answered, so today's state can't be split. The existing
-   columns become the French-shown direction (grammar cards already use them
-   that way). English → French starts as not yet seen. 177 of the owner's seen
-   cards get a new English → French item.
-2. **English → French is offered only once the card has been seen French →
-   English.** A word is met before it has to be produced. Those items arrive
-   through the normal new-card order (`orderNewCards`), not as due reviews, so
-   there is no surge.
-3. **Both directions of the same card MAY be seen on the same day, and in the
-   same block.** The owner was explicit: no sibling burying. Each direction is
-   its own item with its own one-answer-per-day rule.
-4. **Progress counts cards, and "remembered" becomes two figures:** about how
-   many you'd **understand** (French → English) and about how many you could
-   **say** (English → French). A card is "seen" once seen either way; lesson
-   totals stay "of 108".
-5. **The direction setting becomes a filter**, not a coin toss: FR→EN serves
-   only French → English items, EN→FR only English → French, Mixed serves
-   both. It still applies from the next card, as now.
-
-### Data model
-
-One row per card, as now — so editing, deleting, lesson sync, card splits
-and `unique (user_id, front)` are unaffected. Add a second set of FSRS columns
-for English → French; the existing columns are French → English.
-
-Draft for `migrations/migration_010_fsrs_english_side.sql` (check against
-`migration_006` and the live table before handing it over):
-
-```sql
-alter table public.user_cards
-  add column if not exists en_stability real,
-  add column if not exists en_difficulty real,
-  add column if not exists en_fsrs_state smallint not null default 0,
-  add column if not exists en_reps integer not null default 0,
-  add column if not exists en_lapses integer not null default 0,
-  add column if not exists en_next_due_at timestamptz,
-  add column if not exists en_last_review timestamptz,
-  add column if not exists en_last_answer_correct boolean;
-
-alter table public.user_cards
-  drop constraint if exists user_cards_en_fsrs_state_check;
-alter table public.user_cards
-  add constraint user_cards_en_fsrs_state_check check (en_fsrs_state between 0 and 3);
-
-create index if not exists idx_user_cards_en_due
-  on public.user_cards (user_id, en_next_due_at);
-```
-
-Additive only: nothing existing is rewritten, old code ignores the columns,
-and reverting the code leaves every French → English schedule intact. Update
-`supabase/schema.sql` to match. The RLS policies cover the new columns
-already (they are row policies).
-
-### How to build it, in order
-
-1. **Migration.** Write it, verify against the live table read-only, give it
-   to the owner to run in the SQL editor, and **confirm it has run before any
-   code that selects the new columns is pushed.** Also make `useUserDeck` fall
-   back to the old select if the new columns are missing, so a deploy that
-   beats the migration can't stop the deck loading.
-2. **One place that maps a direction to its columns.** In
-   `src/lib/spacedRepetition.js`: `toFsrsCard(card, dir)` and
-   `fromFsrsCard(next, got, dir)` read and write `en_*` for `"en"` and the
-   existing columns for `"fr"`. `applyAnswer(card, got, dir)` passes it through.
-   Everything else goes through these — no other code should name an `en_`
-   column except the deck loader.
-3. **Deck loading** (`src/useUserDeck.js`): select and shape the `en_*`
-   columns; `patch()` already merges whatever fields it is given.
-4. **Items.** `buildSession` works on items, `(card, dir)`: every one-way card
-   is one `"fr"` item; every two-way card is a `"fr"` item plus an `"en"` item
-   once its `"fr"` side has been seen (decision 2). The direction filter
-   (decision 5) chooses which items are candidates. Due, lapse, spot-check,
-   `reviewedToday`, new-card order and `placeRetry` all read the item's own
-   direction's fields. `shownDir` on a queue entry is now the item's direction,
-   not `directionFor`'s coin toss.
-5. **Answering** (`FlashcardApp.jsx` `answer()`): record to the shown
-   direction. `blockAnswersRef` keys become `card:${row_id}:${dir}` and
-   `retry:${_rid}`; `saveReview` must key unsaved writes by row AND direction,
-   or a French → English write waiting to be retried is replaced by an English
-   → French write for the same card. `patchDeckCard` patches only that
-   direction's fields.
-6. **Progress** (`src/lib/progress.js`): `summarize` returns `seen` (either
-   direction), `understood` (Σ French → English retrievability) and `said`
-   (Σ English → French, two-way cards only). `progressByArea`,
-   `progressChanges`, the checkpoint, the lesson top bar and Stats follow.
-   Wording: "about N you'd understand · about M you could say".
-7. **Stats**: Today / Right first time count items answered today. Coming up
-   and due today count items. By type's "right last time" and Hardest cards
-   (`lapses` + `en_lapses`) read both directions. `deckContext.recentMisses`
-   should consider `en_last_answer_correct` too.
-8. **Everything else that creates or resets a schedule:**
-   - **"Reset all progress" doesn't reset schedules today** — `resetAll` in
-     `useProgress.js` only deletes `card_progress`. Fix it to reset both
-     directions' FSRS columns on `user_cards` as well (confirm with the owner
-     that this is what the button should do; it already asks before running).
-   - `api/apply-splits.js` rewrites front/back and inserts new senses — new
-     rows take the defaults, the rewritten row keeps both directions. Check,
-     don't assume.
-   - `scripts/reset-fsrs-seed.mjs` is a finished one-off; leave it.
-9. **Context doc**: reference sections, History entry, close the open item,
-   delete this brief.
-
-### Tests
-
-- **By the writes, in both directions**: an answer shown French → English
-  writes only the existing columns; shown English → French writes only
-  `en_*`. This is the check that matters most — a write to the wrong side
-  silently corrupts a schedule.
-- `serving`: two-way card gives a `"fr"` item only until seen, then both; a
-  one-way card never gets an `"en"` item; FR→EN / EN→FR / Mixed filters; both
-  directions of one card can land in the same block; due and one-per-day are
-  per direction.
-- `answering`: correction and failed-save retry keep the two directions apart.
-- `progress` / `stats`: understood and said counted independently from fixtures.
-- Mock fixture (`tests/mock-supabase.mjs`) and suites that count writes per
-  card will change: two-way fixture cards now contribute English → French
-  items once seen. Read counts from the fixture, never hard-code them.
-- Finally, the read-only real-deck check: a block of 50 on the owner's
-  snapshot, every write landing on the right side, Stats figures recounted
-  independently.
-
-### Risks to watch
-
-- **Deck fails to load** if code selecting `en_*` ships before the migration —
-  mitigated by the order in step 1 and the fallback select.
-- **A write to the wrong direction's columns** — mitigated by step 2 (one
-  mapping) and the write-level tests.
-- **More reviews.** Each two-way card is now two items. Most of the extra comes
-  early; the easier direction reaches long intervals quickly. "Due first, new
-  only when due runs out" keeps it from piling up. Tell the owner plainly.
-- **Stats change meaning** — "remembered" becomes two figures. Intended.
-
----
-
 ## Stack
 
 | Layer | Choice |
@@ -266,7 +86,7 @@ waiting. An entry that needs no change (the card was right) is resolved too,
 with the note saying why. Resolving never deletes; the owner clears resolved
 rows when they choose to.
 
-`npm test` before every push. It is 19 suites, and closer to twenty minutes
+`npm test` before every push. It is 20 suites, and closer to twenty minutes
 than a few — most of them drive a real browser at several window sizes. Start
 it early rather than last, and don't edit `src/` while it runs: the suites
 share one Vite dev server, so a save hot-reloads the app underneath a test
@@ -301,6 +121,38 @@ filed here as the Mac too, and wasn't: the wrong-answer state was ~174px in a
 up to 50 cards. FSRS decides when a seen card comes back; which new card comes
 next, and when, is decided here. The rules were agreed with the owner on
 2026-09-12 — see that History entry for the reasoning and what was rejected.
+
+**A block is made of questions: a card asked one way round.** Since 2026-09-14
+(migration_010) each word or phrase card — stored category `V` or `E` — has
+two FSRS states, one for "la pomme → ?" (direction `fr`, the existing columns)
+and one for "apple → ?" (`en`, the same eight columns with an `en_` prefix).
+Grammar and pronunciation cards are asked only as written and use only the
+first. Every rule below — due, missed last time, new, well known, answered
+today — reads the question's own direction, through `sideOf(card, dir)` and
+`sideColumns(fields, dir)` in `src/lib/directions.js`, the one place that
+names the `en_` columns (apart from the deck loader and the reset). A queue
+entry is `{ ...card, shownDir, flippable, _bucket }`, and anything that tells
+entries apart uses `itemKey` — card and direction — because one card can be in
+a block both ways. The owner's decisions, and what they rule out:
+
+- **The direction setting is a filter.** FR→EN deals words and phrases French
+  side up, EN→FR English side up, Mixed both. **Grammar and pronunciation come
+  up in every setting.** It used to be a coin toss per card in Mixed, with one
+  schedule taking both answers.
+- **Neither way waits for the other.** Both of a new word's questions are new
+  from the start and come through the new-card order below. An early draft
+  made English → French wait until the word had been seen in French; the owner
+  rejected it: which way is harder differs per student and per card, and a
+  gate assumes it. Don't reintroduce it in any form.
+- **Both ways of a word may come up the same day, in the same block.** No
+  sibling burying.
+- **Except a word's two first meetings.** Once a card has been answered for
+  the very first time one way (that side's `reps` ≤ 1, last review today), its
+  other way waits for a later day; and a block never deals both new questions
+  of one card. Otherwise the second comes straight after being shown the
+  answer, and FSRS schedules a recall that never happened. This decides only
+  when a question is first shown, which FSRS has no say in; the owner accepted
+  it on that condition.
 
 Selection is by priority, then **order is randomised**. Those are two separate
 decisions and it matters:
@@ -386,14 +238,17 @@ jumping to wherever that card landed in the shuffled block — entering a lesson
 could start the student at card 35 of 50, skip 34 cards and end the block
 after 16 answers. The card on screen now moves to the front instead.
 
-`applyAnswer(card, got)` maps the binary typed result onto two of FSRS's four
+`applyAnswer(card, got, now, dir)` records to the shown direction only, and returns
+that direction's columns — the same object is the database update and the
+in-memory patch, so patching every entry of the card with it is right even
+with the card in the block both ways. It maps the binary typed result onto two of FSRS's four
 ratings — `Again` for a miss, `Good` for a hit. `Hard`/`Easy` exist for apps
 where the user self-rates; here the typing check *is* the grade, and inventing
 a confidence signal the user never gave would only feed FSRS noise.
 
-**FSRS gets one answer per card per day: the first.** `answer()` skips the
-scheduler write when `reviewedToday(card.last_review)` (`src/lib/studyDay.js`)
-says the card already had its review on the student's own day. The card is
+**FSRS gets one answer per card per way round per day: the first.** `answer()` skips the
+scheduler write when `reviewedToday(sideOf(card, dir).last_review)` (`src/lib/studyDay.js`)
+says that way round already had its review on the student's own day. The card is
 still shown and graded on screen. This covers the retry after a miss,
 Previous card, a reload mid-session and a second device.
 
@@ -432,14 +287,28 @@ replaces that day's answer, recomputed from the card's state before it
 (`blockAnswersRef`, cleared per block). The block's answer count doesn't move.
 Retries are never corrections.
 
-**A failed save is shown and retried** (`saveReview`): "1 answer not saved yet
-— retrying" beside the counter, backoff from 3s to 60s, a newer answer for the
-same card replacing an older one waiting, and a prompt before leaving the page
-while anything is unsaved.
+**A failed save is shown and retried** (`save`): "1 answer not saved yet
+— retrying" beside the counter, backoff from 3s to 60s, a newer write under
+the same key replacing an older one waiting, and a prompt before leaving the page
+while anything is unsaved. A schedule write is keyed by card AND direction, so
+an English-side answer never replaces a French-side one still waiting for the
+same card; an answer record by its own id. The notice counts answers, not writes.
 
-**Changing direction applies from the next card** (`directionFor`, `dirRef`),
-and to the card on screen only if its answer hasn't been seen. It used to deal
-a new block.
+**Every answer is kept** (`card_reviews`, `src/lib/reviewLog.js`): card,
+direction, time, right or wrong, whether FSRS counted it, and that direction's
+state before and after. Retries and second answers of the day are kept with
+`counted` false. The id is made in the browser, so a retried save and a
+correction with Previous card rewrite their own row. Nothing reads it yet —
+see the open item.
+
+**Changing direction re-deals the rest of the block** (`dirRef`, the effect on
+`dir`). Answered entries stay, and the card on screen if its answer has been
+seen; later entries the new setting still asks stay where they are; the rest
+are replaced by `buildSession(..., { inBlock })`, which deals nothing already
+in the block and no second first meeting. The block keeps its count and its
+retries, and its length where the deck has enough. It used to turn the
+remaining cards round, which can't work once each way is its own entry, and
+before that it dealt a new block.
 
 **Switching waits once the answer has been seen** (`toggleTypeMode`,
 `pendingTypeMode`). Before the answer is seen, the switch is immediate. After —
@@ -460,6 +329,10 @@ enable_short_term: false    enable_fuzz: true
 `enable_short_term: false` means FSRS never enters the Relearning state, so a
 miss is recorded on the row as `last_answer_correct` instead. `sessionQueue`
 reads that to find lapses.
+
+The same scheduler runs both directions of a card, each from its own state;
+`toFsrsCard` and `fromFsrsCard` take and give one direction under the plain
+field names.
 
 ---
 
@@ -691,6 +564,11 @@ can never undo 007.
   back to listing everything and say why, rather than showing an empty list.
   Resolving is done by `scripts/resolve-feedback.mjs`; the app has no button.
   **Search-and-replace the admin email before running it**
+- `010_two_directions` — the English-side FSRS state on `user_cards` (the eight
+  `en_` columns, all new, a check constraint and a due index), and
+  `card_reviews`, one row per answer, with owner-only select / insert / update
+  policies and no delete. Additive and re-runnable; the existing columns are
+  the French-side state, unchanged
 
 **A cautionary tale worth knowing:** the first version of 006 treated the
 `dates` array as review history. It isn't — those are the *lesson* dates a word
@@ -1028,7 +906,7 @@ of these were "fixed" against an assumption and shipped broken.
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Nineteen suites: six needing no browser,
+`npm test` — see `tests/README.md`. Twenty suites: six needing no browser,
 the rest driving the real app in headless Chromium against a mock Supabase,
 asserting on **measured** values (geometry, computed styles, request payloads)
 rather than on intent.
@@ -1050,7 +928,13 @@ suite exists to enforce, both learned from checks that lied:
   sidebar shrinking *was* the bug.
 - **Never bake in a number describing fixture data.** Read it back from the
   fixture (`servedDeck()`). A hard-coded deck size went stale and reported a
-  failure the app hadn't caused.
+  failure the app hadn't caused. Since a word is asked both ways, a block is not
+  the deck size: `firstBlockItems(rows, direction)` in the harness works out a
+  first block from the serving rules, not by calling the app's code.
+- **Judge an answer by the write, and a write by its keys.** A French-side
+  answer writes only the existing columns, an English-side one only `en_`
+  columns (`answering`, `serving`); a write to the wrong side corrupts a
+  schedule silently, and nothing on screen shows it.
 - **Find elements by a marker the component owns**, never by their copy or by
   a structural coincidence. `data-feedback-sheet` and `data-attach-card` exist
   for this. Finding the sheet by its subtitle broke when the subtitle was
@@ -1147,8 +1031,15 @@ ways, and where they disagree, this paragraph wins:
 
 - **The completion screen is a checkpoint after every block of 50**, not one
   end-of-session screen. See *The checkpoint* under *How a session is built*.
-- **The lesson top bar reads "about 43 of 108 remembered"**, with the "about"
-  the wording rules below insist on.
+- **Since 2026-09-14 "remembered" is two figures**, because each way round a
+  word is asked has its own schedule: **about N you'd understand** (Σ
+  retrievability of the French-side state, every card) and **about N you could
+  say** (Σ of the English-side state, words and phrases only — `twoWay` in
+  `summarize`, and the figure is left out of any set with none, so grammar never
+  reads "about 0 you could say"). **Seen** is a card answered either way.
+  `about()` rounds either. The bar's solid band is understood.
+- **The lesson top bar reads "about 43 of 108 you'd understand · about 12 you
+  could say"**, with the "about" the wording rules below insist on.
 - **The Stats page** (`data-stats-all`, `data-stats-areas`,
   `data-stats-coming-up`) has: Today and Right first time today, counted off
   each card's `last_review` — exact, because FSRS gets one answer per card per
@@ -1156,10 +1047,15 @@ ways, and where they disagree, this paragraph wins:
   row per lesson, recent classes and earlier notes; *Coming up*, which says
   how many cards came due today and, separately, how many older cards are
   still waiting from earlier days, then the cards due on each of the next
-  seven days; *By type* with seen / about remembered in place
+  seven days — every one of these counted per way round, so "Today" is
+  answers, not cards; *By type* with seen / about understood and said in place
   of "mastered", and "right last time" — of the cards seen, how many were right
   on their last answer, off the same FSRS rows — in place of the lifetime
-  `card_progress` accuracy; Hardest cards and Reset unchanged. Guarded by the `stats`
+  `card_progress` accuracy; Hardest cards, which adds up forgetting either way
+  round; and Reset all progress, which since 2026-09-14 sets both directions'
+  schedules on every card back to new (one update, `RESET_COLUMNS`) as well as
+  clearing `card_progress` — before, it cleared only that legacy tally and every
+  schedule survived. It leaves `card_reviews` alone. Guarded by the `stats`
   suite, whose expected figures are counted from its own fixture.
 - **No finish estimates.** See the open item.
 
@@ -1285,11 +1181,12 @@ cards due" is a `min()` over `next_due_at`.
 **Also worth having, but blocked:** *true retention* — of the cards recently
 asked, the fraction you got right. Measured rather than modelled, and the real
 check on whether FSRS is calibrated for you. It exists per session as
-`stats.got / stats.seen`; across sessions it needs the review log the app does
-not keep.
+`stats.got / stats.seen`; across sessions it needs the review log, kept since
+2026-09-14 (`card_reviews`) and not yet read by anything.
 
-Retrievability inherits the direction problem: one number per card covering
-both FR→EN and EN→FR.
+Retrievability inherited the direction problem — one number per card covering
+both FR→EN and EN→FR — until 2026-09-14, when each direction got its own state
+and the figure became understand and say (see Status above).
 
 ---
 
@@ -2289,7 +2186,82 @@ today from older cards.
 
 ---
 
+### 2026-09-14 — each way round its own schedule, and every answer kept
+
+**What was wrong.** A word or phrase card is asked either way round — "une
+colline → ?" and "a hill → ?" — and both answers fed one FSRS state. They are
+different skills, and which is harder differs per student and per card, so a
+word easy to recognise was pushed weeks out while it still couldn't be
+produced, and in Mixed mode the grade depended on a coin toss. Only the current
+state was stored, never the answers, so nobody could say which way any past
+answer had been. And "Reset all progress" cleared only the legacy
+`card_progress` tally: every schedule survived it.
+
+**How the plan changed on review.** A brief for this was written earlier the
+same day. Checked against the code with the owner before building, five things
+changed. English → French was gated on having seen the word in French; the
+owner rejected any gate ("you don't know which way is harder for the
+student"). The direction filter as written would have dropped every grammar
+card from EN→FR mode; one-way cards now come up in every setting. Changing
+direction mid-block could no longer relabel cards, so it re-deals the rest of
+the block. The brief's list of places that told entries apart by card alone
+missed one, the card kept on screen across a new block; everything now keys on
+card and direction (`itemKey`). And the fallback select for a deploy that beat
+the migration only half protected — the deck loads, then every English-side
+answer fails to save forever — so it was dropped for a read-only check that
+the migration ran before pushing. Two additions, both agreed: a word's two
+*first* meetings are kept apart (the second waits for a later day, and a block
+never deals both), and every answer is kept (`card_reviews`). The owner also
+confirmed Reset should reset both ways, and chose to reset their own progress
+with the button once this is live, rather than keep the 177 words answered so
+far as French-side history.
+
+**What was built.** migration_010 (`en_` columns, `card_reviews`), dry-run
+twice on a local Postgres with the Leitner and FSRS columns in place.
+`src/lib/directions.js` is the one mapping from a direction to its columns;
+`applyAnswer` writes only the shown direction's; `buildSession` deals
+questions under the direction setting with the first-meeting rule; `progress`
+reports understood and said; Stats counts every figure per way round; the tutor
+reads a miss per way round; the save queue keys by card and direction; the deck
+cache went to version 2; Reset writes `RESET_COLUMNS` in one update. The
+reference sections above describe it.
+
+**Tests.** `serving` gained the two-way rules — each way due on its own, the
+filters, grammar in every setting, no gate, first meetings apart, one answer a
+day per way, re-dealing — and the write-level check that an answer shown in
+French writes only French-side columns and one shown in English only `en_`
+ones, each computed from its own history. Each rule was broken on purpose to
+see its check fail. `answering` checks the same by the requests the browser
+sends, plus a correction and a failed save with the word in the block both
+ways, the re-deal, and Reset. `progress`, `stats`, `lessons`, `session`, `types`,
+`logic` and `apply-splits` follow the new figures; the mock deck has English
+sides, all new, and the harness's `firstBlockItems` counts a block from the
+rules.
+
+**Checked against the owner's real deck.** A read-only snapshot of the 3,929
+cards, given English sides as migration_010 leaves them (all new), served to
+the app locally with every write answered in the browser. A Mixed block
+missing every third card: 50 answers, 36 schedule writes, all French side — the
+backlog of due reviews filled it, as "due first" says. Then EN→FR and Continue:
+50 answers, 36 writes, 28 of them English side (words met for the first time
+that way) and 8 French (grammar, asked as written). All 72 writes were for the
+card on screen and only to the way round it was shown, none twice, no new word
+met both ways; 100 answer records, 72 counted. Stats recounted from the
+snapshot plus the writes matched: 158 answers today, 114 right; 3,665 not yet
+seen; 3,219 words and phrases, about 28 you could say; 17 due today. Full
+suite on the Mac: all 20 suites passed, `reflow` included this time.
+
+The migration is run by the owner in the SQL editor, and the columns were
+checked read-only before this was pushed.
+
 ## Open items
+
+- **Two-way scheduling has not been seen on the live app.** Tested against the
+  mock and a read-only snapshot of the owner's deck (2026-09-14 History). The
+  owner is to press Reset all progress once it is live — the first real use of
+  the reset, and it should leave every card reading not yet seen on Stats. Then
+  worth checking signed in: in Mixed, words come up both ways; EN→FR asks
+  grammar as written; a record lands in `card_reviews` for every answer.
 
 - **The retry and reset fixes of 2026-09-14 have not been seen on the live
   app.** The owner found both problems by studying on the live app; the fixes
@@ -2342,21 +2314,16 @@ today from older cards.
   all seen by September 2028" was agreed, but pace needs to know how many new
   cards a student meets per day, and nothing records when a card was first
   seen: `last_review` moves on every review, `created_at` is when the card was
-  made, and there is no review log. The honest fix is a `first_seen_at` column
-  on `user_cards`, set by the first recorded answer — a migration, where the
-  rest of the strategy needed none. Needs the owner's say-so.
-- **One FSRS state covers both directions of a card.** *Agreed fix, not built:
-  see ▶ NEXT TASK at the top.* `shownDir` is assigned
-  per session, but stability and difficulty live on the row — so recognising
-  *une colline* and producing it from "a hill" feed one number. They are
-  different skills with different difficulty. This is why a card can read as
-  well-known and still ambush you, and it is a modelling gap rather than a
-  display one: fixing it properly means two FSRS states per card.
-- **No review log.** Only the current FSRS state is kept, not the history that
-  produced it. So there is no true-retention figure across sessions, no
-  progress-over-time graph, and no way to re-optimise FSRS parameters against
-  this learner's own answers — which is the feature that makes FSRS better
-  than its defaults. It is also why the Stats page has no finish estimates.
+  made. Since 2026-09-14 `card_reviews` records every answer, so a card's first
+  answer from then on is known without a new column; before that, it isn't.
+  Needs the owner's say-so.
+- **The answer record is written and read by nothing.** `card_reviews` has
+  kept every answer since 2026-09-14 (migration_010). Nothing yet uses it for a
+  true-retention figure across sessions, a progress-over-time graph, or
+  re-optimising FSRS parameters against this learner's own answers — which is
+  the feature that makes FSRS better than its defaults, and wants a few hundred
+  counted answers per direction first. Answers before that date were never
+  recorded and can't be recovered.
 - **Mobile / PWA.** The layout is responsive and no longer scrolls sideways, but
   there is no install manifest or offline support.
 - **The multi-sense cleanup has never actually been run.** The machinery is

@@ -9,7 +9,8 @@
 // wave through a UTC bug.
 process.env.TZ = "America/New_York";
 
-import { buildSession, orderNewCards, classDaysOf, placeRetry } from "../../src/lib/sessionQueue.js";
+import { buildSession, orderNewCards, classDaysOf, placeRetry, applyAnswer } from "../../src/lib/sessionQueue.js";
+import { SIDE_FIELDS, sideOf, itemKey } from "../../src/lib/directions.js";
 import { localISODate, localISODateDaysAgo } from "../../src/lib/studyDay.js";
 import { lessonRank } from "../../src/data/lessons/index.js";
 import LESSON from "../../src/data/lessons/imperatif.js";
@@ -200,6 +201,143 @@ console.log("\n  outside a lesson, unseen lesson cards wait behind the notes");
   const onlyLesson = build(lessonCards, { lessonRank });
   ck("a student with no notes yet still gets the lesson, not an empty screen, in lesson order",
      onlyLesson.counts.new === 50 && onlyLesson.queue.every((c) => first50.has(c.id)), JSON.stringify(onlyLesson.counts));
+}
+
+
+// ── Each way round is its own schedule ─────────────────────────────────
+//
+// Agreed with the owner, 2026-09-14: a word or phrase card is asked both ways,
+// "la pomme → ?" and "apple → ?", each scheduled by FSRS from its own answers.
+// Neither way waits for the other. Grammar and pronunciation cards are only
+// ever asked as written. The direction setting chooses which ways of words and
+// phrases are dealt; grammar comes up in every setting.
+const en = (side) => Object.fromEntries(Object.entries(side).map(([k, v]) => [`en_${k}`, v]));
+const DUE = { fsrs_state: 2, stability: 5, difficulty: 5, reps: 3, lapses: 0,
+  next_due_at: new Date(NOW - DAY).toISOString(), last_review: new Date(NOW - 6 * DAY).toISOString(), last_answer_correct: true };
+const LATER = { ...DUE, next_due_at: new Date(NOW + 10 * DAY).toISOString() };
+const word = (fr, enSide, extra = {}) => ({
+  row_id: nextId, id: `card-${nextId++}`, f: `mot ${nextId}`, b: "word", cat: "vocab",
+  dates: ["2026-01-10"], source: "cahier-upload", fsrs_state: 0, ...fr, ...(enSide ? en(enSide) : {}), ...extra,
+});
+const rule = (fr = {}) => ({ ...word(fr), cat: "gram" });
+const ways = (queue, card) => queue.filter((e) => e.row_id === card.row_id).map((e) => e.shownDir).sort().join("+");
+
+console.log("\n  a word is asked both ways, each on its own schedule");
+{
+  const both = word(DUE, DUE);
+  const { queue } = build([both]);
+  ck("due both ways: both ways are in the block", ways(queue, both) === "en+fr", ways(queue, both));
+  const frOnly = word(DUE, LATER);
+  const enOnly = word(LATER, DUE);
+  const q2 = build([frOnly, enOnly]).queue;
+  ck("due only in French: only the French way is dealt", ways(q2, frOnly) === "fr", ways(q2, frOnly));
+  ck("due only in English: only the English way is dealt", ways(q2, enOnly) === "en", ways(q2, enOnly));
+  const g = rule(DUE);
+  ck("a grammar card is dealt once, as written", ways(build([g]).queue, g) === "fr");
+  const missedEn = word(LATER, { ...DUE, last_answer_correct: false });
+  const q3 = build([missedEn, ...many(3, () => word(DUE))]);
+  ck("missed last time in English is relearning in English only",
+     q3.queue.find((e) => e.row_id === missedEn.row_id)?._bucket === "lapse" && ways(q3.queue, missedEn) === "en",
+     JSON.stringify(q3.queue.filter((e) => e.row_id === missedEn.row_id).map((e) => [e.shownDir, e._bucket])));
+}
+
+console.log("\n  neither way waits for the other");
+{
+  const seenInFrench = word(DUE);
+  const { queue } = build([seenInFrench]);
+  ck("a word due in French and never asked in English gets both: a review and a new card",
+     ways(queue, seenInFrench) === "en+fr", ways(queue, seenInFrench));
+  const seenInEnglish = word({}, DUE);
+  ck("and the same the other way round", ways(build([seenInEnglish]).queue, seenInEnglish) === "en+fr");
+  const brandNew = many(40, () => word({}));
+  const firsts = build(brandNew).queue;
+  const dirs = new Set(firsts.map((e) => e.shownDir));
+  ck("brand-new words are met either way first, not always the same way", dirs.has("fr") && dirs.has("en"), [...dirs].join(","));
+}
+
+console.log("\n  a word's two first meetings are kept apart");
+{
+  const brandNew = word({});
+  const { queue } = build([brandNew]);
+  ck("a brand-new word is dealt one way only in a block", queue.length === 1, ways(queue, brandNew));
+  const metToday = word({ ...LATER, reps: 1, last_review: new Date(NOW - 3600000).toISOString() });
+  ck("met for the first time this morning in French: not asked in English until tomorrow",
+     ways(build([metToday]).queue, metToday) === "", ways(build([metToday]).queue, metToday));
+  const metYesterday = word({ ...LATER, reps: 1, last_review: new Date(NOW - DAY).toISOString() });
+  ck("met for the first time yesterday: asked in English today", ways(build([metYesterday]).queue, metYesterday) === "en");
+  const knownAnsweredToday = word({ ...LATER, reps: 4, last_review: new Date(NOW - 3600000).toISOString() });
+  ck("a word known for a while, answered in French today, can still be met in English today",
+     ways(build([knownAnsweredToday]).queue, knownAnsweredToday) === "en");
+  const enToday = word({}, { ...LATER, reps: 1, last_review: new Date(NOW - 3600000).toISOString() });
+  ck("and met first in English this morning: French waits too", ways(build([enToday]).queue, enToday) === "");
+  const twoDue = word({ ...DUE, reps: 1 }, { ...DUE, reps: 1 });
+  ck("the rule is only about first meetings: two due reviews share a block", ways(build([twoDue]).queue, twoDue) === "en+fr");
+}
+
+console.log("\n  the direction setting");
+{
+  const w = word(DUE, DUE);
+  const g = rule(DUE);
+  const inSetting = (direction) => build([w, g], { direction }).queue;
+  ck("FR→EN: words are asked in French", ways(inSetting("fr"), w) === "fr");
+  ck("EN→FR: words are asked in English", ways(inSetting("en"), w) === "en");
+  ck("Mixed: both", ways(inSetting("mix"), w) === "en+fr");
+  ck("grammar is asked in every setting, as written",
+     ["fr", "en", "mix"].every((d) => ways(inSetting(d), g) === "fr"),
+     ["fr", "en", "mix"].map((d) => ways(inSetting(d), g)).join(" | "));
+  const freshWord = word({});
+  ck("EN→FR: a brand-new word is met in English", ways(build([freshWord], { direction: "en" }).queue, freshWord) === "en");
+}
+
+console.log("\n  one answer a day, per way round");
+{
+  const knownBoth = word({ ...DUE, stability: 90, next_due_at: new Date(NOW + 40 * DAY).toISOString(), last_review: new Date(NOW - 3600000).toISOString() },
+    { ...DUE, stability: 90, next_due_at: new Date(NOW + 40 * DAY).toISOString() });
+  const { queue } = build([...many(10, () => word(DUE)), knownBoth], { direction: "mix" });
+  const spots = queue.filter((e) => e._bucket === "spot" && e.row_id === knownBoth.row_id).map((e) => e.shownDir);
+  ck("answered today in French: may be spot-checked in English, never again in French",
+     !spots.includes("fr"), spots.join(",") || "not spot-checked");
+}
+
+console.log("\n  re-dealing the rest of a block keeps what is already in it");
+{
+  const a = word(DUE, DUE);
+  const b = word({});
+  const staying = [{ ...a, shownDir: "fr", flippable: true, _bucket: "review" }, { ...b, shownDir: "en", flippable: true, _bucket: "new" }];
+  const { queue } = build([a, b], { inBlock: staying });
+  const keys = queue.map(itemKey);
+  ck("an entry already in the block is not dealt again", !keys.includes(itemKey(staying[0])), keys.join(" "));
+  ck("a word whose first meeting is in the block gets no second one", !queue.some((e) => e.row_id === b.row_id), keys.join(" "));
+  ck("the other way of a due word still comes", keys.includes(`${a.row_id}:en`), keys.join(" "));
+}
+
+// ── The write: an answer lands on the way round it was asked ────────────
+//
+// The check that matters most. A write to the other way's columns would
+// silently corrupt a schedule nothing on screen shows.
+console.log("\n  an answer is recorded to the way round it was shown, and only that way");
+{
+  const card = word({ ...DUE, stability: 7 }, { ...DUE, stability: 30, reps: 9 });
+  const enCols = SIDE_FIELDS.map((f) => `en_${f}`);
+  const frWrite = applyAnswer({ ...card, shownDir: "fr" }, true, NOW);
+  ck("shown in French: every field written is a French-side column",
+     Object.keys(frWrite).length === SIDE_FIELDS.length && Object.keys(frWrite).every((k) => SIDE_FIELDS.includes(k)),
+     Object.keys(frWrite).join(","));
+  const enWrite = applyAnswer({ ...card, shownDir: "en" }, false, NOW);
+  ck("shown in English: every field written is an English-side column",
+     Object.keys(enWrite).length === enCols.length && Object.keys(enWrite).every((k) => enCols.includes(k)),
+     Object.keys(enWrite).join(","));
+  ck("each is computed from its own side's state: English reps 9 → 10, French 3 → 4",
+     enWrite.en_reps === 10 && frWrite.reps === 4, `en ${enWrite.en_reps}, fr ${frWrite.reps}`);
+  ck("a miss in English counts against English only", enWrite.en_lapses === 1 && enWrite.en_last_answer_correct === false);
+  const after = { ...card, ...enWrite };
+  ck("and leaves the French side exactly as it was",
+     JSON.stringify(sideOf(after, "fr")) === JSON.stringify(sideOf(card, "fr")));
+  ck("an explicit direction wins over the entry's own",
+     Object.keys(applyAnswer({ ...card, shownDir: "fr" }, true, NOW, "en")).every((k) => k.startsWith("en_")));
+  const g = applyAnswer({ ...rule(DUE) }, true, NOW);
+  ck("a grammar card, shown as written, writes the French-side columns",
+     Object.keys(g).every((k) => SIDE_FIELDS.includes(k)));
 }
 
 // ── Retries stay inside the block ───────────────────────────────────────

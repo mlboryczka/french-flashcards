@@ -16,11 +16,13 @@
 // the check counts the actual PATCHes to user_cards rather than watching the
 // counter, which only shows where you are, not what was written.
 
-import { openApp, finish, checker, servedDeck, settled, sessionCounter, cardBox } from "../harness.mjs";
+import { openApp, finish, checker, servedDeck, settled, sessionCounter, cardBox, firstBlockItems } from "../harness.mjs";
 
 const ck = checker();
 const deck = await servedDeck();
-const DECK_SIZE = deck.length; // read from the fixture, never hard-coded
+// Read from the fixture, never hard-coded. A block is made of cards asked one
+// way round, so a word can be in it twice: this is the first block's size.
+const DECK_SIZE = firstBlockItems(deck).length;
 
 // Every scheduler write the app makes, in order. A PATCH to user_cards is one
 // graded answer.
@@ -93,7 +95,7 @@ console.log("\n  a flip-mode block reaches an end");
 // the completion notice was gated on the count of TYPED answers, so it never
 // showed, and the last card stayed live under your cursor.
 const taps = await workTheQueue();
-ck("the queue ran out instead of looping", taps <= DECK_SIZE, `${taps} answers for ${DECK_SIZE} cards`);
+ck("the queue ran out instead of looping", taps <= DECK_SIZE, `${taps} answers for ${DECK_SIZE} questions`);
 ck("a checkpoint replaces the card", await checkpointShown());
 ck("the card is gone, not left sitting there", (await cardBox(page)) === null);
 ck(
@@ -106,9 +108,9 @@ ck(
 ck("with everything done, it says so", await bodyHas(/all caught up/i));
 ck("and offers no Continue into an empty block", !(await continueButton()));
 ck(
-  "one scheduler write per card, no more",
+  "one scheduler write per card per way round, no more",
   writes.length === DECK_SIZE,
-  `${writes.length} writes for ${DECK_SIZE} cards`
+  `${writes.length} writes for ${DECK_SIZE} questions`
 );
 
 console.log("\n  a finished session doesn't keep grading");
@@ -233,8 +235,15 @@ console.log("\n  FSRS gets one answer per card per day");
     for (let i = 0; i < 2; i++) { await page.keyboard.press(key); await page.waitForTimeout(150); }
   };
 
+  ck("a session is on screen", (await sessionCounter(page))?.total === DECK_SIZE, JSON.stringify(await sessionCounter(page)));
+  // French side up only, so the block is one question per card and shorter
+  // than a retry's 20-card gap: the checks below rely on a miss coming back
+  // as the block's last card.
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "FR→EN")?.click());
+  await page.waitForTimeout(500);
   const total = (await sessionCounter(page))?.total;
-  ck("a session is on screen", total === DECK_SIZE, JSON.stringify(await sessionCounter(page)));
+  ck("French side up, one question per card", total === firstBlockItems(deck, "fr").length,
+     `${total} vs ${firstBlockItems(deck, "fr").length}`);
 
   // Miss the first card. Its retry takes the last place in the block, and the
   // card that was there waits for the next block: the block stays `total`
@@ -271,7 +280,14 @@ console.log("\n  Continue deals the next block, and never the same card twice");
 // A backlog bigger than two blocks: 110 due cards and 3 new ones. The mock is
 // told to serve these instead of its fixture; it still answers every write.
 {
-  const base = deck.find((r) => r.fsrs_state === 2 && r.last_answer_correct === true);
+  // Due in French; in English, known and not due for weeks — so each is one
+  // question in this backlog, as the counts below assume.
+  const base = {
+    ...deck.find((r) => r.fsrs_state === 2 && r.last_answer_correct === true),
+    en_fsrs_state: 2, en_stability: 30, en_difficulty: 5, en_reps: 3,
+    en_next_due_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+    en_last_review: new Date(Date.now() - 20 * 86400000).toISOString(), en_last_answer_correct: true,
+  };
   const fresh = deck.find((r) => r.fsrs_state === 0);
   const big = [
     ...Array.from({ length: 110 }, (_, i) => ({ ...base, id: 1000 + i, front: `carte ${i + 1}`, back: `card ${i + 1}` })),
@@ -364,9 +380,9 @@ console.log("\n  switching between flipping and typing waits once the answer is 
   ck("after Show answer, the switch to flipping waits, and Got It is not offered",
      await has(/Flipping starts from the next card/) && !(await has(/Got It/)));
   await click("Continue →"); await wait(600);
+  const grades = writes.map((w) => w.last_answer_correct ?? w.en_last_answer_correct);
   ck("so the flip was recorded as right and Show answer as a miss",
-     JSON.stringify(writes.map((w) => w.last_answer_correct)) === "[true,false]",
-     JSON.stringify(writes.map((w) => w.last_answer_correct)));
+     JSON.stringify(grades) === "[true,false]", JSON.stringify(grades));
   ck("and the card after is flipped", !(await typing()) && !(await has(/starts from the next card/)));
   await browser.close();
 }

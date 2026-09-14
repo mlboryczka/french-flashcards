@@ -1,6 +1,6 @@
 // Card types: the Grammar / Vocab / Phrases filter in the Cards view, and the
 // By type breakdown in Stats.
-import { openApp, finish, checker, gotoStats, sessionCounter, servedDeck } from "../harness.mjs";
+import { openApp, finish, checker, gotoStats, sessionCounter, servedDeck, firstBlockItems } from "../harness.mjs";
 import { classifyCard, CARD_TYPES, TYPE_LABEL } from "../../src/lib/cardTypes.js";
 import { CAT_DB_TO_UI } from "../../src/lib/cardCategories.js";
 
@@ -9,11 +9,14 @@ const { browser, page } = await openApp();
 
 // What the fixture actually contains, so no count is baked in here.
 const deck = await servedDeck();
+// Counted in questions — a card asked one way round — because that is what a
+// block is made of: a word can be in it both ways.
 const expected = { grammar: 0, vocab: 0, phrase: 0 };
-for (const row of deck) {
+const items = firstBlockItems(deck);
+for (const { row } of items) {
   expected[classifyCard({ f: row.front, b: row.back, cat: CAT_DB_TO_UI[row.category] || "vocab" })]++;
 }
-console.log(`  fixture: ${deck.length} cards — ${JSON.stringify(expected)}`);
+console.log(`  fixture: ${deck.length} cards, ${items.length} questions — ${JSON.stringify(expected)}`);
 
 console.log("\n  the filter chips");
 const chips = await page.evaluate(() =>
@@ -24,7 +27,7 @@ const chips = await page.evaluate(() =>
 ck("all four chips are in the Cards view", ["All", "Grammar", "Vocab", "Phrases"].every((t) => chips.includes(t)), JSON.stringify(chips));
 
 const all = (await sessionCounter(page)).total;
-ck("All shows the whole deck", all === deck.length, `${all} vs ${deck.length}`);
+ck("All shows the whole deck", all === items.length, `${all} vs ${items.length}`);
 
 const counted = {};
 for (const type of CARD_TYPES) {

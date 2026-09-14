@@ -79,6 +79,10 @@ ck('new card belongs to the caller', inserted[0]?.user_id===ME);
 ck('new card inherits the lesson dates', JSON.stringify(inserted[0]?.dates)===JSON.stringify(['2025-05-01']));
 ck('new card carries no scheduling history', !('stability' in inserted[0]) && !('next_due_at' in inserted[0]) && !('reps' in inserted[0]),
    Object.keys(inserted[0]||{}).join(','));
+ck('either way round: it starts new asked in English too', !Object.keys(inserted[0]||{}).some((k) => k.startsWith('en_')),
+   Object.keys(inserted[0]||{}).join(','));
+ck('the rewritten row keeps both ways\' schedules: only its text and type change',
+   Object.keys(updates[0]||{}).every((k) => ['id','front','back','category'].includes(k)), Object.keys(updates[0]||{}).join(','));
 ck('category mapped back to a DB code', inserted[0]?.category==='V', inserted[0]?.category);
 ck('reported honestly', res.body?.updated===1 && res.body?.inserted===1, JSON.stringify(res.body));
 

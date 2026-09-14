@@ -172,6 +172,11 @@ console.log("\n  recentMisses — what they are actually getting wrong");
   );
   ck("only the missed cards come back", missed.length === 2, missed.join(", "));
   ck("most recently missed first", missed[0] === "la colline", missed.join(", "));
+  // Missed only asked in English, and more recently than anything else.
+  const enMiss = { f: "la pente", b: "the slope", cat: "vocab", last_answer_correct: true, last_review: "2020-01-01",
+    en_last_answer_correct: false, en_last_review: "2099-01-01" };
+  const withEn = recentMisses([...DECK, enMiss]).map((c) => c.front);
+  ck("a card missed only the other way round is a miss, placed by when", withEn[0] === "la pente", withEn.join(", "));
 }
 
 console.log("\n  findRelatedCards — the way learners actually type");
@@ -214,7 +219,8 @@ console.log("\n  relevantMisses — only the misses that bear on the question");
 console.log("\n  buildTutorContext — the card on screen, as the student has it");
 {
   const D = [
-    { row_id: 1, f: "une colline", b: "a hill", last_answer_correct: false, last_review: "2026-09-11" },
+    // Missed last time asked in English ("a hill → ?"); never answered in French.
+    { row_id: 1, f: "une colline", b: "a hill", cat: "vocab", en_last_answer_correct: false, en_last_review: "2026-09-11" },
     { row_id: 2, f: "un coteau", b: "a hillside", last_answer_correct: true },
   ];
   const enCard = { ...D[0], shownDir: "en" };
@@ -224,6 +230,10 @@ console.log("\n  buildTutorContext — the card on screen, as the student has it
   ck("unanswered is stated", before.currentCard.answered === false, JSON.stringify(before.currentCard));
   // The row's last result is last session's. It is not "they just got this wrong".
   ck("last session's miss is not reported as this attempt", !before.currentCard.result && before.currentCard.missedLastTime === true, JSON.stringify(before.currentCard));
+  // Each way round is its own schedule: a miss asked in English says nothing
+  // about recognising the word in French.
+  const frView = buildTutorContext({ question: "what is a hill in French?", cards: D, currentCard: { ...D[0], shownDir: "fr", answered: false } });
+  ck("a miss the other way round is not reported for this way", frView.currentCard.missedLastTime === false, JSON.stringify(frView.currentCard));
   ck(
     "an unanswered card is kept out of the related list, which would give its answer away",
     !(before.relatedCards || []).some((c) => c.front === "une colline"),

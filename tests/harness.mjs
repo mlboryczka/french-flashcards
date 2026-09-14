@@ -80,6 +80,31 @@ export async function servedDeck() {
   return res.json();
 }
 
+// What a first block holds, worked out from the serving rules rather than by
+// calling the app's own code:
+//   • words and phrases are asked both ways, grammar and pronunciation as
+//     written; the setting ("fr" | "en" | "mix") picks the ways for words
+//   • a way round is dealt if it is due by tonight or has never been answered
+//   • a word never answered either way is met only one way in a block
+// Only for fixtures smaller than a block, with nothing answered today.
+// Returns [{ row, dir }].
+const TWO_WAY_DB = new Set(["V", "E"]);
+export function firstBlockItems(rows, direction = "mix") {
+  const tonight = new Date();
+  tonight.setHours(23, 59, 59, 999);
+  const out = [];
+  for (const row of rows) {
+    const twoWay = TWO_WAY_DB.has(row.category ?? "V");
+    const dirs = !twoWay ? ["fr"] : direction === "mix" ? ["fr", "en"] : [direction];
+    const col = (d, f) => row[d === "en" ? `en_${f}` : f];
+    const isNew = (d) => (col(d, "fsrs_state") ?? 0) === 0;
+    const open = dirs.filter((d) => isNew(d) || (col(d, "next_due_at") && new Date(col(d, "next_due_at")) <= tonight));
+    const bothNew = open.length === 2 && open.every(isNew);
+    for (const dir of bothNew ? open.slice(0, 1) : open) out.push({ row, dir });
+  }
+  return out;
+}
+
 export async function finish(browser, ck) {
   // Suites that open a browser per case have already closed theirs and pass
   // null; the tally below is the part they still want.

@@ -2,7 +2,9 @@ import http from 'http';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*','Access-Control-Expose-Headers':'*'};
 const DAY=86400000, now=Date.now();
 // A deck as it would look right after migration_006: seeded from Leitner boxes.
-const deck=[
+// Then migration_010 (below) gives every row an English-side schedule, never
+// answered: every word and phrase card is new asked in English.
+const rows=[
   {id:1,front:"une colline",back:"a hill",category:"V",dates:["2025-01-01","2025-06-01"],flagged_for_review:false,batch_id:null,
    next_due_at:new Date(now-DAY).toISOString(),lapses:0,stability:21,difficulty:5,fsrs_state:2,reps:4,last_review:new Date(now-22*DAY).toISOString(),last_answer_correct:null},
   {id:2,front:"grimper",back:"to climb",category:"V",dates:[],flagged_for_review:false,batch_id:null,
@@ -35,6 +37,7 @@ const deck=[
   {id:15,front:"vivre → nous",back:"nous vivons",category:"G",dates:["2025-07-01"],flagged_for_review:false,batch_id:null,
    next_due_at:new Date(now-DAY).toISOString(),lapses:0,stability:4,difficulty:5,fsrs_state:2,reps:2,last_review:new Date(now-5*DAY).toISOString(),last_answer_correct:true},
 ];
+const deck=rows.map(r=>({...r,en_stability:null,en_difficulty:null,en_fsrs_state:0,en_reps:0,en_lapses:0,en_next_due_at:null,en_last_review:null,en_last_answer_correct:null}));
 http.createServer((req,res)=>{
   if(req.method==='OPTIONS'){res.writeHead(204,cors);return res.end();}
   let body=''; req.on('data',d=>body+=d);
