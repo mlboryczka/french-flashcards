@@ -765,8 +765,11 @@ of these were "fixed" against an assumption and shipped broken.
   document came out 20px wider than the window. It takes `overflowX` only:
   the narrow layout scrolls vertically by design — its nav is a fixed bottom
   bar — so clipping both axes would be wrong.
-- **The sidebar minimizes to a 64px rail** (`data-sidebar-toggle`, in the
-  sidebar's top padding so toggling moves nothing in the nav). Minimized: icons
+- **The sidebar minimizes to a 64px rail** (`data-sidebar-toggle`). At full
+  width the button sits in the corner of the top padding; minimized it is the
+  **first item in the rail**, styled as a nav item, so its icon shares the
+  column's centre line (29.5px) and 50px spacing. Positioned on its own it sat
+  2px right of the icons and too close to Cards — the owner spotted it. Minimized: icons
   only, each with its page's name as a title, the marker unchanged, no lesson
   sub-items; the avatar, then the feedback trigger as an icon beneath it, as
   "Send feedback" sits beneath the account at full width. The preference is

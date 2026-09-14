@@ -52,6 +52,21 @@ await settled(page);
   ck("centred under it", p.fbCentred === true);
   ck("nothing scrolls sideways", p.docW === p.winW, `${p.docW} vs ${p.winW}`);
 }
+{
+  // The expand button is part of the column of icons, not a thing beside it:
+  // same centre line, same spacing as the items below it.
+  const rail = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-sidebar] nav button")].map((b) => {
+      const svg = b.querySelector("svg").getBoundingClientRect();
+      return { x: svg.left + svg.width / 2, y: svg.top + svg.height / 2, toggle: b.hasAttribute("data-sidebar-toggle") };
+    })
+  );
+  const xs = rail.map((r) => r.x);
+  const gaps = rail.slice(1).map((r, i) => Math.round((r.y - rail[i].y) * 10) / 10);
+  ck("the expand button leads the column of icons", rail[0]?.toggle === true);
+  ck("its icon is on the same centre line as the others", Math.max(...xs) - Math.min(...xs) <= 0.5, xs.map((x) => x.toFixed(1)).join(", "));
+  ck("and evenly spaced with them", Math.max(...gaps) - Math.min(...gaps) <= 0.5, gaps.join(", "));
+}
 
 console.log("\n  remembered");
 await page.reload();

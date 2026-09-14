@@ -19,6 +19,13 @@ const SIDEBAR_WIDTH = 256;
 // The sidebar can be minimized to a rail of icons. Remembered per browser.
 const SIDEBAR_MIN_WIDTH = 64;
 const SIDEBAR_MIN_KEY = "sidebar:minimized";
+const SIDEBAR_TOGGLE_ICON = (minimized) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M9 4v16" />
+    <path d={minimized ? "M14 10l2 2-2 2" : "M16 10l-2 2 2 2"} />
+  </svg>
+);
 // Narrowest content column worth reflowing to.
 //
 // Measured, not guessed. The card is height-driven and 1.6:1, so in a 900px
@@ -1620,25 +1627,38 @@ export default function FlashcardApp({ user, onSignOut }) {
       data-minimized={!isNarrow && sidebarMin ? "" : undefined}
       style={isNarrow ? S.sideBarBottom : sidebarMin ? { ...S.sideBar, ...S.sideBarMin } : S.sideBar}
     >
-      {!isNarrow && (
-        // In the sidebar's top padding, so toggling moves nothing in the nav.
+      {!isNarrow && !sidebarMin && (
+        // Full width: in the corner of the sidebar's top padding, clear of the nav.
         <button
           data-sidebar-toggle
-          style={sidebarMin ? { ...S.sideToggle, ...S.sideToggleMin } : S.sideToggle}
-          onClick={() => setSidebarMinimized(!sidebarMin)}
-          aria-label={sidebarMin ? "Expand sidebar" : "Minimize sidebar"}
-          title={sidebarMin ? "Expand sidebar" : "Minimize sidebar"}
-          aria-expanded={!sidebarMin}
+          style={S.sideToggle}
+          onClick={() => setSidebarMinimized(true)}
+          aria-label="Minimize sidebar"
+          title="Minimize sidebar"
+          aria-expanded="true"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="16" rx="2" />
-            <path d="M9 4v16" />
-            <path d={sidebarMin ? "M14 10l2 2-2 2" : "M16 10l-2 2 2 2"} />
-          </svg>
+          {SIDEBAR_TOGGLE_ICON(false)}
         </button>
       )}
       {/* Nav items with icons */}
       <nav style={isNarrow ? S.sideNavBottom : S.sideNav}>
+        {!isNarrow && sidebarMin && (
+          // Minimized, the expand button is one more item in the rail: the
+          // same button style as Cards and the rest, so it shares their centre
+          // line (the 4px marker border offsets it, equally), their spacing and
+          // their colour. Positioned on its own it sat 2px right of the column
+          // and 11px closer to Cards than Cards is to Lessons.
+          <button
+            data-sidebar-toggle
+            style={{ ...S.sideItem, ...S.sideItemMin }}
+            onClick={() => setSidebarMinimized(false)}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            aria-expanded="false"
+          >
+            <span style={S.sideIcon}>{SIDEBAR_TOGGLE_ICON(true)}</span>
+          </button>
+        )}
         {navItems.map(([m, label]) => {
           const baseStyle = isNarrow ? S.sideItemBottom : sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem;
           const activeStyle = isNarrow ? S.sideItemBottomActive : S.sideItemActive;
@@ -3405,7 +3425,7 @@ const S = {
   // means the sidebar stays fixed while the main content scrolls.
   // overflowX stays visible when minimized so the profile menu can open past
   // the 64px rail; the rail is short enough never to need to scroll.
-  sideBarMin: { width:SIDEBAR_MIN_WIDTH, overflowY:"visible" },
+  sideBarMin: { width:SIDEBAR_MIN_WIDTH, overflowY:"visible", paddingTop:8 },
   sideBar: { width:SIDEBAR_WIDTH, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box", transition:`width ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
   sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
   // Not flex:1 any more — the feedback dock below takes the free height, so the
@@ -3458,7 +3478,6 @@ const S = {
   sideDividerMin: { marginLeft:12, marginRight:12 },
   sideFeedbackRowMin: { marginLeft:0, marginTop:6, display:"flex", justifyContent:"center" },
   sideToggle: { position:"absolute", top:8, right:12, width:32, height:32, display:"flex", alignItems:"center", justifyContent:"center", padding:0, border:"none", borderRadius:T.radius.md, background:"transparent", color:"rgba(3,22,50,0.45)", cursor:"pointer" },
-  sideToggleMin: { right:"auto", left:"50%", transform:"translateX(-50%)" },
   sideBottomRow: { display:"flex", alignItems:"center", gap:10 },
   sideFeedbackRow: { marginTop:2, marginLeft:42 },
   sideProfileRow: { position:"relative", flexShrink:0 },
