@@ -1663,8 +1663,13 @@ owner before it was built:
   at first, leaving the card box 102px tall around 64px of text)
 - click the thumbnail for the full screenshot; Escape or a click closes it and
   leaves the log open, which needs `stopPropagation` because a portal's clicks
-  still bubble through the React tree to the log's own overlay — shown at most 820×640, not fitted to the window: a retina screenshot
-  filled the whole screen, bigger than the app it was taken from
+  still bubble through the React tree to the log's own overlay — shown at most 560×420, not fitted to the window: a retina screenshot
+  filled the whole screen, bigger than the app it was taken from, and a first
+  cap of 820×640 looked no different on a laptop
+- the scrolling list has 4px of side padding (cancelled by a negative margin)
+  so the thumbnail's focus ring isn't clipped: Escape returns focus to the
+  thumbnail, and the list cut its ring off down the right side, which looked
+  like a white bar through the image
 
 Entries are **numbered 1, 2, 3 down the open list, newest first** — the owner's
 choice, so the numbers count what is still waiting and nothing else. That is

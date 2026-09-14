@@ -3877,7 +3877,12 @@ const S = {
   fbLogClose: { background:"none", border:"none", fontSize:24, lineHeight:1, cursor:"pointer", color:T.color.onSurfaceVariant, padding:"0 4px" },
   fbLogNote: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, padding:"12px 0 0" },
   fbLogEmpty: { textAlign:"center", padding:32, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontSize:14 },
-  fbLogList: { overflowY:"auto", minHeight:0 },
+  // A scroll container clips to its padding box, and the thumbnail sits flush
+  // against the list's right edge — so the focus ring it gets back after Escape
+  // closes the lightbox (2px, offset 2px) was cut off down its right side and
+  // read as a stray white bar through the thumbnail. 4px of padding, cancelled
+  // by the margin, gives the ring room without moving anything.
+  fbLogList: { overflowY:"auto", minHeight:0, padding:"0 4px", margin:"0 -4px" },
   fbLogPage: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"4px 24px", boxShadow:T.shadow.card },
   fbEntry: { display:"grid", gridTemplateColumns:"32px minmax(0, 1fr)", columnGap:12, padding:"16px 0", borderBottom:"1px solid rgba(3,22,50,0.08)", fontFamily:T.font.sans },
   // Same line height as the message, so the number sits on its first line.
@@ -3892,10 +3897,11 @@ const S = {
   // Absolute, so the image never sets the row height: the thumbnail follows the card beside it.
   fbEntryThumbImg: { position:"absolute", inset:0, display:"block", width:"100%", height:"100%", objectFit:"cover", objectPosition:"center top" },
   fbLightbox: { position:"fixed", inset:0, background:"rgba(3,22,50,0.72)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:24, cursor:"zoom-out" },
-  // Capped, not fitted to the window. Screenshots come off retina screens at
-  // twice their on-screen size, and filling the viewport showed a card
-  // screenshot bigger than the app it was taken from.
-  fbLightboxImg: { width:"auto", height:"auto", maxWidth:"min(820px, 100%)", maxHeight:"min(640px, 100%)", objectFit:"contain", borderRadius:T.radius.lg, boxShadow:"0 32px 96px rgba(0,0,0,0.35)" },
+  // Capped well below the window, not fitted to it. Screenshots come off
+  // retina screens at twice their on-screen size: fitted, a screenshot of the
+  // app filled the screen like the app itself, and a first cap of 820px only
+  // took it from ~925px to 820 on a laptop, which read as no change.
+  fbLightboxImg: { width:"auto", height:"auto", maxWidth:"min(560px, 100%)", maxHeight:"min(420px, 100%)", objectFit:"contain", borderRadius:T.radius.lg, boxShadow:"0 32px 96px rgba(0,0,0,0.35)" },
   // Feedback review modal
   feedbackModalOverlay: { position:"fixed", inset:0, background:"rgba(3,22,50,0.4)", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:16 },
   feedbackModalBox: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, maxWidth:600, width:"100%", padding:"24px 28px 8px", boxShadow:"0 32px 96px rgba(3,22,50,0.18)", fontFamily:T.font.sans, maxHeight:"80vh", overflow:"hidden", display:"flex", flexDirection:"column" },
