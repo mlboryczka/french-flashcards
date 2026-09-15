@@ -1,4 +1,4 @@
-// The Stats page: seen, about understood and said, and not yet seen, per area; today's
+// The Stats page: seen, about remembered and not yet seen, per area; today's
 // answers; and what's coming up. Every expected figure is counted from the
 // served fixture here, independently of the app's own calculation, so the
 // check can't just agree with the code.
@@ -110,15 +110,33 @@ console.log("\n  all cards, and each area");
 const all = await within("[data-stats-all]");
 ck("the whole deck's seen and not-yet-seen counts",
    all.includes(`${rows.length - rows.filter(isSeen).length} not yet seen`), all);
-ck("how many words and phrases can be asked in English",
-   all.includes(`of your ${rows.filter(twoWay).length} words and phrases you could say`), all);
+// A word or phrase is remembered only as far as it is remembered both ways,
+// so the figure can never exceed the cards that could count at all: grammar
+// seen, and words and phrases seen from French AND from English. Words seen
+// one way — most of this fixture — must add nothing.
+{
+  const couldCount = rows.filter((r) => twoWay(r) ? r.fsrs_state !== 0 && (r.en_fsrs_state ?? 0) !== 0 : r.fsrs_state !== 0).length;
+  const n = Number(/about (\d+) remembered/.exec(all)?.[1]);
+  ck("about N remembered counts a word only once it is known both ways",
+     Number.isFinite(n) && n > 0 && n <= couldCount, `${n} remembered, at most ${couldCount} could count; ${rows.filter(isSeen).length} seen`);
+}
+ck("students are never shown the two ways apart",
+   !/understand|could say|shown in (French|English)|English → French|French → English/i.test(text), text.slice(0, 300));
 const areas = await within("[data-stats-areas]");
 const row = (label, list) =>
   ck(`${label}: ${list.filter(isSeen).length} seen of ${list.length}`,
-     new RegExp(`${label.replace(/[()']/g, ".")}.*?${list.filter(isSeen).length} seen · about \\d+ you'd understand · about \\d+ you could say · ${list.length} cards`).test(areas), areas);
+     new RegExp(`${label.replace(/[()']/g, ".")}.*?${list.filter(isSeen).length} seen · about \\d+ remembered · ${list.length} cards`).test(areas), areas);
 row(LESSON.title, lesson);
-row("Your recent classes", recent);
-row("Your earlier notes", earlier);
+row("Last two weeks of class", recent);
+row("Older classes", earlier);
+{
+  // Each group says which classes it holds, in dates.
+  const long = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "long" });
+  ck("the recent group gives the date it starts", areas.includes(`Classes since ${long(daysAgo(14))}`), areas.slice(0, 300));
+  const firstOlder = earlier.flatMap((r) => r.dates).sort()[0];
+  const monthYear = new Date(`${firstOlder}T12:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  ck("the older group runs from its first class to the day before", areas.includes(`${monthYear} to ${long(daysAgo(15))}`), areas.slice(0, 400));
+}
 
 console.log("\n  coming up");
 const coming = await within("[data-stats-coming-up]");
@@ -152,7 +170,6 @@ console.log("\n  hardest cards");
 
 console.log("\n  the old vocabulary is gone");
 ck("no \"mastered\" anywhere on the page", !/mastered/i.test(text));
-ck("no \"remembered\" either: it is understand and say now", !/\bremembered\b/i.test(text));
 ck("no \"learning\" stage label", !/\d+ learning\b/i.test(text));
 
 await finish(browser, ck);

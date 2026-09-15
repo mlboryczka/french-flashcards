@@ -56,7 +56,7 @@ import {
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
 import { localISODate, reviewedToday, endOfLocalDay, startOfLocalDay } from "./lib/studyDay";
-import { progressByArea, progressChanges, about, summarize } from "./lib/progress";
+import { progressByArea, progressChanges, aboutRemembered, summarize, areaDates } from "./lib/progress";
 import { buildSession, applyAnswer, placeRetry, countBuckets } from "./lib/sessionQueue";
 import { RE_QUEUE_OFFSET, State } from "./lib/spacedRepetition";
 import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, resetColumns } from "./lib/directions";
@@ -233,15 +233,12 @@ const STUDY_MODE_KEY = "study-mode";
 // round, because both ways of one card can be in the same block.
 const slotKeyOf = (entry) => (entry._retry ? `retry:${entry._rid}` : `card:${itemKey(entry)}`);
 
-// "about 40 you'd understand · about 25 you could say" for any set of cards.
-// The second only where the set has words or phrases: grammar is never asked
-// in English, and "about 0 you could say" would read as a failing.
-function estimates(summary) {
-  const understand = `about ${about(summary.understood).toLocaleString()} you'd understand`;
-  return summary.twoWay > 0
-    ? `${understand} · about ${about(summary.said).toLocaleString()} you could say`
-    : understand;
-}
+// The two groups of cards from the student's own classes (areaOf in
+// lib/progress.js). Both come from the same notebook; what separates them is
+// only how long ago the class was. They were "Your recent classes" and "Your
+// earlier notes", which read as two different kinds of thing.
+const AREA_LABEL = Object.freeze({ recent: "Last two weeks of class", earlier: "Older classes" });
+
 
 // A typed answer counts as recalled unless the user gave up ("revealed") or
 // got it wrong. Shared by the Continue button and by tapping the card, which
@@ -664,7 +661,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // What the checkpoint after a block shows. Computed once when the block
   // ends (and again if the deck changes under it), never per answer.
-  //   changes   the areas the block moved: seen, understood and said deltas
+  //   changes   the areas the block moved: seen and about-remembered deltas
   //   next      the block Continue would deal, to say "reviews only" or
   //             "all caught up" before the student presses anything
   //   waiting   inside a lesson, cards due today elsewhere in the deck
@@ -1417,12 +1414,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     }
   };
 
-  // Every card back to not yet seen, both ways round, and the legacy tally
-  // with it. Until 2026-09-14 this cleared only that tally (card_progress):
+  // Every card back to not yet seen, both ways round, the legacy tally, and
+  // the streak. Until 2026-09-14 this cleared only that tally (card_progress):
   // every card kept its FSRS schedule, so the button reset nothing a student
-  // could see. The record of past answers (card_reviews) is history, and stays.
+  // could see. The owner decided the same day that the streak goes too. The
+  // record of past answers (card_reviews) is history, and stays.
   const resetAll = async () => {
-    if (!confirm("Reset all of your progress? Every card goes back to not yet seen, both ways round. This can't be undone.")) return;
+    if (!confirm("Reset all of your progress? Every card goes back to not yet seen, and your streak starts again. This can't be undone.")) return;
     const reset = resetColumns();
     const { error } = await supabase.from("user_cards").update(reset).eq("user_id", user.id);
     if (error) {
@@ -1435,6 +1433,18 @@ export default function FlashcardApp({ user, onSignOut }) {
     countFailed();
     patchAllDeckCards(reset);
     await resetAllProgress();
+    // The streak. Asked to return what it deleted: a delete that row security
+    // refuses reports success and removes nothing, and the streak would
+    // quietly survive the reset.
+    const hadDays = reviewDates.size > 0;
+    const { data: cleared, error: streakError } = await supabase
+      .from("user_review_dates").delete().eq("user_id", user.id).select("review_date");
+    if (streakError || (hadDays && !(cleared || []).length)) {
+      console.error("Clearing the streak failed:", streakError || "no rows deleted");
+      alert("Your cards were reset, but your streak couldn't be cleared.");
+    } else {
+      setReviewDates(new Set());
+    }
     resetSession();
   };
 
@@ -2274,13 +2284,26 @@ export default function FlashcardApp({ user, onSignOut }) {
       .sort((a, b) => b._lapses - a._lapses || b._difficulty - a._difficulty)
       .slice(0, 4);
 
-    // Seen / about understood and said / not yet seen, for the whole deck and each area.
+    // Seen / about remembered / not yet seen, for the whole deck and each area.
     const areas = progressByArea(userCards, now);
+    // Which classes each group holds, in dates: the line between them moves
+    // with the calendar, and a card changes group when its class turns two
+    // weeks old, so the page says where the line is today.
+    const areaSpan = (() => {
+      const { since, earliestOlder } = areaDates(userCards, now);
+      const day = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "long" });
+      const month = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+      const dayBefore = (() => { const d = new Date(`${since}T12:00:00`); d.setDate(d.getDate() - 1); return localISODate(d); })();
+      return {
+        recent: `Classes since ${day(since)}`,
+        earlier: earliestOlder ? `${month(earliestOlder)} to ${day(dayBefore)}` : `Classes before ${day(since)}`,
+      };
+    })();
     const areaRows = [
       ...LESSONS.filter((l) => areas.lessons[l.id]?.total > 0)
         .map((l) => ({ key: `lesson:${l.id}`, label: l.title, sub: "Lesson", summary: areas.lessons[l.id] })),
-      { key: "recent", label: "Your recent classes", sub: "From the last two weeks of notes", summary: areas.recent },
-      { key: "earlier", label: "Your earlier notes", sub: "Everything older", summary: areas.earlier },
+      { key: "recent", label: AREA_LABEL.recent, sub: areaSpan.recent, summary: areas.recent },
+      { key: "earlier", label: AREA_LABEL.earlier, sub: areaSpan.earlier, summary: areas.earlier },
     ].filter((r) => r.summary.total > 0);
 
     // Coming up. Today's work is split in two: cards whose date is today, and
@@ -2339,11 +2362,11 @@ export default function FlashcardApp({ user, onSignOut }) {
       };
     }).filter((t) => t.summary.total > 0);
 
-    // One bar, three bands: understood (solid), seen but not currently
-    // understood (light), not yet seen (the empty track).
+    // One bar, three bands: remembered (solid), seen but not currently
+    // remembered (light), not yet seen (the empty track).
     const bands = (summary, color, height) => {
       const total = Math.max(summary.total, 1);
-      const rem = Math.min(summary.understood, summary.seen);
+      const rem = Math.min(summary.remembered, summary.seen);
       return (
         <div style={{ ...S.bandTrack, height }}>
           <div style={{ width: `${(rem / total) * 100}%`, background: color }} />
@@ -2352,7 +2375,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       );
     };
     const figures = (summary) =>
-      `${summary.seen.toLocaleString()} seen · ${estimates(summary)} · ${summary.total.toLocaleString()} cards`;
+      `${summary.seen.toLocaleString()} seen · about ${aboutRemembered(summary).toLocaleString()} remembered · ${summary.total.toLocaleString()} cards`;
 
     return (
       <div style={shellStyle}>
@@ -2380,28 +2403,23 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
 
-            {/* All cards: seen / about understood and said / not yet seen */}
+            {/* All cards: seen / about remembered / not yet seen */}
             <div style={S.pipelineCard} data-stats-all>
               <div style={S.pipeTitle}>All your cards</div>
               {bands(areas.all, T.color.primary, 28)}
               <div style={S.pipeLegend}>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />about {about(areas.all.understood).toLocaleString()} you'd understand</div>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary, opacity:0.3}} />{Math.max(0, areas.all.seen - about(areas.all.understood)).toLocaleString()} seen, not currently understood</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />about {aboutRemembered(areas.all).toLocaleString()} remembered</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary, opacity:0.3}} />{Math.max(0, areas.all.seen - aboutRemembered(areas.all)).toLocaleString()} seen, not currently remembered</div>
                 <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.surfaceHigh}} />{areas.all.notSeen.toLocaleString()} not yet seen</div>
               </div>
-              {areas.all.twoWay > 0 && (
-                <p style={S.statsSayLine} data-stats-say>
-                  About {about(areas.all.said).toLocaleString()} of your {areas.all.twoWay.toLocaleString()} words and phrases you could say, asked in English.
-                </p>
-              )}
-              <p style={S.statsFootnote}>Both are estimates. Understand is how many cards you would probably get right today shown in French; say is how many words and phrases you would get right asked in English. They rise when you study and drift down when you don't.</p>
+              <p style={S.statsFootnote}>A word or phrase counts as remembered once you'd get it right from French and from English. It's an estimate: it rises when you study and falls when you don't.</p>
             </div>
 
             {/* Your progress: each lesson, recent classes, earlier notes */}
             {areaRows.length > 0 && (
               <div style={{marginTop:24}} data-stats-areas>
                 <h3 style={S.statsSectionTitle}>Your progress</h3>
-                <p style={S.statsSectionSub}>Lessons, and your own notes split by when the class was.</p>
+                <p style={S.statsSectionSub}>Lessons, and the cards from your own classes, split by how long ago the class was.</p>
                 <div style={S.areaList}>
                   {areaRows.map((r) => (
                     <div key={r.key} style={S.areaRow}>
@@ -2453,7 +2471,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <div style={S.typeSub}>
                         {t.summary.seen === 0
                           ? `${t.summary.total.toLocaleString()} card${t.summary.total === 1 ? "" : "s"} · none studied yet`
-                          : `${t.accuracy === null ? "" : "right last time · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · ${estimates(t.summary)}`}
+                          : `${t.accuracy === null ? "" : "right last time · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · about ${aboutRemembered(t.summary).toLocaleString()} remembered`}
                       </div>
                       <div style={{marginTop:10}}>{bands(t.summary, TYPE_COLOR[t.type], 4)}</div>
                     </div>
@@ -2523,8 +2541,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     ? `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}, ${stats.firstGot} right first time`
     : `${stats.answered} ${stats.answered === 1 ? "answer" : "answers"}`;
   const areaLabel = (area) =>
-    area === "recent" ? "Your recent classes"
-      : area === "earlier" ? "Your earlier notes"
+    area === "recent" ? AREA_LABEL.recent
+      : area === "earlier" ? AREA_LABEL.earlier
       : LESSONS.find((l) => `lesson:${l.id}` === area)?.title || "Lesson";
   const moreOrFewer = (n, word) => `about ${Math.abs(n)} ${n >= 0 ? "more" : "fewer"} ${word}`;
 
@@ -2607,13 +2625,12 @@ export default function FlashcardApp({ user, onSignOut }) {
           {/* The lesson's progress. Read when the block was dealt and again at
               its checkpoint — never per answer, because a figure that moves
               on every card reads as noise rather than progress. "About",
-              because both figures are estimates. */}
+              because remembered is an estimate. */}
           {lessonFilter !== "all" && (() => {
             const snap = (sessionDone && checkpoint ? checkpoint.after : blockStartRef.current)?.lessons?.[lessonFilter];
             return snap ? (
               <div style={S.lessonProgress} data-lesson-progress>
-                about {about(snap.understood).toLocaleString()} of {snap.total.toLocaleString()} you'd understand
-                {snap.twoWay > 0 ? ` · about ${about(snap.said).toLocaleString()} you could say` : ""}
+                about {aboutRemembered(snap).toLocaleString()} of {snap.total.toLocaleString()} remembered
               </div>
             ) : null;
           })()}
@@ -2735,12 +2752,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                         <div style={S.checkpointAreaDelta}>
                           {[
                             d.seenDelta !== 0 && `${d.seenDelta} more seen`,
-                            d.understoodDelta !== 0 && moreOrFewer(d.understoodDelta, "you'd understand"),
-                            d.saidDelta !== 0 && moreOrFewer(d.saidDelta, "you could say"),
+                            d.rememberedDelta !== 0 && moreOrFewer(d.rememberedDelta, "remembered"),
                           ].filter(Boolean).join(" · ")}
                         </div>
                         <div style={S.checkpointAreaTotal}>
-                          {d.after.seen.toLocaleString()} of {d.after.total.toLocaleString()} seen · {estimates(d.after)}
+                          {d.after.seen.toLocaleString()} of {d.after.total.toLocaleString()} seen · about {aboutRemembered(d.after).toLocaleString()} remembered
                         </div>
                       </div>
                     ))}
@@ -4119,7 +4135,6 @@ const S = {
   // Section titles
   bandTrack: { display:"flex", borderRadius:6, overflow:"hidden", background:T.color.surfaceHigh, marginBottom:10 },
   statsFootnote: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"12px 0 0", lineHeight:1.5 },
-  statsSayLine: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurface, margin:"12px 0 0", lineHeight:1.5 },
   areaList: { display:"flex", flexDirection:"column", gap:10 },
   areaRow: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"14px 18px", border:"1px solid rgba(3,22,50,0.06)" },
   areaHead: { display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:12, marginBottom:10, flexWrap:"wrap" },

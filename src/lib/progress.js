@@ -1,26 +1,33 @@
-// How far a student has got, in the words the app uses everywhere: SEEN,
-// ABOUT N YOU'D UNDERSTAND, ABOUT N YOU COULD SAY, and NOT YET SEEN. Pure: no
-// React, no Supabase.
+// How far a student has got, in the three words the app uses everywhere:
+// SEEN, ABOUT N REMEMBERED, and NOT YET SEEN. Pure: no React, no Supabase.
 //
 // One calculation, shared by the checkpoint after each block, the lesson top
 // bar and the Stats page, so a figure can never disagree between screens.
 //
 //   seen         cards answered at least once, either way round. Only ever
 //                goes up.
-//   understood   the sum, over the cards, of FSRS's own estimate that the
-//                student would recall each one right now shown in French
-//                (retrievability of the "fr" direction). That sum is the
-//                expected number currently known. It rises with study and
-//                drifts down without it, because that is what memory does.
-//   said         the same for words and phrases asked in English — "apple →
-//                ?" — the only cards that are asked that way. `twoWay` is how
-//                many of those there are, so a set with none (grammar) can
-//                leave the figure out rather than show "about 0".
+//   remembered   the sum, over the cards, of the chance the student would get
+//                each one right now — for a word or phrase, right BOTH ways:
+//                from French and from English. That sum is the expected number
+//                currently known. It rises with study and drifts down without
+//                it, because that is what memory does. Shown as "about N",
+//                never a bare number — it is an estimate, and saying so is what
+//                stops it becoming the next "mastered".
 //   notSeen      what's left to learn.
 //
-// Both estimates are shown as "about N", never a bare number — saying so is
-// what stops one becoming the next "mastered". Until 2026-09-14 there was one
-// figure, "remembered", fed by both directions' answers at once.
+// A word counts as remembered only as far as it is remembered both ways: the
+// owner's definition (2026-09-14) is that a student understands the word in
+// French and in English. Each way has its own FSRS state, and students never
+// see the split — only this one figure. The chance of both is the product of
+// the two retrievabilities. The two are not independent (knowing one way helps
+// the other), so the product errs low; the true chance lies between it and the
+// smaller of the two. Low is the safer error. A word met only one way so far
+// counts for nothing yet. Grammar and pronunciation cards are asked one way
+// and count as that way's chance.
+//
+// For one day in between, 2026-09-14, this was two figures shown to students,
+// "you'd understand" (French side) and "you could say" (English side). The
+// owner rejected both the split and the words.
 //
 // Retrievability is derived, not stored: it changes continuously with
 // elapsed time, so compute it when a figure is shown, not on every answer.
@@ -49,34 +56,33 @@ export function retrievability(card, now = Date.now()) {
   return Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : 0;
 }
 
-// Seen / understood / said / not yet seen for any set of cards.
+// The chance, 0 to 1, that the student would get this card right now: both
+// ways round for a word or phrase, as written for anything else.
+export function rememberedChance(card, now = Date.now()) {
+  const fr = retrievability(sideOf(card, "fr"), now);
+  return isTwoWay(card) ? fr * retrievability(sideOf(card, "en"), now) : fr;
+}
+
+// Seen / remembered / not yet seen for any set of cards.
 export function summarize(cards, now = Date.now()) {
   let seen = 0;
-  let understood = 0;
-  let said = 0;
-  let twoWay = 0;
+  let remembered = 0;
   for (const c of cards) {
-    const both = isTwoWay(c);
-    if (both) twoWay++;
     if (!isSeen(c)) continue;
     seen++;
-    understood += retrievability(sideOf(c, "fr"), now);
-    if (both) said += retrievability(sideOf(c, "en"), now);
+    remembered += rememberedChance(c, now);
   }
   return {
     total: cards.length,
     seen,
     // Kept unrounded so a before/after difference is honest; round only when
-    // displaying, via about().
-    understood,
-    said,
-    twoWay,
+    // displaying, via aboutRemembered().
+    remembered,
     notSeen: cards.length - seen,
   };
 }
 
-// An estimate as it is shown: a whole number of cards.
-export const about = (n) => Math.round(n);
+export const aboutRemembered = (summary) => Math.round(summary.remembered);
 
 // Which area a card's progress counts towards: its lesson, the student's
 // recent classes (the last two weeks, the same window new cards use), or
@@ -88,6 +94,19 @@ export function areaOf(card, now = Date.now()) {
   if (days.length === 0) return "earlier";
   const latest = [...days].sort()[days.length - 1];
   return latest >= localISODateDaysAgo(RECENT_DAYS, new Date(now)) ? "recent" : "earlier";
+}
+
+// Where the line between the two class groups falls today, and the earliest
+// class in the older group (null if it has none), both as YYYY-MM-DD. A card
+// is in the recent group when its latest class is on or after `since`.
+export function areaDates(cards, now = Date.now()) {
+  const since = localISODateDaysAgo(RECENT_DAYS, new Date(now));
+  let earliestOlder = null;
+  for (const c of cards) {
+    if (areaOf(c, now) !== "earlier") continue;
+    for (const d of classDaysOf(c)) if (earliestOlder === null || d < earliestOlder) earliestOlder = d;
+  }
+  return { since, earliestOlder };
 }
 
 // Every area's figures in one pass over the deck, plus the whole deck.
@@ -115,8 +134,8 @@ export function progressByArea(cards, now = Date.now()) {
 
 // What changed between two progressByArea() snapshots, for the areas where
 // anything did. The checkpoint shows these: "L'impératif: 8 more seen, about
-// 5 more you'd understand".
-const EMPTY = Object.freeze({ total: 0, seen: 0, understood: 0, said: 0, twoWay: 0, notSeen: 0 });
+// 5 more remembered".
+const EMPTY = Object.freeze({ total: 0, seen: 0, remembered: 0, notSeen: 0 });
 
 export function progressChanges(before, after) {
   const pairs = [
@@ -133,8 +152,7 @@ export function progressChanges(before, after) {
       area,
       after: a,
       seenDelta: a.seen - b.seen,
-      understoodDelta: about(a.understood) - about(b.understood),
-      saidDelta: about(a.said) - about(b.said),
+      rememberedDelta: aboutRemembered(a) - aboutRemembered(b),
     }))
-    .filter((d) => d.seenDelta !== 0 || d.understoodDelta !== 0 || d.saidDelta !== 0);
+    .filter((d) => d.seenDelta !== 0 || d.rememberedDelta !== 0);
 }

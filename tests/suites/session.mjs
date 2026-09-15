@@ -330,7 +330,7 @@ console.log("\n  Continue deals the next block, and never the same card twice");
   ck("a 110-card backlog deals a block of 50", b1?.total === 50, JSON.stringify(b1));
   ck("after 50 answers, the checkpoint", !!(await page.$("[data-checkpoint]")));
   ck("says how the block went", await has(/50 answers, 50 right first time/), "expected \"50 answers, 50 right first time\"");
-  ck("and what it moved", await has(/Your earlier notes/));
+  ck("and what it moved", await has(/Older classes/));
   ck("the count has no full stop after it", !(await has(/right first time\./)));
   ck("and offers Continue", await clickContinue());
 

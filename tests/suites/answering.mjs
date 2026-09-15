@@ -111,16 +111,18 @@ console.log("\n  a mistaken grade can be corrected with Previous card");
   const t = await open();
   await t.page.keyboard.press(" "); await t.wait(600);
   await t.click("Got It"); await t.wait(500);
-  const firstDue = t.writes[0]?.body.next_due_at;
+  // The first card may be asked either way round; read whichever side it wrote.
+  const field = (w, f) => w?.body[f] ?? w?.body[`en_${f}`];
+  const firstDue = field(t.writes[0], "next_due_at");
   await t.click("Previous card"); await t.wait(500);
   await t.page.keyboard.press(" "); await t.wait(600);
   await t.click("Again"); await t.wait(500);
   ck("the correction is recorded", JSON.stringify(t.grades()) === "[true,false]", JSON.stringify(t.grades()));
   ck("recomputed from the card as it was, so the miss brings it back sooner",
-     !!firstDue && new Date(t.writes[1].body.next_due_at) < new Date(firstDue),
-     `${firstDue} → ${t.writes[1]?.body.next_due_at}`);
+     !!firstDue && new Date(field(t.writes[1], "next_due_at")) < new Date(firstDue),
+     `${firstDue} → ${field(t.writes[1], "next_due_at")}`);
   ck("and reps counts one review for the day, not two",
-     t.writes[1]?.body.reps === t.writes[0]?.body.reps, `${t.writes[0]?.body.reps} → ${t.writes[1]?.body.reps}`);
+     field(t.writes[1], "reps") === field(t.writes[0], "reps"), `${field(t.writes[0], "reps")} → ${field(t.writes[1], "reps")}`);
   const c = await sessionCounter(t.page);
   ck("the correction did not add an answer to the block", c?.index === 2, JSON.stringify(c));
   await t.browser.close();
@@ -258,11 +260,32 @@ console.log("\n  changing direction re-deals the rest of the block, without a ne
   await t.browser.close();
 }
 
-console.log("\n  Reset all progress resets both ways round, on every card");
+console.log("\n  Reset all progress resets both ways round, on every card, and the streak");
 {
   const deck = twoWayDeck();
+  // Three days studied, today among them, so the streak reads 3.
+  const day = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  let days = [0, 1, 2].map((n) => ({ review_date: day(n) }));
+  const streakDeletes = [];
+  const dialogs = [];
   const t = await open({ rows: deck });
+  t.page.on("dialog", (d) => dialogs.push(d.message()));
+  await t.page.route("**/rest/v1/user_review_dates*", async (r) => {
+    const m = r.request().method();
+    if (m === "GET") return r.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify(days) });
+    if (m === "DELETE") {
+      streakDeletes.push(r.request().url());
+      const gone = days; days = [];
+      return r.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify(gone) });
+    }
+    return r.continue();
+  });
+  await t.page.reload({ waitUntil: "commit" });
+  await t.page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
+  await t.wait(1500);
   await gotoStats(t.page);
+  const streakNow = () => t.page.evaluate(() => Number(/(\d+)\s*day streak/i.exec(document.body.innerText)?.[1]));
+  ck("before: a three-day streak", (await streakNow()) === 3, `${await streakNow()}`);
   await t.click("Reset all progress"); await t.wait(1500);
   const reset = t.writes.find((w) => /user_id=eq\./.test(w.url));
   const expected = [...SIDE_FIELDS, ...EN_FIELDS];
@@ -283,6 +306,32 @@ console.log("\n  Reset all progress resets both ways round, on every card");
   const all = await t.page.evaluate(() => document.querySelector("[data-stats-all]")?.innerText.replace(/\s+/g, " ") || "");
   ck("and afterwards every card reads not yet seen", all.includes(`${deck.length} not yet seen`), all);
   ck("no answer record was removed", !t.reviews.some((r) => r.method === "DELETE"));
+  ck("the streak is cleared: this student's days are deleted", streakDeletes.length === 1 && /user_id=eq\./.test(streakDeletes[0]),
+     JSON.stringify(streakDeletes));
+  ck("and reads 0", (await streakNow()) === 0, `${await streakNow()}`);
+  ck("the warning never mentions which way round a card is asked",
+     dialogs.length > 0 && dialogs.every((m) => !/both ways|round|French|English/i.test(m)), JSON.stringify(dialogs));
+  await t.browser.close();
+}
+
+console.log("\n  a streak the database silently refuses to clear is reported, not hidden");
+{
+  // Row security that forbids the delete answers success with nothing deleted.
+  const day0 = new Date();
+  const iso = `${day0.getFullYear()}-${String(day0.getMonth() + 1).padStart(2, "0")}-${String(day0.getDate()).padStart(2, "0")}`;
+  const dialogs = [];
+  const t = await open({ rows: twoWayDeck() });
+  t.page.on("dialog", (d) => dialogs.push(d.message()));
+  await t.page.route("**/rest/v1/user_review_dates*", (r) =>
+    r.request().method() === "GET"
+      ? r.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify([{ review_date: iso }]) })
+      : r.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: "[]" }));
+  await t.page.reload({ waitUntil: "commit" });
+  await t.page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
+  await t.wait(1500);
+  await gotoStats(t.page);
+  await t.click("Reset all progress"); await t.wait(1500);
+  ck("the student is told the streak wasn't cleared", dialogs.some((m) => /streak couldn't be cleared/.test(m)), JSON.stringify(dialogs));
   await t.browser.close();
 }
 

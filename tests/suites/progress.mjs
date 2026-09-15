@@ -1,10 +1,9 @@
-// Seen, about N you'd understand, about N you could say, not yet seen — the one
-// progress calculation every screen reads. No browser: src/lib/progress.js is
-// pure.
+// Seen, about N remembered, not yet seen — the one progress calculation every
+// screen reads. No browser: src/lib/progress.js is pure.
 process.env.TZ = "America/New_York";
 
 import {
-  retrievability, summarize, about, areaOf, progressByArea, progressChanges,
+  retrievability, summarize, aboutRemembered, areaOf, progressByArea, progressChanges, areaDates,
 } from "../../src/lib/progress.js";
 import { localISODateDaysAgo } from "../../src/lib/studyDay.js";
 import { checker } from "../check.mjs";
@@ -41,34 +40,40 @@ console.log("\n  the estimate is FSRS's own recall probability right now");
      retrievability({ fsrs_state: 2, stability: null, last_review: null }, NOW) === 0);
 }
 
-console.log("\n  seen, about N you'd understand, not yet seen");
+console.log("\n  seen, about N remembered, not yet seen");
 {
   const cards = [seenCard(60, 60), seenCard(60, 60), seenCard(60, 0), unseen(), unseen()];
   const s = summarize(cards, NOW);
   ck("seen counts cards answered at least once", s.seen === 3, `${s.seen}`);
   ck("not yet seen is the rest", s.notSeen === 2 && s.total === 5, JSON.stringify(s));
-  ck("understood is the sum of the estimates", close(s.understood, 0.9 + 0.9 + 1, 0.02), s.understood.toFixed(3));
-  ck("shown as a whole number of cards", about(s.understood) === 3, `${about(s.understood)}`);
+  ck("remembered is the sum of the estimates", close(s.remembered, 0.9 + 0.9 + 1, 0.02), s.remembered.toFixed(3));
+  ck("shown as a whole number of cards", aboutRemembered(s) === 3, `${aboutRemembered(s)}`);
   const empty = summarize([], NOW);
-  ck("an empty area is all zeros", empty.total === 0 && empty.seen === 0 && empty.understood === 0 && empty.said === 0);
+  ck("an empty area is all zeros", empty.total === 0 && empty.seen === 0 && empty.remembered === 0);
 }
 
-console.log("\n  understand and say are counted apart, one from each way round");
+// The owner's definition (2026-09-14): a word or phrase is remembered when the
+// student would get it right from French AND from English. Students see one
+// figure; the two ways are only ever combined.
+console.log("\n  a word counts as remembered only as far as it is remembered both ways");
 {
-  // A word known shown in French (stability 60, seen 60 days ago: 90%) and
-  // never asked in English; a word asked only in English (just now: ~100%);
-  // a grammar card, which is never asked in English.
-  const recognised = seenCard(60, 60, { cat: "vocab" });
-  const producedOnly = unseen({ cat: "vocab", ...asEnglishSide(seenCard(60, 0)) });
+  const known = (days) => seenCard(60, days);                // 60, 60 → 90%; 60, 0 → ~100%
+  const both = seenCard(60, 60, { cat: "vocab", ...asEnglishSide(known(60)) });
+  const frOnly = seenCard(60, 0, { cat: "vocab" });
+  const enOnly = unseen({ cat: "vocab", ...asEnglishSide(known(0)) });
   const grammar = seenCard(60, 60, { cat: "gram" });
-  const s = summarize([recognised, producedOnly, grammar], NOW);
-  ck("seen either way counts as seen", s.seen === 3, `${s.seen}`);
-  ck("understood sums the French-side estimates only", close(s.understood, 0.9 + 0.9, 0.02), s.understood.toFixed(3));
-  ck("said sums the English-side estimates only", close(s.said, 1, 0.02), s.said.toFixed(3));
-  ck("and knows how many cards can be asked in English at all", s.twoWay === 2, `${s.twoWay}`);
-  const grammarOnly = summarize([grammar], NOW);
-  ck("a grammar card's English-side columns, if any, are never counted",
-     summarize([{ ...grammar, ...asEnglishSide(seenCard(60, 0)) }], NOW).said === 0 && grammarOnly.twoWay === 0);
+  const one = (c) => summarize([c], NOW);
+  ck("known 90% each way: counts as the chance of both, 81%", close(one(both).remembered, 0.81, 0.02), one(both).remembered.toFixed(3));
+  ck("never below what the two ways allow, never above the weaker way",
+     one(both).remembered <= 0.9 + 1e-9, one(both).remembered.toFixed(3));
+  ck("met only in French, however well: seen, but nothing remembered yet",
+     one(frOnly).seen === 1 && one(frOnly).remembered === 0, JSON.stringify(one(frOnly)));
+  ck("met only in English: the same", one(enOnly).seen === 1 && one(enOnly).remembered === 0, JSON.stringify(one(enOnly)));
+  ck("a grammar card, asked one way, counts as that way", close(one(grammar).remembered, 0.9, 0.02), one(grammar).remembered.toFixed(3));
+  ck("and never reads English-side columns it doesn't use",
+     close(one({ ...grammar, ...asEnglishSide(unseen()) }).remembered, 0.9, 0.02));
+  const s = summarize([both, frOnly, enOnly, grammar], NOW);
+  ck("a set adds them up: 0.81 + 0 + 0 + 0.9", close(s.remembered, 1.71, 0.03) && s.seen === 4, JSON.stringify(s));
 }
 
 console.log("\n  which area a card counts towards");
@@ -82,6 +87,17 @@ console.log("\n  which area a card counts towards");
   ck("a tutor card added yesterday is recent",
      areaOf({ source: "tutor-chat", dates: [], created_at: new Date(NOW - DAY).toISOString() }, NOW) === "recent");
   ck("a card with no date at all is earlier", areaOf(unseen({ dates: [] }), NOW) === "earlier");
+}
+
+console.log("\n  where the line between the two class groups falls");
+{
+  const since = localISODateDaysAgo(14, new Date(NOW));
+  const cards = [unseen({ dates: [since] }), unseen({ dates: ["2025-05-13", "2026-03-01"] }), unseen({ dates: ["2025-11-02"] })];
+  const d = areaDates(cards, NOW);
+  ck("the recent group starts 14 days back, and a class on that day is in it",
+     d.since === since && areaOf(cards[0], NOW) === "recent", JSON.stringify(d));
+  ck("the older group's first class is the earliest class of any card in it", d.earliestOlder === "2025-05-13", JSON.stringify(d));
+  ck("with no older cards, there is no first class", areaDates([cards[0]], NOW).earliestOlder === null);
 }
 
 console.log("\n  what a block changed, per area");
@@ -98,8 +114,7 @@ console.log("\n  what a block changed, per area");
   ck("only the area the block touched is reported", changes.length === 1 && changes[0].area === "lesson:imperatif",
      JSON.stringify(changes.map((c) => c.area)));
   ck("8 more seen", changes[0]?.seenDelta === 8, `${changes[0]?.seenDelta}`);
-  ck("about 8 more you'd understand, just after answering them", changes[0]?.understoodDelta === 8, `${changes[0]?.understoodDelta}`);
-  ck("and none more you could say: nothing was asked in English", changes[0]?.saidDelta === 0, `${changes[0]?.saidDelta}`);
+  ck("about 8 more remembered, just after answering them", changes[0]?.rememberedDelta === 8, `${changes[0]?.rememberedDelta}`);
   ck("the whole deck is summed too", after.all.total === 14 && after.all.seen === 9, JSON.stringify(after.all));
 }
 

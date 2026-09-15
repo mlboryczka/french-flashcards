@@ -183,7 +183,7 @@ can say the next blocks are reviews only.
   `src/data/lessons/index.js`. The array lists every rule before any exercise;
   `teachingOrder` puts each exercise straight after its rule.
 - **Otherwise, from the student's notes:** recent classes first (latest class
-  date within 14 days), newest class first; then earlier notes, most classes
+  date within 14 days — the Stats group *Last two weeks of class*), newest class first; then older classes (*Older classes*), most classes
   first (`dates.length`), older first class on a tie; then undated cards.
   Tutor chat cards have no class, so `classDaysOf` dates them by
   `created_at` — recent for two weeks, then a word seen once.
@@ -218,8 +218,8 @@ After the last card of a block, `data-checkpoint` replaces the card (it
 replaced "Session complete!" and the New Session button). It says how the
 block went ("50 answers, 43 right first time", no full stop — answers because a block
 includes its retries, right first time counting first answers of the day in
-either mode), what each area moved (`progressChanges`: lesson, recent classes,
-earlier notes), and then either:
+either mode), what each area moved (`progressChanges`: lesson, last two weeks
+of class, older classes), and then either:
 
 - **Continue**, which deals the next block;
 - **"You're all caught up"**, with no Continue, when nothing is due and nothing
@@ -1031,31 +1031,44 @@ ways, and where they disagree, this paragraph wins:
 
 - **The completion screen is a checkpoint after every block of 50**, not one
   end-of-session screen. See *The checkpoint* under *How a session is built*.
-- **Since 2026-09-14 "remembered" is two figures**, because each way round a
-  word is asked has its own schedule: **about N you'd understand** (Σ
-  retrievability of the French-side state, every card) and **about N you could
-  say** (Σ of the English-side state, words and phrases only — `twoWay` in
-  `summarize`, and the figure is left out of any set with none, so grammar never
-  reads "about 0 you could say"). **Seen** is a card answered either way.
-  `about()` rounds either. The bar's solid band is understood.
-- **The lesson top bar reads "about 43 of 108 you'd understand · about 12 you
-  could say"**, with the "about" the wording rules below insist on.
+- **Since 2026-09-14 a word counts as remembered only both ways.** Each way
+  round has its own schedule, and students never see the split — the owner's
+  rule: a positive assessment means the student understands the word in French
+  and in English. `rememberedChance` is the product of the two retrievabilities
+  for a word or phrase (which errs low: the ways aren't independent, so the true
+  chance lies between the product and the weaker way — low is the safer error),
+  and the one retrievability for grammar and pronunciation. A word met one way
+  only counts for nothing yet, so "remembered" lags "seen" for new words by at
+  least a day. **Seen** is a card answered either way. For a few hours the same
+  day it was two figures shown to students, "you'd understand" and "you could
+  say"; the owner rejected both the split and the words ("say" read as
+  speaking). Don't show students the directions.
+- **The lesson top bar reads "about 43 of 108 remembered"**, with the "about"
+  the wording rules below insist on.
 - **The Stats page** (`data-stats-all`, `data-stats-areas`,
   `data-stats-coming-up`) has: Today and Right first time today, counted off
   each card's `last_review` — exact, because FSRS gets one answer per card per
   day; the streak; one three-band bar for the whole deck; *Your progress*, a
-  row per lesson, recent classes and earlier notes; *Coming up*, which says
+  row per lesson, then **Last two weeks of class** and **Older classes** — each
+  with its dates beneath ("Classes since 31 August", "May 2025 to 30 August",
+  from `areaDates`), because the line between them moves daily and a card changes
+  group when its class turns two weeks old. They were "Your recent classes" and
+  "Your earlier notes", which read as two kinds of thing when both are the same
+  notebook; *Coming up*, which says
   how many cards came due today and, separately, how many older cards are
   still waiting from earlier days, then the cards due on each of the next
   seven days — every one of these counted per way round, so "Today" is
-  answers, not cards; *By type* with seen / about understood and said in place
+  answers, not cards; *By type* with seen / about remembered in place
   of "mastered", and "right last time" — of the cards seen, how many were right
   on their last answer, off the same FSRS rows — in place of the lifetime
   `card_progress` accuracy; Hardest cards, which adds up forgetting either way
   round; and Reset all progress, which since 2026-09-14 sets both directions'
   schedules on every card back to new (one update, `resetColumns()`) as well as
-  clearing `card_progress` — before, it cleared only that legacy tally and every
-  schedule survived. It leaves `card_reviews` alone. Guarded by the `stats`
+  clearing `card_progress` and the streak (`user_review_dates`, deleted with
+  `.select()` so a delete row security refuses — success, nothing deleted — is
+  reported rather than hidden) — before, it cleared only that legacy tally and
+  every schedule survived. It leaves `card_reviews` alone. Its confirmation and
+  messages never mention directions. Guarded by the `stats`
   suite, whose expected figures are counted from its own fixture.
 - **No finish estimates.** See the open item.
 
@@ -1186,7 +1199,7 @@ check on whether FSRS is calibrated for you. It exists per session as
 
 Retrievability inherited the direction problem — one number per card covering
 both FR→EN and EN→FR — until 2026-09-14, when each direction got its own state
-and the figure became understand and say (see Status above).
+and "remembered" became remembered both ways (see Status above).
 
 ---
 
@@ -2266,6 +2279,24 @@ live table declares NOT NULL (`USER_CARDS_NOT_NULL` in the harness, read off
 its schema), and the reset check fails against the old code the way the live
 app did. **When testing a write, check it against the live table's
 constraints, not against a table rebuilt from the migrations.**
+
+**The reset then worked** — checked read-only: all 3,929 cards new both ways,
+`card_progress` empty — **but not the streak**, which it never touched. The
+owner decided it should, and that directions stay out of sight: after one
+block, "about 10 more you'd understand · about 12 more you could say" read as
+wrong ("I don't know what 'you could say' means"). Proposals of "remembered
+French → English", and of "right shown in French / shown in English", were
+both turned down: the split works in the background, and a positive
+assessment means the student knows the word both ways. So progress is one
+figure again, "about N remembered", counting a word only as far as it is
+remembered both ways. The two class groups were renamed at the same time, with
+their dates shown. `stats` checks the figure can't count a word seen one way,
+that nothing on the page names a direction, and the group dates; `lessons`
+that a first block moves "remembered" by its grammar cards alone; `answering`
+that Reset clears the streak and says so when a delete is silently refused.
+Breaking each — counting the French side alone, skipping the streak delete —
+fails those checks. Also fixed: `answering`'s correction check read only
+French-side fields, and failed whenever its first card came up in English.
 
 ## Open items
 
