@@ -109,14 +109,23 @@ console.log("\n  an accepted dispute is recorded as right");
 console.log("\n  a mistaken grade can be corrected with Previous card");
 {
   const t = await open();
-  await t.page.keyboard.press(" "); await t.wait(600);
-  await t.click("Got It"); await t.wait(500);
+  // Each step waits for what it needs on screen rather than a fixed time: this
+  // is the first browser suite, often run against a dev server still warming
+  // up, and a click on a button not yet rendered misses silently.
+  const button = (label) => t.page.waitForSelector(`button:text-is("${label}")`, { timeout: 8000 }).catch(() => null);
+  await t.page.keyboard.press(" "); await button("Got It");
+  await t.click("Got It");
+  await t.page.waitForFunction(() => /Card 2 of/i.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {});
+  await t.wait(300);
   // The first card may be asked either way round; read whichever side it wrote.
   const field = (w, f) => w?.body[f] ?? w?.body[`en_${f}`];
   const firstDue = field(t.writes[0], "next_due_at");
-  await t.click("Previous card"); await t.wait(500);
-  await t.page.keyboard.press(" "); await t.wait(600);
-  await t.click("Again"); await t.wait(500);
+  await t.click("Previous card");
+  await t.page.waitForFunction(() => /Card 1 of/i.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {});
+  await t.page.keyboard.press(" "); await button("Again");
+  await t.click("Again");
+  await t.page.waitForFunction(() => /Card 2 of/i.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {});
+  await t.wait(300);
   ck("the correction is recorded", JSON.stringify(t.grades()) === "[true,false]", JSON.stringify(t.grades()));
   ck("recomputed from the card as it was, so the miss brings it back sooner",
      !!firstDue && new Date(field(t.writes[1], "next_due_at")) < new Date(firstDue),
