@@ -9,6 +9,7 @@ import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./lib/ca
 import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 import { classifyCard, CARD_TYPES, TYPE_LABEL, TYPE_COLOR } from "./lib/cardTypes";
 import { useUserDeck } from "./useUserDeck";
+import { useCahierSync } from "./useCahierSync";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
@@ -239,6 +240,24 @@ const slotKeyOf = (entry) => (entry._retry ? `retry:${entry._rid}` : `card:${ite
 // earlier notes", which read as two different kinds of thing.
 const AREA_LABEL = Object.freeze({ recent: "Last two weeks of class", earlier: "Older classes" });
 
+// "Your class of 24 September: 31 new cards" — said in classes, because that
+// is what the student recognises, with the count second.
+// What linking a cahier did, said in classes rather than in lessons parsed.
+function uploadDoneText({ cardsInserted = 0, datesCovered = 0 }) {
+  if (cardsInserted === 0) {
+    return "Your cahier is linked. Nothing new to add yet — every class in it is already in your deck.\n\nFrom now on, each class Laura adds becomes cards on its own.";
+  }
+  return `Your cahier is linked.\n\n${cardsInserted} cards from ${datesCovered} ${datesCovered === 1 ? "class" : "classes"} you hadn't studied yet. They join your deck as new cards, so they arrive once your reviews are done.\n\nFrom now on, each class Laura adds becomes cards on its own.`;
+}
+
+function cahierArrivalText({ dates = [], cards = 0 } = {}) {
+  const asDay = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "long" });
+  const when = dates.length === 0 ? "Your cahier"
+    : dates.length === 1 ? `Your class of ${asDay(dates[0])}`
+    : `Your classes from ${asDay(dates[0])} to ${asDay(dates[dates.length - 1])}`;
+  return `${when}: ${cards.toLocaleString()} new ${cards === 1 ? "card" : "cards"} added to your deck.`;
+}
+
 
 // A typed answer counts as recalled unless the user gave up ("revealed") or
 // got it wrong. Shared by the Continue button and by tapping the card, which
@@ -259,6 +278,18 @@ function typedGotIt(typeResult) {
 export default function FlashcardApp({ user, onSignOut }) {
   const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
   const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, patchAll: patchAllDeckCards, add: addDeckCard } = useUserDeck(user);
+  // The linked cahier, read again when the app opens: a class taught after
+  // the last visit is already cards by the time the student studies.
+  const cahier = useCahierSync(user);
+  // Cards that arrived from it are only in the database until the deck is
+  // read again. They then reach the student the way any new card does — the
+  // scheduler deals them once due work runs out, most recent class first.
+  const arrivedRef = useRef(null);
+  useEffect(() => {
+    if (!cahier.arrived || arrivedRef.current === cahier.arrived) return;
+    arrivedRef.current = cahier.arrived;
+    reloadDeck();
+  }, [cahier.arrived, reloadDeck]);
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
   const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
@@ -1800,12 +1831,14 @@ export default function FlashcardApp({ user, onSignOut }) {
         <CahierUpload
           open={showUpload}
           user={user}
+          cahier={cahier}
           onClose={() => setShowUpload(false)}
           hasExisting={false}
           initialTab={uploadInitialTab}
           onSuccess={(result) => {
             setShowUpload(false);
             reloadDeck();
+            if (result.linked) return alert(uploadDoneText(result));
             alert(
               `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
               (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
@@ -2089,12 +2122,14 @@ export default function FlashcardApp({ user, onSignOut }) {
       <CahierUpload
         open={showUpload}
         user={user}
+        cahier={cahier}
         onClose={() => setShowUpload(false)}
         hasExisting={userCards.length > 0}
         initialTab={uploadInitialTab}
         onSuccess={(result) => {
           setShowUpload(false);
           reloadDeck();
+          if (result.linked) return alert(uploadDoneText(result));
           alert(
             `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
             (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
@@ -2678,6 +2713,18 @@ export default function FlashcardApp({ user, onSignOut }) {
           )}
           </div>
         </div>
+
+        {/* What the cahier brought in. The cards are already in the deck and
+            already scheduled; this says so once, and goes when dismissed —
+            new cards arriving silently read as the app inventing work. */}
+        {cahier.arrived && (
+          <div style={S.cahierNotice} data-cahier-notice role="status">
+            <span>
+              {cahierArrivalText(cahier.arrived)}
+            </span>
+            <button style={S.cahierDismiss} onClick={cahier.dismissArrived} aria-label="Dismiss">✕</button>
+          </div>
+        )}
 
         <div style={S.mainInner}>
           {/* Sub-toolbar: session counter and back control */}
@@ -4134,6 +4181,9 @@ const S = {
   pipeDot: { width:8, height:8, borderRadius:"50%", flexShrink:0 },
   // Section titles
   bandTrack: { display:"flex", borderRadius:6, overflow:"hidden", background:T.color.surfaceHigh, marginBottom:10 },
+  cahierNotice: { display:"flex", alignItems:"center", gap:12, margin:"0 24px 4px", padding:"10px 14px", borderRadius:10,
+    background:T.color.surfaceHigh, color:T.color.onSurface, fontFamily:T.font.sans, fontSize:13, lineHeight:1.4 },
+  cahierDismiss: { marginLeft:"auto", border:"none", background:"transparent", cursor:"pointer", color:T.color.onSurfaceVariant, fontSize:13, padding:4 },
   statsFootnote: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"12px 0 0", lineHeight:1.5 },
   areaList: { display:"flex", flexDirection:"column", gap:10 },
   areaRow: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"14px 18px", border:"1px solid rgba(3,22,50,0.06)" },

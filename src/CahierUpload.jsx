@@ -11,13 +11,20 @@ import { keyHeaders } from "./lib/anthropicKey";
 //
 // On submit, sends to /api/parse-cahier with the user's auth token.
 //
+// A LINKED doc is different from an uploaded one: the app keeps reading it,
+// and turns each new class into cards as Laura adds it. That is what the link
+// tab does by default now (api/cahier-sync.js). It parses only the classes the
+// deck hasn't got, so linking a cahier already uploaded last month costs one
+// class, not a year of them.
+//
 // Props:
 //   open          — boolean, whether the modal is shown
 //   onClose       — called when user closes without uploading
 //   onSuccess     — called with the server response on successful upload
 //   hasExisting   — if true, shows a "replace existing deck" checkbox
+//   cahier        — useCahierSync(): the linked doc, and the sync itself
 
-export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user }) {
+export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user, cahier }) {
   const [tab, setTab] = useState(initialTab || "paste"); // paste | file | link
   // When the modal is reopened with a different initialTab, switch to it.
   useEffect(() => {
@@ -29,6 +36,8 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
   const [extracting, setExtracting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [replace, setReplace] = useState(hasExisting ? false : true);
+  // Linking is the point of pasting a doc link, so it is on by default.
+  const [keepUpToDate, setKeepUpToDate] = useState(true);
   const [status, setStatus] = useState("idle"); // idle | uploading | error
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
@@ -169,6 +178,42 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
   async function handleSubmit() {
     setError("");
     let mode, content;
+
+    // A linked doc doesn't go through the three-phase upload: the sync reads
+    // it, works out which classes the deck hasn't got, and parses only those,
+    // a few at a time until none are left.
+    if (tab === "link" && keepUpToDate) {
+      const link = url.trim();
+      if (!link.includes("docs.google.com/document/")) {
+        setError("Please paste a Google Doc URL like https://docs.google.com/document/d/...");
+        return;
+      }
+      setStatus("uploading");
+      setProgress("Reading your cahier…");
+      const summary = await cahier?.sync({
+        url: link,
+        force: true,
+        onProgress: (run) => setProgress(
+          run.remaining
+            ? `Adding your classes… ${run.addedSoFar} cards so far, ${run.remaining} classes to go`
+            : `Adding your classes… ${run.addedSoFar} cards so far`
+        ),
+      });
+      if (!summary) {
+        setStatus("error");
+        setError(cahier?.error || "Couldn't read that cahier.");
+        return;
+      }
+      setStatus("idle");
+      setProgress("");
+      onSuccess?.({
+        linked: true,
+        cardsInserted: summary.cards,
+        datesCovered: summary.dates.length,
+        dateRange: summary.dates.length ? [summary.dates[0], summary.dates[summary.dates.length - 1]] : null,
+      });
+      return;
+    }
 
     if (tab === "paste" || tab === "file") {
       if (!text.trim() || text.trim().length < 50) {
@@ -482,6 +527,42 @@ fonder / créer une entreprise
                 Google Docs: File → Share → General access → Anyone with the
                 link → Viewer.
               </div>
+              <label style={M.checkbox}>
+                <input
+                  type="checkbox"
+                  checked={keepUpToDate}
+                  onChange={(e) => setKeepUpToDate(e.target.checked)}
+                  disabled={status === "uploading"}
+                />
+                <span>
+                  Keep my deck up to date from this doc — each new class becomes cards on its own,
+                  and nothing you already have is changed
+                </span>
+              </label>
+              {cahier?.link && (
+                <div style={M.linkedBox} data-cahier-linked>
+                  <div>
+                    <strong>Linked.</strong>{" "}
+                    {cahier.link.last_checked_at
+                      ? `Last checked ${timeAgo(cahier.link.last_checked_at)}.`
+                      : "Not checked yet."}
+                    {cahier.link.last_result?.cards
+                      ? ` Last added ${cahier.link.last_result.cards} cards from ${cahier.link.last_result.dates?.length || 0} classes.`
+                      : ""}
+                  </div>
+                  {cahier.link.last_error && <div style={M.error}>{cahier.link.last_error}</div>}
+                  <div style={M.linkedActions}>
+                    <button
+                      style={M.smallBtn}
+                      disabled={cahier.checking}
+                      onClick={() => cahier.sync({ force: true })}
+                    >
+                      {cahier.checking ? "Checking…" : "Check now"}
+                    </button>
+                    <button style={M.smallBtn} onClick={() => cahier.unlink()}>Unlink</button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -522,6 +603,19 @@ fonder / créer une entreprise
       </div>
     </div>
   );
+}
+
+// "4 minutes ago" — the doc was read minutes ago far more often than days.
+function timeAgo(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return "just now";
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "moments ago";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 const M = {
@@ -685,6 +779,11 @@ const M = {
     marginTop: 10,
     fontWeight: 500,
   },
+  linkedBox: { marginTop:12, padding:"12px 14px", borderRadius:10, background:T.color.surfaceHigh,
+    fontFamily:T.font.sans, fontSize:13, lineHeight:1.5, color:T.color.onSurface, display:"flex", flexDirection:"column", gap:8 },
+  linkedActions: { display:"flex", gap:8 },
+  smallBtn: { fontFamily:T.font.sans, fontSize:12, fontWeight:600, padding:"6px 12px", borderRadius:8,
+    border:`1px solid ${T.color.outline}`, background:T.color.surface, color:T.color.onSurface, cursor:"pointer" },
   hint: {
     fontSize: 12,
     color: T.color.onSurfaceVariant,

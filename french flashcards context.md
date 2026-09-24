@@ -86,7 +86,7 @@ waiting. An entry that needs no change (the card was right) is resolved too,
 with the note saying why. Resolving never deletes; the owner clears resolved
 rows when they choose to.
 
-`npm test` before every push. It is 20 suites, and closer to twenty minutes
+`npm test` before every push. It is 21 suites, and closer to twenty minutes
 than a few — most of them drive a real browser at several window sizes. Start
 it early rather than last, and don't edit `src/` while it runs: the suites
 share one Vite dev server, so a save hot-reloads the app underneath a test
@@ -336,6 +336,62 @@ field names.
 
 ---
 
+## The linked cahier
+
+Laura and each student keep the real cahier in a Google Doc — one dated block
+per class, newest at the top, the same four headings and a homework line. Until
+2026-09-24 a cahier was uploaded once and the deck then drifted behind the
+teaching: the owner's deck stopped at the 5 September class while the doc had
+twelve classes more.
+
+A student pastes the doc's link once (the upload modal's link tab, "Keep my
+deck up to date from this doc"). After that:
+
+- **Only classes the deck hasn't got are parsed.** `cahier_links.classes`
+  (migration_011) holds a fingerprint per class already read. Linking a doc
+  that was uploaded last month costs nothing for the classes already in the
+  deck: they are marked as read from the dates on the student's own cards.
+- **New classes become cards straight away** and are scheduled like any other
+  new card — due work first, then new cards, most recent class first. No
+  review step; the owner's call.
+- **A class is parsed once and never again.** Editing or deleting a line in an
+  old class changes nothing in the deck. Those cards carry the student's own
+  history, and rewriting them behind their back is worse than a stale card.
+- **A word taught again keeps the card the student has.** Only the class date
+  is added, which is what orders new cards. Front and back are left alone,
+  hand-edits included — the one place this differs from an upload, which
+  deliberately rewrites them.
+- **Nothing is ever deleted.**
+
+**When it runs.** When the app opens, at most hourly per browser
+(`useCahierSync`), and once a day for every linked doc (`api/cahier-daily`, a
+Vercel cron at 13:00 UTC, which refuses any caller without `CRON_SECRET`).
+Reading the doc is a plain text fetch and costs nothing; only an unread class
+costs anything. The server refuses two checks within 30 seconds, so opening the
+app while the daily job runs can't parse the same class twice.
+
+**A run parses at most 12 classes** (10 from the daily job) and reports how
+many are left, and the client loops. A year-old cahier is therefore several
+runs rather than one that times out.
+
+**Who pays.** The deploy owner, from `ANTHROPIC_API_KEY` — not the student.
+This runs unattended, and a class is a few hundred words: pennies for a class
+of students. Every other Claude route still bills the caller.
+
+**What the student sees.** "Your class of 24 September: 31 new cards added to
+your deck", dismissible, under the top bar (`data-cahier-notice`); and in the
+link tab, when it last checked, what it last added, and why it failed if it
+did — a doc whose sharing was turned off says so rather than going quiet.
+
+**The doc must be readable by anyone with the link.** That is how it is read
+with nobody signed in to Google. Private docs would need Google sign-in — see
+the open item.
+
+Guarded by the `cahier-sync` suite (no browser): a stand-in database, doc and
+Claude, with the number of Claude calls counted, because that is the bill.
+
+---
+
 ## Card types: grammar / vocab / phrase
 
 `src/lib/cardTypes.js` → `classifyCard(card)`.
@@ -564,6 +620,10 @@ can never undo 007.
   back to listing everything and say why, rather than showing an empty list.
   Resolving is done by `scripts/resolve-feedback.mjs`; the app has no button.
   **Search-and-replace the admin email before running it**
+- `011_cahier_link` — `cahier_links`: the doc a student studies from, a
+  fingerprint per class already turned into cards, when it was last read, what
+  it last added and why it last failed. Owner-only policies; no delete policy
+  is needed beyond the student's own. See *The linked cahier*
 - `010_two_directions` — the English-side FSRS state on `user_cards` (the eight
   `en_` columns, all new, a check constraint and a due index), and
   `card_reviews`, one row per answer, with owner-only select / insert / update
@@ -906,7 +966,7 @@ of these were "fixed" against an assumption and shipped broken.
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Twenty suites: six needing no browser,
+`npm test` — see `tests/README.md`. Twenty-one suites: seven needing no browser,
 the rest driving the real app in headless Chromium against a mock Supabase,
 asserting on **measured** values (geometry, computed styles, request payloads)
 rather than on intent.
@@ -2298,6 +2358,49 @@ Breaking each — counting the French side alone, skipping the streak delete —
 fails those checks. Also fixed: `answering`'s correction check read only
 French-side fields, and failed whenever its first card came up in English.
 
+### 2026-09-24 — the cahier keeps the deck up to date
+
+**The problem.** The cahier is a living Google Doc: Laura adds a class after
+every lesson. The app read one once, so the deck drifted behind the teaching —
+the owner's stopped at the 5 September class while the doc had reached
+24 September, twelve classes and ~250 cards later.
+
+**Agreed with the owner.** New classes become cards immediately and are
+scheduled like any other new card. A class already read is never read again,
+and edits or deletions in old classes change nothing — "No" to offering to
+update or archive those cards. Each of Laura's students has their own doc with
+her, so one link per student. The owner pays for the parsing, not the students.
+
+**What was built.** `migration_011` (`cahier_links`), `api/cahier-sync.js`
+(read the doc, parse only unread classes, write), `api/cahier-daily.js` (the
+cron, refusing any caller without `CRON_SECRET`), `src/useCahierSync.js` (the
+check on open, at most hourly, and the loop that works through a backlog), the
+link tab's "Keep my deck up to date" with its status and Unlink, and the notice
+saying what arrived. The reference section *The linked cahier* describes it.
+
+The parser itself was not rewritten: reading the doc, slicing it into classes
+and turning a class into cards are now exported from `parse-cahier.js` and
+used by both paths, so the two can't drift into parsing the same notebook
+differently.
+
+**Two things the sync does that the upload deliberately doesn't.** It merges a
+repeated word's class dates instead of rewriting the card (an upload rewrites
+front and back on purpose; a background job doing that would undo hand-edits),
+and it leaves a class Claude failed on unread, so the next run tries it again
+rather than losing it silently.
+
+**Tests** (`cahier-sync`, no browser): a stand-in database, doc and Claude,
+with Claude's calls counted at the wire — that count is the bill. Re-parsing
+classes already in the deck, overwriting cards the student has, and re-parsing
+an edited class were each put back on purpose and failed 2, 3 and 4 checks.
+
+**Found on the way: the installed packages were damaged.** `node_modules` held
+26 duplicate folders named `… 2`, dated 19 September, and
+`@supabase/supabase-js` had lost its `package.json`, so anything importing the
+server code failed to load — `auth` among them. The signature of a file-sync
+tool (iCloud or Drive) inside the project folder. `npm ci` repaired it. If the
+folder stays synced it will happen again; `node_modules` should be excluded.
+
 ## Open items
 
 - **Two-way scheduling has not been seen on the live app.** Tested against the
@@ -2307,6 +2410,16 @@ French-side fields, and failed whenever its first card came up in English.
   worth checking signed in: in Mixed, words come up both ways; EN→FR asks
   grammar as written; a record lands in `card_reviews` for every answer.
 
+- **A private cahier needs Google sign-in.** The linked doc is read with no
+  credentials at all, which is why it has to be shared as "anyone with the
+  link can view". That is fine for the owner and workable for Laura's students,
+  but the link is readable by anyone who has it, and some student or parent
+  will object. Reading a private doc means an OAuth flow and Google's
+  verification, which is why it wasn't built first.
+- **`CRON_SECRET` has to be set in Vercel** for the daily cahier check to run
+  at all; without it the route refuses every caller, including the cron. The
+  linked doc is still read whenever a student opens the app, so a missing
+  secret shows up as "classes arrive late", not as an error.
 - **The retry and reset fixes of 2026-09-14 have not been seen on the live
   app.** The owner found both problems by studying on the live app; the fixes
   were tested against the mock only. Worth checking signed in: a block with

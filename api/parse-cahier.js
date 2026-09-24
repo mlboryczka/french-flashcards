@@ -39,6 +39,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 
 import { requireUser } from "./_lib/auth.js";
+// Some of this file's pieces are also the daily cahier sync's (cahier-sync.js):
+// reading the doc, slicing it into one block per class, and turning a block
+// into cards. They are exported rather than copied, so the two paths can never
+// drift into parsing the same notebook differently.
 import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 export const config = {
   api: {
@@ -307,7 +311,7 @@ async function handleCommit(req, res, adminClient, userId) {
 // Google Doc fetch
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function fetchGoogleDoc(url) {
+export async function fetchGoogleDoc(url) {
   const match = url.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
   if (!match) {
     throw new Error(
@@ -332,7 +336,7 @@ async function fetchGoogleDoc(url) {
 // Slicing
 // ═══════════════════════════════════════════════════════════════════════════
 
-function sliceIntoBlocks(rawText) {
+export function sliceIntoBlocks(rawText) {
   const lines = rawText.split(/\r?\n/);
   const blocks = [];
   let current = null;
@@ -439,7 +443,7 @@ Here is the lesson text:
 {BLOCK_TEXT}
 ---`;
 
-async function extractCardsFromBlock(anthropic, block) {
+export async function extractCardsFromBlock(anthropic, block) {
   const prompt = EXTRACTION_PROMPT.replace("{BLOCK_TEXT}", block.text);
 
   const response = await anthropic.messages.create({
@@ -493,7 +497,7 @@ async function extractCardsFromBlock(anthropic, block) {
 // Slash-pair splitting: "léger // lourd (adj)" → two separate cards
 // ═══════════════════════════════════════════════════════════════════════════
 
-function splitSlashPairs(cards) {
+export function splitSlashPairs(cards) {
   const out = [];
   for (const c of cards) {
     // Only split on " // " (double slash with spaces) — single "/" is used
@@ -546,7 +550,7 @@ function distributeQualifier(parts, index) {
 // Conjugation expansion
 // ═══════════════════════════════════════════════════════════════════════════
 
-function expandConjugations(cards) {
+export function expandConjugations(cards) {
   const output = [];
   let drillsGenerated = 0;
 
@@ -595,7 +599,7 @@ function expandConjugations(cards) {
 //
 // "Semantically divergent" = Jaccard similarity on content words < 0.3.
 
-function dedupeWithPolysemy(cards) {
+export function dedupeWithPolysemy(cards) {
   const groups = new Map();
   for (const card of cards) {
     const key = normalizeKey(card.front);
@@ -770,7 +774,7 @@ function parentheticals(text) {
   return spans;
 }
 
-function cleanFrenchFront(fr, en) {
+export function cleanFrenchFront(fr, en) {
   if (!fr || !en || !fr.includes("(")) return fr;
 
   const answerWords = new Set(glossWords(en));
