@@ -77,6 +77,13 @@ export default async function handler(req, res) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return res.status(500).json({ error: "Server misconfigured" });
   }
+  // Said plainly, because the student can do nothing about it and the person
+  // who can needs to know which setting is missing.
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(500).json({
+      error: "This app has no Anthropic key set on the server (ANTHROPIC_API_KEY), so it can't read your cahier. Ask whoever runs it to add one.",
+    });
+  }
   const user = await requireUser(req, res);
   if (!user) return;
 
