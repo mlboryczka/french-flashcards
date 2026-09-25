@@ -21,7 +21,7 @@ import { keyHeaders } from "./lib/anthropicKey";
 //   onSuccess     — called with the server response on successful upload
 //   hasExisting   — if true, shows a "replace existing deck" checkbox
 
-export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user }) {
+export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user, onOpenCahier }) {
   const [tab, setTab] = useState(initialTab === "file" ? "file" : "paste"); // paste | file
   // When the modal is reopened with a different initialTab, switch to it.
   useEffect(() => {
@@ -455,6 +455,19 @@ fonder / créer une entreprise
           )}
         </div>
 
+        {/* Where the Google Doc went. It was a third tab here until
+            2026-09-25; moving it with no sign left in its place is how the
+            owner found the dialog with "no option to upload cahier". */}
+        {onOpenCahier && (
+          <p style={M.pointer}>
+            Studying from a Google Doc?{" "}
+            <button style={M.pointerLink} onClick={onOpenCahier} disabled={status === "uploading"}>
+              Link your cahier
+            </button>{" "}
+            and each new class becomes cards on its own.
+          </p>
+        )}
+
         {hasExisting && (
           <label style={M.checkbox}>
             <input
@@ -654,6 +667,9 @@ const M = {
     marginTop: 10,
     fontWeight: 500,
   },
+  pointer: { fontFamily:T.font.sans, fontSize:13, lineHeight:1.6, color:T.color.onSurfaceVariant, margin:"16px 0 0" },
+  pointerLink: { fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:T.color.primary, background:"transparent",
+    border:"none", padding:0, cursor:"pointer", textDecoration:"underline" },
   hint: {
     fontSize: 12,
     color: T.color.onSurfaceVariant,

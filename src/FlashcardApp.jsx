@@ -1874,6 +1874,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           open={showUpload}
           user={user}
           onClose={() => setShowUpload(false)}
+          onOpenCahier={() => { setShowUpload(false); setShowCahierLink(true); }}
           hasExisting={false}
           initialTab={uploadInitialTab}
           onSuccess={(result) => {
@@ -2170,6 +2171,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         open={showUpload}
         user={user}
         onClose={() => setShowUpload(false)}
+        onOpenCahier={() => { setShowUpload(false); setShowCahierLink(true); }}
         hasExisting={userCards.length > 0}
         initialTab={uploadInitialTab}
         onSuccess={(result) => {

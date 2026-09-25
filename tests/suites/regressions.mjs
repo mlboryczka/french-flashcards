@@ -165,6 +165,12 @@ const ck = checker();
   ck("the upload dialog offers pasting and a file, and no doc link",
      uploadTabs.includes("Paste text") && uploadTabs.includes("Upload file") && !uploadTabs.includes("Google Doc link"),
      uploadTabs.join(" | "));
+  // And says where the doc went. Moving it out with nothing left in its place
+  // is how the owner found "no option to upload cahier" (2026-09-25).
+  ck("and points to where a Google Doc is linked instead",
+     await page.evaluate(() => /Google Doc/i.test(document.querySelector("[data-upload-modal], .modal, body")?.innerText || "")));
+  ck("and that pointer opens the cahier screen",
+     (await clickMenuItem("Link your cahier")) && !!(await page.$("[data-cahier-link]")));
   await browser.close();
 }
 
