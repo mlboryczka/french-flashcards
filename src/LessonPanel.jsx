@@ -203,13 +203,16 @@ function Block({ b, prev, first }) {
   }
 
   if (b.t === "forms") {
+    // The gap around each dot is padding, not a space, so a line of single
+    // words (précisément · profondément · …) had nowhere to wrap and ran off
+    // the panel. The <wbr> lets it break after each dot.
     return (
       <>
         {b.label && <div style={S.formsLabel}>{b.label}</div>}
         <p style={S.forms}>
           {b.v.map((f, i) => (
             <span key={i}>
-              {i > 0 && <span style={S.formsDot}>·</span>}
+              {i > 0 && <><span style={S.formsDot}>·</span><wbr /></>}
               {frenchSpace(f)}
             </span>
           ))}
