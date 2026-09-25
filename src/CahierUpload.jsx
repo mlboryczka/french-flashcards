@@ -199,9 +199,9 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
             : `Adding your classes… ${run.addedSoFar} cards so far`
         ),
       });
-      if (!summary) {
+      if (!summary?.ok) {
         setStatus("error");
-        setError(cahier?.error || "Couldn't read that cahier.");
+        setError(summary?.error || "Couldn't read that cahier.");
         return;
       }
       setStatus("idle");

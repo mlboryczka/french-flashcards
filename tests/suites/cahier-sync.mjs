@@ -66,6 +66,15 @@ const cahier = (classes) => classes.map(([d, m, w]) => classText(d, m, w)).join(
 // ── A stand-in for the Supabase service client ─────────────────────────
 // Only the calls the sync makes, over plain arrays. Reading it back is how
 // the checks below know what was written.
+// What the live tables declare NOT NULL. A write that would insert a row
+// without them is refused here as Postgres refuses it — the stand-in used to
+// wave them through, and a partial upsert that could never work in production
+// passed every check (2026-09-25).
+const REQUIRED = {
+  cahier_links: ["user_id", "doc_id", "doc_url"],
+  user_cards: ["user_id", "front", "back"],
+};
+
 function fakeAdmin(tables) {
   const match = (row, filters) => filters.every(([col, val, op]) =>
     op === "in" ? val.includes(row[col]) : row[col] === val);
@@ -88,20 +97,32 @@ function fakeAdmin(tables) {
       q.then = (resolve, reject) => run().then(resolve, reject);
       q.update = (patch) => ({
         eq: async (col, val) => {
-          for (const r of rows()) if (r[col] === val) Object.assign(r, patch);
-          return { error: null };
+          const hit = rows().filter((r) => r[col] === val);
+          for (const r of hit) Object.assign(r, patch);
+          return { error: null, count: hit.length };
         },
       });
       q.upsert = (payload, opts = {}) => {
         const list = Array.isArray(payload) ? payload : [payload];
         const keys = (opts.onConflict || "id").split(",");
         const written = [];
+        const missing = [];
         for (const row of list) {
+          // An upsert is an INSERT that resolves a conflict, and Postgres
+          // builds and checks that row before it looks for one to conflict
+          // with. So a payload missing a NOT NULL column fails even when the
+          // row it would have updated is sitting right there — which is
+          // exactly how the sync broke in production.
+          const absent = (REQUIRED[name] || []).find((k) => row[k] === undefined || row[k] === null);
+          if (absent) { missing.push(`null value in column "${absent}" of relation "${name}" violates not-null constraint`); continue; }
           const found = rows().find((r) => keys.every((k) => r[k] === row[k]));
-          if (found) Object.assign(found, row); else rows().push({ id: rows().length + 1000, ...row });
-          written.push(found || rows()[rows().length - 1]);
+          if (found) { Object.assign(found, row); written.push(found); continue; }
+          rows().push({ id: rows().length + 1000, ...row });
+          written.push(rows()[rows().length - 1]);
         }
-        const result = { data: written, error: null, count: written.length };
+        const result = missing.length
+          ? { data: null, error: { message: missing[0], code: "23502" }, count: null }
+          : { data: written, error: null, count: written.length };
         const builder = {
           select: () => ({ maybeSingle: async () => ({ data: written[0], error: null }), then: (res) => Promise.resolve(result).then(res) }),
           then: (res, rej) => Promise.resolve(result).then(res, rej),
@@ -116,7 +137,11 @@ function fakeAdmin(tables) {
 const { syncUser } = await import("../../api/cahier-sync.js");
 const USER = "student-1";
 const URL_1 = "https://docs.google.com/document/d/DOC1/edit?tab=t.0";
-const run = (admin, opts = {}) => syncUser({ admin, apiKey: "sk-test", userId: USER, force: true, ...opts });
+// The endpoint catches whatever syncUser throws and answers 500, so a check
+// here reads a thrown error as the failure it is rather than ending the run.
+const run = (admin, opts = {}) =>
+  syncUser({ admin, apiKey: "sk-test", userId: USER, force: true, ...opts })
+    .catch((e) => ({ ok: false, error: e.message, threw: true }));
 const deck = (admin) => admin.tables.user_cards || [];
 const link = (admin) => (admin.tables.cahier_links || [])[0];
 
@@ -133,6 +158,8 @@ console.log("\n  linking a doc parses only the classes the deck hasn't got");
   ck("it says which classes were new", r.ok && JSON.stringify(r.newClasses) === '["2026-09-04","2026-09-08"]', JSON.stringify(r));
   ck("the class already in the deck is not parsed", claudeCalls === 2, `${claudeCalls} Claude calls`);
   ck("one call per class parsed, and no more", claudeCalls === r.newClasses.length, `${claudeCalls} for ${r.newClasses.length}`);
+  ck("the run that linked it also records when it looked", !!link(admin).last_checked_at && !!link(admin).last_synced_at,
+     `${link(admin).last_checked_at} / ${link(admin).last_synced_at}`);
   ck("its cards are in the deck", deck(admin).some((c) => c.front === "alpha") && deck(admin).some((c) => c.front === "ancien"), JSON.stringify(deck(admin).map((c) => c.front)));
   ck("the card the deck already had is untouched", deck(admin)[0].back === "already" && deck(admin)[0].dates.length === 1);
   ck("and the classes it read are remembered", Object.keys(link(admin).classes).sort().join(",").includes("2026-09-08"), JSON.stringify(link(admin).classes));
@@ -147,6 +174,11 @@ console.log("\n  a class is parsed once and never again");
   claudeCalls = 0;
   const again = await run(admin);
   ck("a second check with nothing new parses nothing", claudeCalls === 0 && again.cardsAdded === 0 && again.remaining === 0, JSON.stringify(again));
+  // Every run records when it ran, whether or not it found anything: the app
+  // shows it as "last checked", and a run that can't record it is a run that
+  // failed. This is what the sync did in production on 2026-09-25 — the row
+  // was linked and never checked.
+  ck("and records that it looked", !!link(admin).last_checked_at, JSON.stringify(link(admin).last_checked_at));
   ck("and adds no cards", deck(admin).length === cardsAfterFirst, `${deck(admin).length} vs ${cardsAfterFirst}`);
 
   // Laura edits the 9 September class and deletes a line from it.
@@ -279,7 +311,7 @@ console.log("\n  two checks at once don't pay twice");
   await run(admin, { url: URL_1 });
   doc.text = cahier([[24, "septembre", "b"], [23, "septembre", "a"]]);
   claudeCalls = 0;
-  const soon = await syncUser({ admin, apiKey: "sk-test", userId: USER });
+  const soon = await syncUser({ admin, apiKey: "sk-test", userId: USER }).catch((e) => ({ error: e.message }));
   ck("a check seconds after the last one is skipped", claudeCalls === 0 && soon.skipped, JSON.stringify(soon));
   const forced = await run(admin);
   ck("asking for it anyway still works", forced.ok && forced.cardsAdded === 1, JSON.stringify(forced));
@@ -289,7 +321,7 @@ console.log("\n  a student with no linked doc is a no-op");
 {
   const admin = fakeAdmin({ user_cards: [], cahier_links: [] });
   claudeCalls = 0;
-  const r = await syncUser({ admin, apiKey: "sk-test", userId: USER });
+  const r = await syncUser({ admin, apiKey: "sk-test", userId: USER }).catch((e) => ({ error: e.message }));
   ck("nothing happens, and nothing is spent", r.ok && r.linked === false && claudeCalls === 0, JSON.stringify(r));
   const bad = await run(admin, { url: "https://example.com/not-a-doc" });
   ck("a link that isn't a Google Doc is refused", !bad.ok && /Google Doc link/.test(bad.error), bad.error);

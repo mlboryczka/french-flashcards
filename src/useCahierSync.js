@@ -84,12 +84,16 @@ export function useCahierSync(user) {
         const { data } = await supabase.from("cahier_links").select("*").eq("user_id", userId).maybeSingle();
         setLink(data || null);
       }
-      const summary = { cards: added, dates: [...new Set(dates)].sort(), linked: last?.linked !== false };
+      const summary = { ok: true, cards: added, dates: [...new Set(dates)].sort(), linked: last?.linked !== false };
       if (added > 0) setArrived(summary);
       return summary;
     } catch (e) {
+      // Returned as well as stored: a caller that acts on the result reads a
+      // stale `error` from the render it was called in, and said "Couldn't
+      // read that cahier" while the server had explained exactly what was
+      // wrong (2026-09-25).
       setError(e.message);
-      return null;
+      return { ok: false, error: e.message };
     } finally {
       running.current = false;
       setChecking(false);

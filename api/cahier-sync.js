@@ -122,7 +122,7 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     // A different doc starts again: what was read from the old one says
     // nothing about this one.
     const classes = link && link.doc_id === docId ? link.classes || {} : await classesAlreadyInDeck(admin, userId);
-    link = await saveLink(admin, {
+    link = await linkDoc(admin, {
       user_id: userId, doc_id: docId, doc_url: url, classes, last_error: null,
     });
   }
@@ -142,14 +142,14 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
   try {
     rawText = await fetchGoogleDoc(link.doc_url);
   } catch (e) {
-    await saveLink(admin, { user_id: userId, last_checked_at: now.toISOString(), last_error: e.message });
+    await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: e.message });
     return { ok: false, linked: true, error: e.message };
   }
 
   const blocks = sliceIntoBlocks(rawText);
   if (blocks.length === 0) {
     const message = "No class dates found in that doc. Each class should start with a line like 'Le 24 septembre 2026'.";
-    await saveLink(admin, { user_id: userId, last_checked_at: now.toISOString(), last_error: message });
+    await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: message });
     return { ok: false, linked: true, error: message };
   }
 
@@ -160,7 +160,7 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
   const batch = unseen.slice(0, take);
 
   if (batch.length === 0) {
-    await saveLink(admin, { user_id: userId, last_checked_at: now.toISOString(), last_error: null });
+    await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: null });
     return {
       ok: true, linked: true, checkedAt: now.toISOString(), newClasses: [],
       cardsAdded: 0, remaining: 0, lastResult: link.last_result || null,
@@ -182,7 +182,7 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
   // A class Claude could not read is left unseen, so the next run tries it
   // again rather than losing it silently.
   if (parsed.length === 0) {
-    await saveLink(admin, { user_id: userId, last_checked_at: now.toISOString(), last_error: errors[0]?.error || "Could not read that class" });
+    await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: errors[0]?.error || "Could not read that class" });
     return { ok: false, linked: true, error: errors[0]?.error || "Could not read that class", errors };
   }
 
@@ -200,8 +200,7 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
   for (const b of parsed) classes[b.date] = fingerprint(b.text);
   const dates = parsed.map((b) => b.date).sort();
   const lastResult = { at: now.toISOString(), dates, cards: written.added, updated: written.updated };
-  await saveLink(admin, {
-    user_id: userId,
+  await updateLink(admin, userId, {
     classes,
     last_checked_at: now.toISOString(),
     last_synced_at: now.toISOString(),
@@ -225,10 +224,26 @@ async function loadLink(admin, userId) {
   return data || null;
 }
 
-async function saveLink(admin, row) {
+// Linking, or relinking to a different doc: the whole row, which is the only
+// write that may create one.
+async function linkDoc(admin, row) {
   const { data, error } = await admin.from("cahier_links").upsert(row, { onConflict: "user_id" }).select().maybeSingle();
   if (error) throw new Error(`Couldn't save the cahier link: ${error.message}`);
   return data;
+}
+
+// Everything afterwards is an update to the row that linking made — when it
+// was last read, what it found, why it failed.
+//
+// This used to be the same upsert with only the changed fields, which
+// Postgres treats as an insert that then resolves a conflict: the insert half
+// carried no doc_id or doc_url, both NOT NULL, so every sync after linking
+// died on the first "last checked at" write. It showed up on the owner's
+// account as "Couldn't read that cahier" with a linked row that had never
+// been checked (2026-09-25).
+async function updateLink(admin, userId, patch) {
+  const { error } = await admin.from("cahier_links").update(patch).eq("user_id", userId);
+  if (error) throw new Error(`Couldn't save the cahier link: ${error.message}`);
 }
 
 // The classes this deck already holds cards from, marked as read without
