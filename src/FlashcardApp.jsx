@@ -473,6 +473,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     setLessonFilter(id);
     setMode("study");
   }, []);
+
+  // Leaving the lesson page closes its notes, wherever you go: Stats, the
+  // Lessons page, the whole deck or another lesson. Lessons and Stats only
+  // change the page, so the notes stayed open over Stats. Keyed on the page
+  // itself rather than on each way off it, so a new way off can't bring it back.
+  useEffect(() => { setShowLessonPanel(false); }, [mode, lessonFilter]);
+
   // "Connect your Claude account". Everything that calls Claude bills the
   // caller's own Anthropic key now, so there has to be somewhere to put one.
   const [showKeyModal, setShowKeyModal] = useState(false);
