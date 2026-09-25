@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { LESSONS, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } from "./data/lessons";
 import { reconcileLessons } from "./lib/lessonSync";
+import { archivedSource } from "./lib/archive";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./lib/cardText";
@@ -1654,12 +1655,17 @@ export default function FlashcardApp({ user, onSignOut }) {
   //
   // Runs once per mount, and only writes when there is a difference, so the
   // usual case costs one comparison and no network.
+  //
+  // Only against the deck as the server has it. The deck on screen at first is
+  // the copy saved in the browser, which can be days old: a card answered
+  // since would look never answered there, and be deleted with its history
+  // instead of kept. So this waits for the first fetch to land.
   const lessonsSynced = useRef(false);
   useEffect(() => {
-    if (!user || !deckLoaded || lessonsSynced.current) return;
+    if (!user || !deckLoaded || !deckFreshSeq || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const { missing, rekey, retext, stale, unkeyed, taken } = reconcileLessons(LESSONS, userCards);
+      const { missing, rekey, retext, stale, archive, unkeyed, taken } = reconcileLessons(LESSONS, userCards);
       if (taken.length) {
         // The deck already has its own card with that front; the lesson card
         // would have overwritten it. See reconcileLessons.
@@ -1674,7 +1680,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           unkeyed.map((c) => c.f)
         );
       }
-      if (!missing.length && !rekey.length && !retext.length && !stale.length) return;
+      if (!missing.length && !rekey.length && !retext.length && !stale.length && !archive.length) return;
       const owned = (rows) => rows.map((r) => ({ ...r, user_id: user.id }));
       try {
         if (missing.length) {
@@ -1697,17 +1703,33 @@ export default function FlashcardApp({ user, onSignOut }) {
             .eq("user_id", user.id);
           if (error) throw error;
         }
+        // Deleted only if still never answered either way, checked by the
+        // database itself: a card answered on another device since the deck
+        // was read is left, and archived on the next visit.
         if (stale.length) {
           const { error } = await supabase
             .from("user_cards")
             .delete()
             .in("id", stale)
+            .eq("user_id", user.id)
+            .eq("fsrs_state", 0)
+            .eq("en_fsrs_state", 0);
+          if (error) throw error;
+        }
+        // A card the student has answered is taken out of study, not deleted:
+        // its answers stay on record. See reconcileLessons.
+        for (const rowId of archive) {
+          const row = userCards.find((c) => c.row_id === rowId);
+          const { error } = await supabase
+            .from("user_cards")
+            .update({ source: archivedSource(row?.source) })
+            .eq("id", rowId)
             .eq("user_id", user.id);
           if (error) throw error;
         }
         console.info(
           `[lessons] synced: +${missing.length} card(s), ${rekey.length} re-keyed, ${retext.length} renamed, ` +
-            `-${stale.length} retired`
+            `-${stale.length} never answered and removed, ${archive.length} answered and kept out of study`
         );
         reloadDeck();
       } catch (e) {
@@ -1717,7 +1739,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, deckLoaded]);
+  }, [user, deckLoaded, deckFreshSeq]);
 
   // addLesson() lived here: it copied a lesson's cards into the deck for an
   // "Add" button that no longer exists, because the sync above puts every

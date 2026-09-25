@@ -8,6 +8,8 @@ import { buildRequestMessages, normalizeCards } from "../../api/chat.js";
 import { reconcileLessons } from "../../src/lib/lessonSync.js";
 import { lessonSource, lessonCardKey } from "../../src/lib/lessonSource.js";
 import { isArchived, archivedSource } from "../../src/lib/archive.js";
+import { LESSONS } from "../../src/data/lessons/index.js";
+import { readFileSync } from "node:fs";
 import { checker } from "../check.mjs";
 
 const ck = checker();
@@ -350,6 +352,42 @@ console.log("\n  reconcileLessons — the lesson is the authority, the edit is t
   ck("a legacy row matching nothing is never deleted",
      afterLegacy.stale.length === 0 && afterLegacy.unkeyed.length === 1,
      `stale ${afterLegacy.stale.join(",")}`);
+}
+
+// A card the student has answered is never deleted by a lesson update: deleting
+// a card deletes every answer recorded against it (the owner, 2026-09-25).
+console.log("\n  reconcileLessons — a card the student has answered is kept, not deleted");
+{
+  const LESSON = { id: "test", cards: [["parler → tu", "parle", "G"]] };
+  const keyed = (front, row_id, extra = {}) => ({ f: front, b: "x", row_id, source: lessonSource("test", lessonCardKey(front)), ...extra });
+  const r = reconcileLessons([LESSON], [
+    keyed("parler → tu", 1),
+    keyed("dropped, never answered", 2),
+    keyed("dropped, answered", 3, { fsrs_state: 2, stability: 4, last_review: "2026-09-20T12:00:00Z" }),
+    keyed("dropped, answered only in English", 4, { en_fsrs_state: 2, en_stability: 1, en_last_review: "2026-09-20T12:00:00Z" }),
+  ]);
+  ck("a dropped card never answered is removed", r.stale.length === 1 && r.stale[0] === 2, r.stale.join(","));
+  ck("a dropped card the student has answered is kept out of study instead", r.archive.join(",") === "3,4", r.archive.join(","));
+}
+
+// Every lesson card ever released stays recognisable. A deck knows a lesson
+// card by its first wording; reword it without keeping that wording as the
+// card's fifth element, or drop it, and every deck's copy stops matching and
+// is taken out of study. tests/released-lesson-cards.json lists every card
+// that has gone out; `node scripts/release-lesson-cards.mjs` adds new ones.
+console.log("\n  lessons — every released card still matches its lesson");
+{
+  const { released, retired = {} } = JSON.parse(readFileSync(new URL("../released-lesson-cards.json", import.meta.url), "utf8"));
+  for (const lesson of LESSONS) {
+    const now = new Set(lesson.cards.map(([front, , , , was]) => lessonCardKey(was ?? front)));
+    const gone = (released[lesson.id] || []).filter((c) => !now.has(c.key) && !(retired[lesson.id] || []).some((r) => r.key === c.key));
+    ck(`${lesson.id}: no released card reworded without its first wording, or dropped`, gone.length === 0,
+       gone.map((c) => c.front).join(" | "));
+    const listed = new Set((released[lesson.id] || []).map((c) => c.key));
+    const unlisted = lesson.cards.filter(([front, , , , was]) => !listed.has(lessonCardKey(was ?? front)));
+    ck(`${lesson.id}: every card is on the release list (node scripts/release-lesson-cards.mjs)`, unlisted.length === 0,
+       unlisted.map(([f]) => f).join(" | "));
+  }
 }
 
 // A lesson may reword a card. The reworded card must keep its row — and its

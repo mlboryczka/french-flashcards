@@ -12,11 +12,16 @@
 // `source`, not the stored front itself; see lessonCardKey.
 
 import { lessonSource, lessonIdOf, lessonCardKeyOf, lessonCardKey } from "./lessonSource.js";
+import { DIRECTIONS, sideOf } from "./directions.js";
+
+// Answered at least once, either way round: the card carries the student's
+// history, and nothing a lesson does may delete it.
+const studied = (card) => DIRECTIONS.some((d) => (sideOf(card, d).fsrs_state ?? 0) !== 0);
 
 /**
  * @param {Array} lessons   the catalogue (LESSONS)
  * @param {Array} deckCards shaped deck rows from useUserDeck
- * @returns {{ missing: Array, rekey: Array, retext: Array, stale: number[], unkeyed: Array }}
+ * @returns {{ missing: Array, rekey: Array, retext: Array, stale: number[], archive: number[], unkeyed: Array }}
  *   missing — lesson cards this deck has no row for, ready for insert
  *             (the caller adds user_id)
  *   rekey   — legacy rows that DO match a lesson card, re-upserted on the same
@@ -29,7 +34,15 @@ import { lessonSource, lessonIdOf, lessonCardKeyOf, lessonCardKey } from "./less
  *             the rename neither retires the row nor resets its FSRS state.
  *             Only rows whose stored front is still exactly the old text are
  *             rewritten — one the user edited is theirs and is left alone.
- *   stale   — row_ids to delete: keyed rows whose lesson no longer has them
+ *   stale   — row_ids to delete: keyed rows whose lesson no longer has them,
+ *             never answered either way, so there is nothing to lose
+ *   archive — row_ids of keyed rows the lesson no longer has that the student
+ *             HAS answered. Taken out of study, not deleted: deleting a card
+ *             deletes every answer recorded against it, and a lesson update
+ *             must never cost a student their history (the owner, 2026-09-25).
+ *             If the card comes back to the lesson with the same front, the
+ *             insert lands on the archived row and brings it back, history
+ *             and all (see lib/archive.js).
  *   unkeyed — legacy rows matching no lesson card. NOT deleted: a row written
  *             before keys existed is indistinguishable from an edited one, and
  *             deleting a card someone corrected is worse than leaving one the
@@ -47,6 +60,7 @@ export function reconcileLessons(lessons, deckCards) {
   const rekey = [];
   const retext = [];
   const stale = [];
+  const archive = [];
   const unkeyed = [];
   const taken = [];
   // Fronts the deck holds as its own cards, not a lesson's.
@@ -68,7 +82,7 @@ export function reconcileLessons(lessons, deckCards) {
           if (c.was && card.f === c.was && card.row_id != null) {
             retext.push({ row_id: card.row_id, front: c.f, back: c.b });
           }
-        } else if (card.row_id != null) stale.push(card.row_id);
+        } else if (card.row_id != null) (studied(card) ? archive : stale).push(card.row_id);
         continue;
       }
       // Legacy row: no key. Match it by front, which is what identity used to
@@ -102,5 +116,5 @@ export function reconcileLessons(lessons, deckCards) {
     }
   }
 
-  return { missing, rekey, retext, stale, unkeyed, taken };
+  return { missing, rekey, retext, stale, archive, unkeyed, taken };
 }

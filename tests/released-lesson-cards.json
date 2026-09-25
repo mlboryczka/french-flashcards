@@ -1,0 +1,765 @@
+{
+  "released": {
+    "imperatif": [
+      {
+        "key": "1ti2z70",
+        "front": "regarder → tu"
+      },
+      {
+        "key": "gyuv6w",
+        "front": "regarder → nous"
+      },
+      {
+        "key": "gz110w",
+        "front": "regarder → vous"
+      },
+      {
+        "key": "1la5jdk",
+        "front": "finir → tu"
+      },
+      {
+        "key": "f0iadw",
+        "front": "finir → nous"
+      },
+      {
+        "key": "f0og7w",
+        "front": "finir → vous"
+      },
+      {
+        "key": "pxgmnk",
+        "front": "prendre → tu"
+      },
+      {
+        "key": "11y6u0c",
+        "front": "prendre → nous"
+      },
+      {
+        "key": "11yczuc",
+        "front": "prendre → vous"
+      },
+      {
+        "key": "1hnqxv9",
+        "front": "être → tu"
+      },
+      {
+        "key": "1bz8q9d",
+        "front": "être → nous"
+      },
+      {
+        "key": "1bzew3d",
+        "front": "être → vous"
+      },
+      {
+        "key": "146js81",
+        "front": "avoir → tu"
+      },
+      {
+        "key": "32y9p9",
+        "front": "avoir → nous"
+      },
+      {
+        "key": "334fj9",
+        "front": "avoir → vous"
+      },
+      {
+        "key": "34mqk0",
+        "front": "aller → tu"
+      },
+      {
+        "key": "1wne1t8",
+        "front": "aller → nous"
+      },
+      {
+        "key": "1wnk7n8",
+        "front": "aller → vous"
+      },
+      {
+        "key": "d3gak4",
+        "front": "savoir → tu"
+      },
+      {
+        "key": "1j97qy8",
+        "front": "savoir → nous"
+      },
+      {
+        "key": "1j9dws8",
+        "front": "savoir → vous"
+      },
+      {
+        "key": "1sk28ev",
+        "front": "Tu me regardes → à l'impératif"
+      },
+      {
+        "key": "1i9nnmy",
+        "front": "Tu me dis → à l'impératif"
+      },
+      {
+        "key": "1qbsz2",
+        "front": "Tu y réfléchis → à l'impératif"
+      },
+      {
+        "key": "o5fxu3",
+        "front": "Tu l'achètes → à l'impératif"
+      },
+      {
+        "key": "y1ss4",
+        "front": "Vous lui donnez → à l'impératif"
+      },
+      {
+        "key": "18tbfx3",
+        "front": "Tu en prends → à l'impératif"
+      },
+      {
+        "key": "19b08qo",
+        "front": "Vous nous attendez → à l'impératif"
+      },
+      {
+        "key": "h0kzmu",
+        "front": "Nous en parlons → à l'impératif"
+      },
+      {
+        "key": "1t8m6or",
+        "front": "Regarde-moi → au négatif"
+      },
+      {
+        "key": "1qyi9wh",
+        "front": "Dis-moi → au négatif"
+      },
+      {
+        "key": "zagl3m",
+        "front": "Réfléchis-y → au négatif"
+      },
+      {
+        "key": "17odxi2",
+        "front": "Achète-le → au négatif"
+      },
+      {
+        "key": "1owoql6",
+        "front": "Donne-lui → au négatif"
+      },
+      {
+        "key": "cn687v",
+        "front": "Prends-en → au négatif"
+      },
+      {
+        "key": "1b2u7pc",
+        "front": "Attendez-nous → au négatif"
+      },
+      {
+        "key": "1lxm3fy",
+        "front": "Parlons-en → au négatif"
+      },
+      {
+        "key": "86n23a",
+        "front": "se lever → tu"
+      },
+      {
+        "key": "y0apw2",
+        "front": "se lever → nous"
+      },
+      {
+        "key": "y0gvq2",
+        "front": "se lever → vous"
+      },
+      {
+        "key": "1smuucz",
+        "front": "se souvenir → tu"
+      },
+      {
+        "key": "1a3kd7r",
+        "front": "s'amuser → tu"
+      },
+      {
+        "key": "1krhxzu",
+        "front": "se battre → tu"
+      },
+      {
+        "key": "1hilqaf",
+        "front": "Lève-toi → au négatif"
+      },
+      {
+        "key": "xhu1ib",
+        "front": "Amuse-toi → au négatif"
+      },
+      {
+        "key": "1641o9d",
+        "front": "Souvenons-nous → au négatif"
+      },
+      {
+        "key": "13p5aab",
+        "front": "Battez-vous → au négatif"
+      },
+      {
+        "key": "nog8vh",
+        "front": "Tu devrais aider ta sœur → à l'impératif"
+      },
+      {
+        "key": "12kk15i",
+        "front": "Tu devrais prendre une douche → à l'impératif"
+      },
+      {
+        "key": "9tsc90",
+        "front": "Tu devrais partir à l'heure → à l'impératif"
+      },
+      {
+        "key": "iglfxq",
+        "front": "Vous devriez tenir la porte → à l'impératif"
+      },
+      {
+        "key": "18olu8l",
+        "front": "Vous devriez sortir de la maison → à l'impératif"
+      },
+      {
+        "key": "1glf5no",
+        "front": "Aide ta sœur → au négatif"
+      },
+      {
+        "key": "10g8xjv",
+        "front": "Prends une douche → au négatif"
+      },
+      {
+        "key": "114oa1b",
+        "front": "Sois prudent → au négatif"
+      },
+      {
+        "key": "1febypc",
+        "front": "Allez à la banque → au négatif"
+      },
+      {
+        "key": "1lkmuxk",
+        "front": "Dis-moi !"
+      },
+      {
+        "key": "1p7boon",
+        "front": "Réponds-moi !"
+      },
+      {
+        "key": "3dvlpf",
+        "front": "Fais-moi un thé !"
+      },
+      {
+        "key": "aadzm3",
+        "front": "Attends-moi !"
+      },
+      {
+        "key": "1ahi2o9",
+        "front": "Envoie-moi un email !"
+      },
+      {
+        "key": "wjua74",
+        "front": "Rends-moi mon livre !"
+      },
+      {
+        "key": "lh9lfo",
+        "front": "Ne me dis pas ça."
+      },
+      {
+        "key": "1j4e99r",
+        "front": "Ne me regarde pas comme ça."
+      },
+      {
+        "key": "bpyipd",
+        "front": "Ne m'attends pas."
+      },
+      {
+        "key": "1si3mbu",
+        "front": "Ne m'écris pas en anglais."
+      },
+      {
+        "key": "133atu7",
+        "front": "Ne me mens pas."
+      },
+      {
+        "key": "grjprh",
+        "front": "Tu devrais te réveiller → à l'impératif"
+      },
+      {
+        "key": "fklqu2",
+        "front": "Tu devrais te souvenir → à l'impératif"
+      },
+      {
+        "key": "1vo0n44",
+        "front": "Tu devrais t'habiller → à l'impératif"
+      },
+      {
+        "key": "tvw36f",
+        "front": "Tu devrais t'asseoir → à l'impératif"
+      },
+      {
+        "key": "6nrkjb",
+        "front": "Vous devriez vous taire → à l'impératif"
+      },
+      {
+        "key": "912red",
+        "front": "Tu devrais l'acheter → à l'impératif"
+      },
+      {
+        "key": "1ga35wj",
+        "front": "Vous devriez lui dire → à l'impératif"
+      },
+      {
+        "key": "o13pv1",
+        "front": "Tu devrais en prendre plus → à l'impératif"
+      },
+      {
+        "key": "1yh5z97",
+        "front": "Tu devrais y réfléchir → à l'impératif"
+      },
+      {
+        "key": "lok0ny",
+        "front": "Vous devriez y aller → à l'impératif"
+      },
+      {
+        "key": "1w2t5n0",
+        "front": "Tu devrais leur envoyer un mail → à l'impératif"
+      },
+      {
+        "key": "1yk26q",
+        "front": "Vous devriez le lire → à l'impératif"
+      },
+      {
+        "key": "ezbi2d",
+        "front": "Tu devrais m'en dire plus → à l'impératif"
+      },
+      {
+        "key": "1mk8mfj",
+        "front": "Tu devrais y aller → à l'impératif"
+      },
+      {
+        "key": "10t9rk4",
+        "front": "Tu devrais en profiter → à l'impératif"
+      },
+      {
+        "key": "1xz45qm",
+        "front": "Tu devrais lui en offrir un → à l'impératif"
+      },
+      {
+        "key": "801v0v",
+        "front": "Tu devrais me le donner → à l'impératif"
+      },
+      {
+        "key": "1t92oyd",
+        "front": "Tu devrais te les couper plus courts → à l'impératif"
+      },
+      {
+        "key": "1rufvtf",
+        "front": "Tu devrais me le rappeler plus tard → à l'impératif"
+      },
+      {
+        "key": "716nw5",
+        "front": "Vous devriez vous en occuper maintenant → à l'impératif"
+      },
+      {
+        "key": "nyqkwk",
+        "front": "Vous devriez le lui dire → à l'impératif"
+      },
+      {
+        "key": "12pkqrd",
+        "front": "Mange-le."
+      },
+      {
+        "key": "17rmwi7",
+        "front": "Ne conduis pas trop vite !"
+      },
+      {
+        "key": "1tuhybi",
+        "front": "Parle-lui-en."
+      },
+      {
+        "key": "1bjuid8",
+        "front": "Donne-le-lui."
+      },
+      {
+        "key": "16hij3k",
+        "front": "Tais-toi !"
+      },
+      {
+        "key": "1uut1py",
+        "front": "Dépêche-toi !"
+      },
+      {
+        "key": "94js9j",
+        "front": "Ne sois pas timide !"
+      },
+      {
+        "key": "1dqgce3",
+        "front": "Choisis-en un !"
+      },
+      {
+        "key": "127hft3",
+        "front": "Dis-moi ce que tu as"
+      },
+      {
+        "key": "19bgq54",
+        "front": "Amuse-toi bien !"
+      },
+      {
+        "key": "rkwwpu",
+        "front": "Ne vous disputez pas !"
+      },
+      {
+        "key": "wq9n11",
+        "front": "Allons-y !"
+      },
+      {
+        "key": "17gg070",
+        "front": "Ne me parle pas comme ça !"
+      },
+      {
+        "key": "1g57rsg",
+        "front": "Profites-en bien !"
+      },
+      {
+        "key": "h99lso",
+        "front": "Rappelle-le-moi demain"
+      },
+      {
+        "key": "1md2a0m",
+        "front": "Dis-le-moi !"
+      },
+      {
+        "key": "1cvx3a4",
+        "front": "Donne-les-moi"
+      },
+      {
+        "key": "i8voth",
+        "front": "Tu devrais y retourner → à l'impératif"
+      },
+      {
+        "key": "1iph4js",
+        "front": "Tu devrais en regarder un → à l'impératif"
+      },
+      {
+        "key": "9fhnak",
+        "front": "Tu devrais y penser → à l'impératif"
+      }
+    ],
+    "adverbes": [
+      {
+        "key": "1ls543b",
+        "front": "relatif → adverbe"
+      },
+      {
+        "key": "1iwhiie",
+        "front": "heureux → adverbe"
+      },
+      {
+        "key": "8cr9ww",
+        "front": "doux → adverbe"
+      },
+      {
+        "key": "1nwjq3o",
+        "front": "complet → adverbe"
+      },
+      {
+        "key": "1bg47pf",
+        "front": "léger → adverbe"
+      },
+      {
+        "key": "oiq2be",
+        "front": "franc → adverbe"
+      },
+      {
+        "key": "1fg1fmt",
+        "front": "frais → adverbe"
+      },
+      {
+        "key": "1kulu6j",
+        "front": "naturel → adverbe"
+      },
+      {
+        "key": "ahbupb",
+        "front": "public → adverbe"
+      },
+      {
+        "key": "1oca9cq",
+        "front": "fou → adverbe"
+      },
+      {
+        "key": "112j9ak",
+        "front": "nouveau → Le directeur, ___ nommé, arrive lundi"
+      },
+      {
+        "key": "wnhwr7",
+        "front": "gentil → adverbe"
+      },
+      {
+        "key": "aji00f",
+        "front": "bref → adverbe"
+      },
+      {
+        "key": "14va4wy",
+        "front": "vrai → adverbe"
+      },
+      {
+        "key": "pka8uc",
+        "front": "poli → adverbe"
+      },
+      {
+        "key": "96puvq",
+        "front": "absolu → adverbe"
+      },
+      {
+        "key": "o44ig1",
+        "front": "carré → adverbe"
+      },
+      {
+        "key": "1qj5ui",
+        "front": "précis → adverbe"
+      },
+      {
+        "key": "1f70ofc",
+        "front": "profond → adverbe"
+      },
+      {
+        "key": "957ssa",
+        "front": "énorme → adverbe"
+      },
+      {
+        "key": "ixj4rn",
+        "front": "évident → adverbe"
+      },
+      {
+        "key": "korrpa",
+        "front": "fréquent → adverbe"
+      },
+      {
+        "key": "200r51",
+        "front": "patient → adverbe"
+      },
+      {
+        "key": "1ebn16z",
+        "front": "différent → adverbe"
+      },
+      {
+        "key": "1f2ytjg",
+        "front": "courant → adverbe"
+      },
+      {
+        "key": "1f29t22",
+        "front": "constant → adverbe"
+      },
+      {
+        "key": "15euzwj",
+        "front": "suffisant → adverbe"
+      },
+      {
+        "key": "vpq24j",
+        "front": "lent → adverbe"
+      },
+      {
+        "key": "1wdrbbj",
+        "front": "bon → adverbe"
+      },
+      {
+        "key": "gtabza",
+        "front": "mauvais → adverbe"
+      },
+      {
+        "key": "1ctzt31",
+        "front": "bon ou bien → Il parle ___ anglais"
+      },
+      {
+        "key": "c58ldo",
+        "front": "bon ou bien → C'est un ___ professeur"
+      },
+      {
+        "key": "2b4hz7",
+        "front": "bon ou bien → Tu as ___ fait de venir"
+      },
+      {
+        "key": "g7ip1e",
+        "front": "bon ou bien → Ce gâteau est très ___"
+      },
+      {
+        "key": "cw0alg",
+        "front": "bon ou bien → Je me sens ___ ici"
+      },
+      {
+        "key": "ahrw1q",
+        "front": "mauvais ou mal → J'ai ___ dormi"
+      },
+      {
+        "key": "svte3l",
+        "front": "mauvais ou mal → C'est une ___ idée"
+      },
+      {
+        "key": "1l9a78",
+        "front": "meilleur ou mieux → Elle chante ___ que moi"
+      },
+      {
+        "key": "15mqov",
+        "front": "meilleur ou mieux → Ce vin est ___ que l'autre"
+      },
+      {
+        "key": "1xumogw",
+        "front": "meilleur ou mieux → Je me sens ___ aujourd'hui"
+      },
+      {
+        "key": "xqg733",
+        "front": "meilleur ou mieux → C'est la ___ solution"
+      },
+      {
+        "key": "1ce8we8",
+        "front": "meilleur ou mieux → Laisse la fenêtre ouverte, c'est ___ comme ça"
+      },
+      {
+        "key": "kiy6cj",
+        "front": "pire ou plus mal → Il conduit ___ que son frère"
+      },
+      {
+        "key": "nxdis2",
+        "front": "pire ou plus mal → Ce film est ___ que le premier"
+      },
+      {
+        "key": "1rtvprp",
+        "front": "rapide ou vite → Il conduit trop ___"
+      },
+      {
+        "key": "3mc8vm",
+        "front": "rapide ou vite → C'est une voiture très ___"
+      },
+      {
+        "key": "1ruj36n",
+        "front": "cher → Ces chaussures coûtent ___"
+      },
+      {
+        "key": "19or7wb",
+        "front": "bon → Ces roses sentent ___"
+      },
+      {
+        "key": "1wcavz3",
+        "front": "fort → Elles parlent trop ___"
+      },
+      {
+        "key": "maft1r",
+        "front": "dur → Elles y croient ___ comme fer"
+      },
+      {
+        "key": "5gjk1p",
+        "front": "faux → Elle chante ___"
+      },
+      {
+        "key": "1madq77",
+        "front": "juste → Ils ont vu ___"
+      },
+      {
+        "key": "iktuul",
+        "front": "net → La voiture s'est arrêtée ___"
+      },
+      {
+        "key": "1mc2yo5",
+        "front": "clair → Maintenant, j'y vois ___"
+      },
+      {
+        "key": "1y70vji",
+        "front": "gros → Elles ont gagné ___ au casino"
+      },
+      {
+        "key": "1vrvxyq",
+        "front": "haut → Il dit tout ___ ce que les autres pensent tout bas"
+      },
+      {
+        "key": "1sl84bl",
+        "front": "fort → Les prix ont ___ augmenté"
+      },
+      {
+        "key": "zyfh0y",
+        "front": "dur → La région a été ___ touchée par la crise"
+      },
+      {
+        "key": "1470f2m",
+        "front": "cher → Une victoire ___ acquise"
+      },
+      {
+        "key": "1kbdyux",
+        "front": "net → C'est ___ mieux"
+      },
+      {
+        "key": "15bmmog",
+        "front": "clair → Il a expliqué le problème ___"
+      },
+      {
+        "key": "1jipmxo",
+        "front": "faux → Il a été ___ accusé"
+      },
+      {
+        "key": "1fe27o9",
+        "front": "haut → C'est ___ improbable"
+      },
+      {
+        "key": "1l94h09",
+        "front": "juste → Tu parles de Paul ? ___, je voulais te parler de lui"
+      },
+      {
+        "key": "57ncs0",
+        "front": "exprès ou expressément → Désolé, je ne l'ai pas fait ___"
+      },
+      {
+        "key": "g79q9m",
+        "front": "exprès ou expressément → Il est ___ interdit de fumer ici"
+      },
+      {
+        "key": "11tf2lj",
+        "front": "longtemps ou longuement → Je ne l'ai pas vu depuis ___"
+      },
+      {
+        "key": "1njg478",
+        "front": "longtemps ou longuement → Il a répondu ___ et en détail à nos questions"
+      },
+      {
+        "key": "102mbk4",
+        "front": "intéressant → adverbe"
+      },
+      {
+        "key": "e4iy48",
+        "front": "fâché → Il m'a regardé ___"
+      },
+      {
+        "key": "gpewko",
+        "front": "actuellement"
+      },
+      {
+        "key": "1v5gkxi",
+        "front": "éventuellement"
+      },
+      {
+        "key": "1hhjt1m",
+        "front": "effectivement"
+      },
+      {
+        "key": "350j4c",
+        "front": "forcément"
+      },
+      {
+        "key": "1bbetfu",
+        "front": "dernièrement"
+      },
+      {
+        "key": "sbn08e",
+        "front": "sensiblement"
+      },
+      {
+        "key": "1qm062s",
+        "front": "définitivement"
+      },
+      {
+        "key": "1q25j1o",
+        "front": "incessamment"
+      },
+      {
+        "key": "qj32mz",
+        "front": "Tu as largement le temps"
+      },
+      {
+        "key": "1p6m8pd",
+        "front": "enfin ou finalement → On voulait aller en Italie, mais ___ on est allés en Espagne"
+      },
+      {
+        "key": "govk69",
+        "front": "enfin ou finalement → ___ ! Ça fait une heure que je t'attends"
+      }
+    ]
+  },
+  "retired": {}
+}
