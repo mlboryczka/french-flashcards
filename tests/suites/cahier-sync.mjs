@@ -214,6 +214,50 @@ console.log("\n  a word taught again keeps the card the student has");
   ck("and it is reported as seen again, not as new", r.cardsAdded === 0 && r.cardsSeenAgain === 1, JSON.stringify(r));
 }
 
+console.log("\n  a word the deck has written another way is not added again");
+{
+  // 2026-09-25: the owner's first sync added "gratuit (adj)" beside "gratuit",
+  // "un prêt" beside "le prêt (bancaire)", "rendre" beside "rendre (to return;
+  // to give back)" — 18 copies of cards the deck already had, matched only on
+  // the exact front. Look-alikes that are different cards must still arrive.
+  const admin = fakeAdmin({
+    user_cards: [
+      { id: 1, user_id: USER, front: "gratuit", back: "free", category: "V", dates: ["2026-01-10"], source: "cahier-upload" },
+      { id: 2, user_id: USER, front: "le cas", back: "the case", category: "V", dates: ["2026-02-10"], source: "cahier-upload" },
+      { id: 3, user_id: USER, front: "planter", back: "to plant", category: "V", dates: ["2026-03-10"], source: "cahier-upload" },
+      { id: 4, user_id: USER, front: "le poste", back: "the position, the job", category: "V", dates: ["2026-03-10"], source: "cahier-upload" },
+      { id: 5, user_id: USER, front: "fin", back: "the end", category: "V", dates: ["2026-03-10"], source: "cahier-upload" },
+      { id: 6, user_id: USER, front: "occupé", back: "busy", category: "V", dates: ["2026-03-10"], source: "archived:cahier-upload" },
+    ],
+    cahier_links: [{ user_id: USER, doc_id: "DOC1", doc_url: URL_1, classes: {} }],
+  });
+  doc.text = cahier([[14, "septembre", "sosies"]]);
+  claudeReply = [
+    { front: "gratuit (adj)", back: "free; complimentary", category: "V" },
+    { front: "un cas", back: "a case", category: "V" },
+    { front: "planter (fam)", back: "to fail; to crash", category: "V" },
+    { front: "la poste", back: "the post office", category: "V" },
+    { front: "fin (adj)", back: "thin; fine", category: "V" },
+    { front: "occupé (adj)", back: "busy", category: "V" },
+    { front: "un souci", back: "a worry", category: "V" },
+    { front: "le souci", back: "the worry", category: "V" },
+  ];
+  const r = await run(admin);
+  claudeReply = null;
+  const fronts = deck(admin).map((c) => c.front);
+  const dates = (front) => JSON.stringify(deck(admin).find((c) => c.front === front)?.dates);
+  ck("another spelling of a word the deck has adds no card", !fronts.includes("gratuit (adj)") && !fronts.includes("un cas"), fronts.join(" | "));
+  ck("the card the student has gains the class instead", dates("gratuit").includes("2026-09-14") && dates("le cas").includes("2026-09-14"),
+     `${dates("gratuit")} ${dates("le cas")}`);
+  ck("a different meaning behind a tag still arrives: planter (fam)", fronts.includes("planter (fam)"));
+  ck("a different gender still arrives: la poste beside le poste", fronts.includes("la poste"));
+  ck("the same spelling with a different English still arrives: fin (adj) beside fin (the end)", fronts.includes("fin (adj)"));
+  ck("a card taken out of study is not what a new one joins", fronts.includes("occupé (adj)"));
+  ck("two spellings in the same class make one card", fronts.filter((f) => f === "un souci" || f === "le souci").length === 1,
+     fronts.filter((f) => /souci/.test(f)).join(" | "));
+  ck("and they are counted as seen again, not as new", r.cardsSeenAgain === 2 && r.cardsAdded === 5, JSON.stringify({ added: r.cardsAdded, again: r.cardsSeenAgain }));
+}
+
 console.log("\n  a class's grammar rules and sound notes never reach the deck");
 {
   // The owner's rule (2026-09-24): a card must be answerable by typing. So a

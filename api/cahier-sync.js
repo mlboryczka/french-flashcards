@@ -42,6 +42,8 @@ import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 
 import { requireUser } from "./_lib/auth.js";
+import { sameCardKey, findSameCard } from "../src/lib/sameCard.js";
+import { isArchived } from "../src/lib/archive.js";
 import {
   fetchGoogleDoc,
   sliceIntoBlocks,
@@ -267,8 +269,35 @@ async function classesAlreadyInDeck(admin, userId) {
   return classes;
 }
 
+// The deck's cards in study, by sameCardKey, for spotting a word the student
+// already has written another way.
+async function deckByKey(admin, userId) {
+  const byKey = new Map();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin
+      .from("user_cards").select("id, front, back, dates, source").eq("user_id", userId)
+      .order("id", { ascending: true }).range(from, from + PAGE - 1);
+    if (error) throw new Error(`Couldn't read the deck: ${error.message}`);
+    for (const row of data || []) {
+      if (isArchived(row)) continue;
+      const k = sameCardKey(row.front);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(row);
+    }
+    if (!data || data.length < PAGE) break;
+  }
+  return byKey;
+}
+
 // Insert what is new; for a word the student already has, add the class date
 // and nothing else (rule 3 above).
+//
+// "Already has" includes the same word written another way: "gratuit (adj)"
+// when the deck has "gratuit", "un cas" when it has "le cas". Matching on the
+// exact front alone let a cahier sync add 18 such copies to the owner's deck
+// on 2026-09-25. What counts as the same card is narrow on purpose — see
+// src/lib/sameCard.js.
 async function writeCards(admin, userId, cards) {
   const wanted = cards.filter((c) => c?.front && c?.back);
   if (wanted.length === 0) return { added: 0, updated: 0 };
@@ -277,27 +306,45 @@ async function writeCards(admin, userId, cards) {
   const fronts = wanted.map((c) => c.front);
   for (let i = 0; i < fronts.length; i += 200) {
     const { data, error } = await admin
-      .from("user_cards").select("id, front, dates").eq("user_id", userId).in("front", fronts.slice(i, i + 200));
+      .from("user_cards").select("id, front, dates, source").eq("user_id", userId).in("front", fronts.slice(i, i + 200));
     if (error) throw new Error(`Couldn't read the deck: ${error.message}`);
     for (const row of data || []) existing.set(row.front, row);
   }
 
+  // An exact match that is out of study (archived) gives way to a look-alike
+  // that is in it, so the class date lands on the card being studied.
+  const liveExact = (c) => { const r = existing.get(c.front); return r && !isArchived(r) ? r : null; };
+  const byKey = wanted.some((c) => !liveExact(c)) ? await deckByKey(admin, userId) : new Map();
   const inserts = [];
+  const pending = new Set();
   let updated = 0;
   for (const c of wanted) {
     const dates = Array.isArray(c.dates) ? c.dates : [];
-    const row = existing.get(c.front);
+    const row = liveExact(c) || findSameCard(c, byKey) || existing.get(c.front);
     if (!row) {
-      inserts.push({
+      const insert = {
         user_id: userId, front: c.front, back: c.back, category: c.category,
         dates, source: c.source || "cahier-upload",
-      });
+      };
+      inserts.push(insert);
+      pending.add(insert);
+      // A second spelling later in the same run joins this one.
+      const k = sameCardKey(c.front);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(insert);
+      continue;
+    }
+    if (pending.has(row)) {
+      // One of this run's own inserts: it takes the class date too.
+      row.dates = [...new Set([...row.dates, ...dates])].sort();
       continue;
     }
     const merged = [...new Set([...(Array.isArray(row.dates) ? row.dates : []), ...dates])].sort();
     if (merged.length === (row.dates || []).length) continue;
     const { error } = await admin.from("user_cards").update({ dates: merged }).eq("id", row.id);
     if (error) throw new Error(`Couldn't update a card: ${error.message}`);
+    // Kept in step, in case another spelling in this run lands on it too.
+    row.dates = merged;
     updated++;
   }
 
