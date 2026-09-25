@@ -40,6 +40,29 @@ console.log("\n  the estimate is FSRS's own recall probability right now");
      retrievability({ fsrs_state: 2, stability: null, last_review: null }, NOW) === 0);
 }
 
+// 2026-09-25, the owner's adverb lesson: 6 right and 5 wrong read "about 11
+// of 81 remembered". ts-fsrs counts time in whole days, rounded down, so every
+// card answered in the last 24 hours read 100%, missed ones included.
+console.log("\n  a missed card is not remembered, and the estimate moves within the day");
+{
+  const missed = seenCard(0.21, 1 / 24, { last_answer_correct: false });
+  ck("a card missed an hour ago counts as nothing", retrievability(missed, NOW) === 0);
+  ck("nor a week later", retrievability(seenCard(0.21, 7, { last_answer_correct: false }), NOW) === 0);
+  ck("answered right, it counts again", retrievability(seenCard(2.3, 1 / 24, { last_answer_correct: true }), NOW) > 0.95);
+  const soon = retrievability(seenCard(2.3, 1 / 24, { last_answer_correct: true }), NOW);
+  const halfDay = retrievability(seenCard(2.3, 0.5, { last_answer_correct: true }), NOW);
+  ck("it falls within the first day, not all at once at 24 hours", halfDay < soon && halfDay < 0.99,
+     `${soon.toFixed(4)} → ${halfDay.toFixed(4)}`);
+  const lesson = [
+    ...Array.from({ length: 6 }, () => seenCard(2.3, 1 / 60, { last_answer_correct: true })),
+    ...Array.from({ length: 5 }, () => seenCard(0.21, 1 / 60, { last_answer_correct: false })),
+    ...Array.from({ length: 70 }, () => unseen()),
+  ];
+  const s = summarize(lesson, NOW);
+  ck("6 right and 5 wrong a minute ago: about 6 remembered, 11 seen", aboutRemembered(s) === 6 && s.seen === 11,
+     `about ${aboutRemembered(s)} remembered, ${s.seen} seen`);
+}
+
 console.log("\n  seen, about N remembered, not yet seen");
 {
   const cards = [seenCard(60, 60), seenCard(60, 60), seenCard(60, 0), unseen(), unseen()];
