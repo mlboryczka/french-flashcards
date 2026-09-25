@@ -39,9 +39,9 @@ import { PANEL_EASING } from "./lib/motion";
 //     card-specific feedback. The flag on the card itself opens the panel
 //     with this switched on (`attachRequest`).
 //
-// Requires migration_003_feedback_card_context.sql to add the
-// card_context column. Screenshot upload still works as before
-// (requires the `screenshot` column from the earlier migration).
+// Stored in beta_feedback.card_context (supabase/schema.sql). The column
+// and `screenshot` are nullable, and the client retries without them if a
+// database predates them.
 
 const TOAST_MS = 5000;
 // Short: the panel moves nothing but itself, so it has no page movement to

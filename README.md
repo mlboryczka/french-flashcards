@@ -1,28 +1,47 @@
 # French Flashcards
 
-A spaced-repetition flashcard app for learning French. Upload a class notebook,
-Claude parses it into cards, and FSRS decides what you see and when.
+A spaced-repetition flashcard app for learning French. Upload a class notebook
+(or link the Google Doc it is kept in), Claude parses it into cards, and FSRS
+decides what you see and when.
 
 Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.vercel.app).
 
 ## What's in it
 
-- **Notebook parsing.** `api/parse-cahier.js` turns raw notebook text (PDF or
-  Word) into cards: section slicing, homework stripping, slash-pair splitting,
-  conjugation expansion, polysemy-aware dedupe.
+- **Notebook parsing.** `api/parse-cahier.js` turns raw notebook text (pasted,
+  a `.txt`, `.pdf` or `.docx`, or a Google Doc link) into cards: section
+  slicing, homework stripping, slash-pair splitting, conjugation expansion,
+  polysemy-aware dedupe.
+- **The linked cahier.** Link the Google Doc the notebook is kept in and each
+  new class becomes cards on its own (`api/cahier-sync.js`). The app checks
+  when it opens, at most once an hour per browser, and a daily cron
+  (`api/cahier-daily.js`) reads the linked docs whether or not anyone opens
+  the app. Only classes it hasn't read are parsed. Editing an old class
+  changes nothing, and a word taught again keeps its card and gains the date.
 - **FSRS scheduling.** Per-card memory strength rather than a fixed ladder, so
-  intervals keep growing and a miss shortens the gap instead of wiping it.
-- **Session building.** `src/lib/sessionQueue.js` selects by priority — lapses,
-  due reviews, new cards, and a spot-check sample of mastered ones — reserving
-  the new and spot-check slots *before* the target is spent on due work, then
-  shuffles. Blocked practice feels easier during a session and tests worse
-  afterwards.
-- **Card quality.** Two mechanisms for the two ways a card goes bad: an English
-  gloss leaking onto the French side, and one card teaching two unrelated words
-  that happen to share a spelling. A bad card is worse than no card, because
-  FSRS records a recall that never happened.
-- **Lessons.** Fixed card sets built from a teacher's materials, synced into a
-  learner's deck on load and scheduled through FSRS like anything else.
+  intervals keep growing and a miss shortens the gap instead of wiping it. A
+  word can be asked either way round (FR→EN, EN→FR or Mixed), and each way has
+  its own schedule.
+- **Session building.** `src/lib/sessionQueue.js` deals blocks of 50: cards
+  missed last time, then reviews due today (most overdue first), then new
+  cards — but only once the due cards run out — plus two spot-checks of
+  well-known cards. Then it shuffles. Blocked practice feels easier during a
+  session and tests worse afterwards.
+- **Card quality.** Three mechanisms for three ways a card goes bad: an English
+  gloss leaking onto the French side; one card teaching two unrelated words
+  that happen to share a spelling; and a card with no single answer to type —
+  a grammar rule or a pronunciation note — which the parser no longer makes
+  (`keepAnswerable`). A bad card is worse than no card, because FSRS records a
+  recall that never happened.
+- **Marking.** A typed answer is forgiven small typos, but not a wrong gender
+  on a French article. A grammar drill answered in French — "vivre → je",
+  "relatif → adverbe" — is marked exactly (case, accents and punctuation
+  aside), because the typo tolerance accepted the very mistakes being drilled.
+  Grammar drills and the lessons' grammar cards carry a line above the prompt
+  saying exactly what to type (`src/lib/cardInstruction.js`).
+- **Lessons.** Fixed card sets, the same for everyone, synced into every deck
+  on load and scheduled through FSRS like anything else. There are two:
+  *L'impératif* and *Adjectif ou adverbe ?*, each with its own notes in tabs.
 - **Tutor chat.** A side panel that proposes new cards; the client performs the
   insert under row-level security, so the model never writes to the database.
 
@@ -33,23 +52,37 @@ Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.verce
 | Frontend | Vite + React 18 — no router, no CSS framework |
 | Scheduling | [`ts-fsrs`](https://www.npmjs.com/package/ts-fsrs) 5.4 |
 | Auth + data | Supabase — Postgres, magic-link email, row-level security |
-| AI | Anthropic SDK, called only from serverless functions |
-| Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
+| AI | Anthropic SDK, called only from serverless functions and the maintenance scripts |
+| Hosting | Vercel — `api/*.js` are serverless functions, plus one daily cron (`vercel.json`); auto-deploys on push to `main` |
 | Tests | `playwright-core` driving headless Chromium against a mock Supabase |
 
 ## Layout
 
 ```
-api/           10 serverless functions: notebook parsing, tutor chat, sense
-               splitting, answer adjudication, admin and upload plumbing.
-               api/_lib is import-only — the underscore hides it from Vercel's
-               function discovery
+api/           12 serverless functions: notebook parsing and the linked
+               cahier's sync, tutor chat, sense splitting, answer
+               adjudication, admin and upload plumbing. cahier-daily.js is
+               the daily cron. api/_lib is import-only — the underscore
+               hides it from Vercel's function discovery
 src/           React app
-src/lib/       scheduling, session building, card classification, text cleanup
-src/data/      the deck, and static lessons
-migrations/    run in order in the Supabase SQL editor
+src/lib/       scheduling, session building, card classification, text
+               cleanup; cardInstruction.js writes the line above a grammar
+               card saying what to type
+src/data/      lessons/ (index.js is the catalogue, then one file per
+               lesson: imperatif.js, adverbes.js) and cards.js, the demo
+               deck behind the admin's "Seed demo deck" button
+migrations/    run in order in the Supabase SQL editor, after schema.sql
 supabase/      schema.sql for a fresh deploy
-tests/         15 suites, most driving the real app in a browser
+scripts/       maintenance runners against the live database: dry-run by
+               default, --apply to write. sort-grammar-cards.mjs and
+               reset-fsrs-seed.mjs back rows up to backups/ (kept out of
+               git) before writing
+scripts/data/  grammar-sort-decisions.json, the owner's card-by-card sort
+               of the original deck's grammar cards, read by
+               sort-grammar-cards.mjs
+tests/         23 suites: 14 drive the real app in a browser, 9 need none
+french flashcards context.md
+               the project's working notes: how it is, why, and what's open
 ```
 
 ## Tests
@@ -58,6 +91,11 @@ tests/         15 suites, most driving the real app in a browser
 npm test              every suite
 npm test -- layout    only suites whose name contains "layout"
 ```
+
+The nine suites that need no browser run first. For the browser suites,
+`npm test` writes a throwaway `.env.local` pointing the app at a mock Supabase,
+and it refuses to start while a real `.env.local` is there — move yours aside
+first.
 
 Suites assert on **measured** values — geometry, computed styles, request
 payloads — rather than on intent. [`tests/README.md`](tests/README.md) lists what
@@ -75,10 +113,16 @@ each suite covers and the rules the suite exists to enforce.
 ### 2. Set up the database
 
 1. In your Supabase project dashboard, go to **SQL Editor** → **New query**.
-2. Open `supabase/schema.sql` from this repo, copy the entire contents, paste
-   into the editor, and click **Run**.
-3. You should see "Success. No rows returned." This creates the `card_progress`
-   table and sets up row-level security so each user can only see their own data.
+2. Open `supabase/schema.sql` from this repo and replace every
+   `YOUR_EMAIL_HERE@example.com` with the email you will log in with. Copy the
+   entire contents, paste into the editor, and click **Run**.
+3. You should see "Success. No rows returned." This creates the tables — the
+   deck, progress, feedback, accepted answers — with row-level security, so
+   each user can only see their own data.
+4. Then run each file in `migrations/` the same way, in number order.
+   `migration_002` and `migration_009` have the same email placeholder to
+   replace; `migration_003` has the original owner's address where the
+   placeholder would be, so replace that with yours too.
 
 ### 3. Configure auth URLs
 
@@ -115,6 +159,9 @@ npm run dev
 Open http://localhost:5173. You should see the login screen. Enter your email,
 click the link in your inbox, and you should land on the flashcard app.
 
+Vite serves the app but not the `api/` functions, so anything that calls one —
+uploading a notebook, the tutor, disputing a mark — needs the deployed site.
+
 ### 6. Deploy to Vercel
 
 The easiest path: push to GitHub and connect the repo.
@@ -133,9 +180,28 @@ Then:
 1. Go to [vercel.com](https://vercel.com), sign in with GitHub.
 2. Click **Add New Project** → **Import** your repo.
 3. Vercel auto-detects Vite. Before deploying, expand **Environment Variables**
-   and add:
+   and add the variables in `.env.example`, plus `CRON_SECRET`:
    - `VITE_SUPABASE_URL` → your Supabase URL
    - `VITE_SUPABASE_ANON_KEY` → your anon key
+   - `VITE_ADMIN_EMAIL` → your email. It only decides whether the admin menu
+     items are drawn — anything `VITE_`-prefixed is compiled into the public
+     bundle, so it is never a security boundary. `ADMIN_EMAIL` is.
+   - `SUPABASE_URL` → same as `VITE_SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY` → Supabase → Project Settings → API →
+     **service_role** → **Reveal**. ⚠️ This key bypasses row-level security
+     entirely. Never commit it, never paste it into frontend code, never share
+     it. The serverless functions use it to verify who is calling.
+   - `ADMIN_EMAIL` → your email. **This is the real admin check.** It is read
+     only on the server, and the token it is compared against is verified with
+     Supabase rather than merely decoded.
+   - `ANTHROPIC_API_KEY` → a key from
+     [console.anthropic.com](https://console.anthropic.com). It pays for
+     reading every student's linked cahier, and for your own requests (see
+     *Who pays for Claude* below).
+   - `CRON_SECRET` → any long random string. Vercel sends it with the daily
+     cahier check; without it that route refuses to run.
+
+   None but the three `VITE_` ones reach the browser.
 4. Click **Deploy**. After ~1 minute you'll have a `your-app.vercel.app` URL.
 
 ### 7. Update Supabase with the production URL
@@ -167,6 +233,15 @@ intervals keep growing (3d, 14d, 57d, 196d, ...), a late-but-correct answer
 earns a longer gap than an on-time one, and a miss cuts the interval
 proportionally rather than wiping it.
 
+**Each way round has its own schedule.** A word or phrase can be asked either
+way — "la pomme → ?" or "apple → ?" — and each direction has its own FSRS state
+(`migrations/migration_010_two_directions.sql`), because recognising a word and
+producing it are different skills. Grammar cards are asked one way only.
+
+**FSRS gets one answer per card, per direction, per day: the first.** A retry
+later in the block, or the same card in a second block that day, is not
+counted again. Every answer is still kept, in `card_reviews`.
+
 **Setup.** Run these two in the Supabase SQL Editor, in order:
 
 1. `migrations/migration_006_fsrs.sql` — adds the FSRS columns.
@@ -176,10 +251,10 @@ proportionally rather than wiping it.
 The split matters. Seeding lives entirely in 007 and is driven by the three
 signals that actually record a review (`card_progress.seen`, the old Leitner
 `box`, and `lapses`), so 007 is safe to re-run and re-running 006 can never
-undo it. Cards you've never answered stay in the New state and get paced in at
-the normal 20-per-session rate; cards with real history carry that history over
-rather than restarting. The old `box` column is left in place, so the change
-can be reversed.
+undo it. Cards you've never answered stay in the New state and come in through
+the normal new-card order, once the due cards run out; cards with real history
+carry that history over rather than restarting. The old `box` column is left
+in place, so the change can be reversed.
 
 > Note for anyone reading old commits: the `dates` column holds the **lesson
 > dates a word appeared on in the cahier**, not review history. Every parsed
@@ -199,99 +274,84 @@ remember:
 | `0.85` | Meaningfully fewer reviews, slightly more forgetting |
 | `0.80` | Use if the daily load has become unsustainable |
 
-Answers are graded binary — you typed it right or you didn't — and mapped onto
-FSRS's `Again` and `Good` ratings. The `Hard` and `Easy` ratings are for apps
-where you rate your own recall; here the typing check is the grade.
+Answers are graded binary — you typed it right or you didn't (or, flipping
+cards instead of typing, you pressed Got It or Again) — and mapped onto FSRS's
+`Again` and `Good` ratings. The `Hard` and `Easy` ratings are for apps where
+you rate your own recall on a scale; here the grade is right or wrong.
 
 ## Updating the cards
 
-Your teacher is still adding to the lesson log. To update the deck:
+Each learner's deck is their own rows in the `user_cards` table; nothing about
+it is compiled into the app. Cards arrive four ways:
 
-1. Edit `src/data/cards.js` — the format is
-   `[frontText, backText, category, [dateArray]]` for `RAW` and
-   `[sentenceWithBlank, answer, hint, category, englishTranslation]` for `BLANKS`.
-2. Use constants `V`, `E`, `G`, `P` for the categories
-   (Vocab / Expression / Grammar / Pronunciation).
-3. Commit and push — Vercel auto-deploys on push to main.
+- **Upload document** (profile menu): paste the notebook's text, or drop a
+  `.txt`, `.pdf` or `.docx`. It is parsed once.
+- **A linked Google Doc**, from the same dialog's Google Doc link tab. The doc
+  must be shared as "Anyone with the link can view". From then on each new
+  class becomes cards by itself (see *What's in it*).
+- **The tutor**, whose proposed cards are added from the chat.
+- **Lessons**, synced into every deck on load.
 
-Progress is keyed by the lowercased front text. So if you edit a card's front
-text, users will lose progress on that specific card (the new text is a new
-card from the app's perspective). Adding new cards or editing back text is
-safe.
+A card can be edited in the app. Its schedule lives on its own row, so a new
+front keeps its history — but accepted answers (`card_alternates`) are keyed by
+the lowercased front text and don't follow the edit.
 
-## The user feedback loop (LLM-reviewed)
+To change a lesson, edit its file in `src/data/lessons/` and push; Vercel
+auto-deploys on push to main. On the next load every deck gains the lesson's
+new cards and loses the ones it dropped. To reword a card's front, keep the old
+front as the entry's fifth element: that is the card's identity, so the rename
+neither retires the row nor resets its schedule. A lesson card whose front a
+deck already has as its own card is skipped for that deck.
 
-When a user types an answer that the matcher rejects but the user thinks should
-have been accepted (e.g., they typed "salesperson" for "le vendeur"), they can
-hit a button to flag it. The submission goes to Supabase, then a serverless
-function asks Claude whether the answer is equivalent. You see the verdict in
-an admin tab, approve or reject, and approved answers become live alternates
-without redeploying.
+`src/data/cards.js` is only the demo deck behind the admin's **Seed demo deck**
+button.
 
-### Setup (one-time, ~15 min)
+## When the marking is wrong (LLM-reviewed)
 
-The first deploy steps above must be done first. Then:
+When a user types an answer that the matcher rejects but they think should
+have been accepted (e.g., they typed "salesperson" for "le vendeur"), they
+click **My answer should be accepted** under the card. `/api/review-answer`
+asks Claude whether the answer is equivalent — `accept`, `reject` or
+`uncertain`, with a one-sentence reason — and the verdict appears on the card
+straight away.
 
-**1. Run the migration**
+- **Accept**: the answer counts as right, and it is saved to `card_alternates`
+  as an accepted answer for that user from then on. No approval step, no
+  redeploy.
+- **Reject or uncertain**: the reason is shown, with an **Accept anyway**
+  button that saves the answer without asking Claude, so it costs nothing.
 
-In Supabase SQL Editor, open `supabase/migration_001_feedback.sql` from this
-repo. Before running, search-and-replace `YOUR_EMAIL_HERE@example.com` with the
-email you log in with. Click Run.
+Accepted answers belong to the person who earned them
+(`migrations/migration_008_card_alternates_per_user.sql`). The table used to be
+shared, so one learner's loose synonym became accepted for everyone holding the
+card.
 
-This adds two tables (`feedback_submissions`, `card_alternates`) and the
-row-level security policies that give you admin access to both.
+Anything else — a bad card, a bug, a suggestion — goes through **Send
+feedback** in the sidebar: a message, optionally with a screenshot and the card
+on screen. It lands in `beta_feedback`, the admin reads it under **profile menu
+→ View feedback**, and `scripts/resolve-feedback.mjs` marks entries resolved
+once they are dealt with (`migration_009`).
 
-**2. Set the admin email in your local env**
+### Security model
 
-Add this line to `.env.local`:
+- Every function a user calls verifies their session with Supabase rather than
+  decoding it. The admin-only ones also check `ADMIN_EMAIL`.
+- An accepted answer is written for the verified caller only, under their own
+  `user_id`. Each user can read and change only their own `card_alternates`
+  rows (RLS).
+- Feedback: anyone signed in can send it and read their own; only the admin
+  email can read everyone's (RLS, in `schema.sql`).
+- The daily cahier check runs only when the request carries `CRON_SECRET`.
+- The server's `ANTHROPIC_API_KEY` never reaches the browser. A user's own key
+  stays in their browser (see below).
 
-```
-VITE_ADMIN_EMAIL=your@email.com
-```
+## Who pays for Claude
 
-Same email as in the SQL. This is what tells the React app to show the
-"Feedback" tab when you log in.
-
-**3. Get an Anthropic API key**
-
-Go to [console.anthropic.com](https://console.anthropic.com), create a
-workspace, generate an API key. You'll get billed per request — for this use
-case it'll be cents per month even with heavy use, since each review is one
-small Claude call.
-
-**4. Get your Supabase service role key**
-
-Supabase dashboard → Project Settings → API → scroll to **service_role** →
-**Reveal** → copy. ⚠️ This key bypasses row-level security entirely. Never
-commit it, never paste it into frontend code, never share it. The serverless
-function uses it to update feedback rows after the LLM verdict comes back.
-
-**5. Add server-side env vars to Vercel**
-
-Vercel dashboard → your project → Settings → Environment Variables. Add these
-(all without the `VITE_` prefix, so they stay server-side only):
-
-- `SUPABASE_URL` → same as `VITE_SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY` → service role key from step 4
-- `ADMIN_EMAIL` → your email. **This is the real admin check.** It is read
-  only on the server, and the token it is compared against is verified with
-  Supabase rather than merely decoded.
-- `ANTHROPIC_API_KEY` → optional, your key from step 3. Used **only** for
-  requests from `ADMIN_EMAIL`. Every other user brings their own key (see
-  *Who pays for Claude* below), so leaving this unset simply means you bring
-  yours too.
-
-Also add `VITE_ADMIN_EMAIL` to Vercel (this one DOES use the VITE_ prefix
-because it's read in the browser). It only decides whether the admin menu
-items are drawn — anything `VITE_`-prefixed is compiled into the public
-bundle, so it is never a security boundary. `ADMIN_EMAIL` is.
-
-### Who pays for Claude
-
-Every endpoint that calls Claude — the tutor (`api/chat.js`), the answer
-reviewer (`api/review-answer.js`), the cahier parser (`api/parse-cahier.js`,
-`api/cahier-parse.js`) and the sense auditor (`api/split-senses.js`) — bills
-an Anthropic account per request.
+**Your own requests use your own key.** The tutor (`api/chat.js`, Sonnet 5),
+the answer reviewer (`api/review-answer.js`, Opus 5), the notebook upload
+(`api/parse-cahier.js` and `api/cahier-parse.js`, Haiku 4.5) and the sense
+auditor (`api/split-senses.js`, Opus 5) bill the caller's Anthropic account
+per request.
 
 Each user supplies their own key through **profile menu → Connect Claude
 account**. It is kept in that browser's `localStorage` and sent as an
@@ -301,61 +361,22 @@ credentials.
 
 Without a key the server answers `402` and the client offers the dialog. The
 one exception is `ADMIN_EMAIL`, whose requests fall back to
-`ANTHROPIC_API_KEY` above.
+`ANTHROPIC_API_KEY`.
 
-This closed a real hole: `/api/chat` and `/api/split-senses` previously
-accepted any signed-in caller and `/api/review-answer` accepted *anyone*,
-all of them spending the deploy owner's Anthropic credit.
+**The linked cahier uses the deploy owner's key.** `api/cahier-sync.js` and the
+daily `api/cahier-daily.js` read new classes with `ANTHROPIC_API_KEY` (Haiku
+4.5) for every student: a class is a few hundred words, and the daily check
+runs with no student there to pay. Without that key the sync says so plainly
+and does nothing.
 
-**6. Redeploy**
+Bringing your own key closed a real hole: `/api/chat` and `/api/split-senses`
+previously accepted any signed-in caller and `/api/review-answer` accepted
+*anyone*, all of them spending the deploy owner's Anthropic credit.
 
-Vercel → Deployments → click the latest → click **...** → **Redeploy**.
-Or just push any git commit and it'll auto-redeploy. The new
-`api/review-answer.js` will be picked up as a serverless function automatically.
+## Not built yet
 
-### How it flows
-
-1. User types a wrong answer → sees "✗ Answer: ..."
-2. Clicks "My answer should have been accepted"
-3. Row goes into `feedback_submissions` with `status='pending'`
-4. Client fires-and-forgets a POST to `/api/review-answer`
-5. Serverless function fetches the row, sends it to Claude with the prompt
-   "is this equivalent?"
-6. Claude returns `accept` / `reject` / `uncertain` + a one-sentence reason
-7. The verdict gets written back to the same row
-8. You see the row in the **Feedback** tab when you log in
-9. You click **Approve** → an entry lands in `card_alternates` and is
-   immediately used by the matcher for everyone
-10. Or you click **Reject** → row marked reviewed, no change to the deck
-
-### What it costs
-
-- **Claude API**: rough estimate is $0.002 per review (Sonnet 4.5, ~500 tokens
-  in/out). 1,000 reviews ≈ $2. Realistically you'll get a few per day.
-- **Supabase**: free tier is fine, the new tables are tiny.
-- **Vercel**: free tier includes serverless function invocations.
-
-### Security model
-
-- Users can only see/insert their own feedback rows (RLS).
-- You (admin email) can read everyone's feedback and approve/reject.
-- The serverless function uses the service-role key to update rows after the
-  LLM verdict, bypassing RLS — but it only does so for the specific
-  `submissionId` passed in, so a malicious caller can't read other users' data.
-- The Anthropic API key is never exposed to the browser; it lives only in
-  Vercel's environment variables and is used by the serverless function.
-- The `card_alternates` table is readable by all signed-in users (so the
-  matcher works) but only writable by admin.
-
-
-
-- **Multiple decks**: right now every user shares the same 919 cards. If you
-  want each teacher to have their own deck, you'd add a `decks` table and let
-  users pick one on login.
-- **Stats for the teacher**: a page where your teacher can see aggregate
-  progress across all students. Would need a new admin-only RLS policy.
-- **Import from Google Doc**: parse your lesson log automatically instead of
-  hand-editing `cards.js`. Not trivial because of the table formatting.
+- **Stats for the teacher**: the admin's **View users** lists each user's deck
+  size and last activity, but there is no page for the teacher herself.
 - **Mobile app**: the current app works fine in mobile browsers; wrapping it in
   Capacitor or PWA-enabling it would make it installable.
 
@@ -383,7 +404,6 @@ by anything and can be deleted from the Vercel project.
 The pronunciation-scoring UI is still in `FlashcardApp.jsx` behind
 `PRONUNCIATION_ENABLED`, which is `false`.
 
-
 ## Cost
 
 Supabase free tier: unlimited API requests, 500 MB database, 50k monthly
@@ -392,4 +412,11 @@ active users. You'll never come close.
 Vercel free tier: 100 GB bandwidth, unlimited deploys. Fine for hundreds of
 testers.
 
-Total cost to run: $0.
+Claude is the only bill. Rough estimates:
+
+- **The linked cahier** (the deploy owner's key): a cent or two per new class —
+  one Haiku 4.5 call, a few thousand tokens in and out.
+- **A disputed answer** (the user's own key): under 3¢ — one Opus 5 call with a
+  short prompt and a reply capped at 1,000 tokens.
+
+Hosting costs nothing.

@@ -30,7 +30,7 @@ the lesson-bar-by-section item. Don't read it as a description of the app.
 | Frontend | Vite + React 18, no router, no CSS framework — styles are inline objects in a `S` / `T` theme constant |
 | Scheduling | `ts-fsrs` 5.4.2 |
 | Auth + data | Supabase (Postgres, magic-link email, RLS), free tier |
-| AI | `@anthropic-ai/sdk` ^0.124.0, called only from serverless functions. Model is per route — see the table under Serverless functions. **Each user brings their own API key** (see Who pays for Claude) |
+| AI | `@anthropic-ai/sdk` ^0.124.0, called only from serverless functions. Model is per route — see the table under Serverless functions. **Each user brings their own API key**, except for the linked cahier (see Who pays for Claude) |
 | Hosting | Vercel — `api/*.js` are serverless functions, auto-deploys on push to `main` |
 
 **Free-tier gotcha:** Supabase pauses a project after ~7 days idle, and
@@ -86,7 +86,7 @@ waiting. An entry that needs no change (the card was right) is resolved too,
 with the note saying why. Resolving never deletes; the owner clears resolved
 rows when they choose to.
 
-`npm test` before every push. It is 21 suites, and closer to twenty minutes
+`npm test` before every push. It is 23 suites, and closer to twenty minutes
 than a few — most of them drive a real browser at several window sizes. Start
 it early rather than last, and don't edit `src/` while it runs: the suites
 share one Vite dev server, so a save hot-reloads the app underneath a test
@@ -104,9 +104,11 @@ that is mid-assertion.
   `~/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`.
   The default path in `tests/harness.mjs` is the Linux container's.
 
-**On the Mac, 17 of 18 pass, and that is the baseline.** `reflow` (the tutor
-reflow ran 0px) fails the same way on `9b95052`, which passed it in the
-container, so that one is this machine's headless Chrome — see the open item.
+**On the Mac, `reflow` is the one suite that fails, on and off, and that is
+the baseline.** Its first check (the tutor reflow ran 0px) fails the same way
+on `9b95052`, which passed it in the container, and did again on unchanged
+code on 2026-09-25, so that one is this machine's headless Chrome — see the
+open item.
 A new failure in any other suite is real. (`motion` was a Mac failure until
 2026-09-12; its feedback checks now read the running transition instead of
 counting frames. `layout`'s "card does not move when graded", 264 → 259, was
@@ -390,12 +392,23 @@ runs rather than one that times out.
 
 **Who pays.** The deploy owner, from `ANTHROPIC_API_KEY` — not the student.
 This runs unattended, and a class is a few hundred words: pennies for a class
-of students. Every other Claude route still bills the caller.
+of students. Every other Claude route still bills the caller. With no key set,
+the route stops at once and says which setting is missing.
 
 **What the student sees.** "Your class of 24 September: 31 new cards added to
 your deck", dismissible, under the top bar (`data-cahier-notice`); and in the
 link tab, when it last checked, what it last added, and why it failed if it
 did — a doc whose sharing was turned off says so rather than going quiet.
+Linking that fails shows the server's own reason: `sync` in `useCahierSync`
+returns `{ ok, error }`, and the dialog reads that, not the hook's state.
+
+**How the link row is written** (`api/cahier-sync.js`). Linking, or relinking
+to another doc, writes the whole row with an upsert (`linkDoc`) — the only
+write that may create it. Everything after — when it last checked, what it
+added, why it failed — is a plain update of that row (`updateLink`). Don't
+fold them back into one upsert of the changed fields: Postgres checks an
+upsert's insert row first, `doc_id` and `doc_url` are NOT NULL, and every
+sync failed that way until 2026-09-25 (see that History entry).
 
 **The doc must be readable by anyone with the link.** That is how it is read
 with nobody signed in to Google. Private docs would need Google sign-in — see
@@ -403,6 +416,8 @@ the open item.
 
 Guarded by the `cahier-sync` suite (no browser): a stand-in database, doc and
 Claude, with the number of Claude calls counted, because that is the bill.
+The stand-in refuses an upsert missing a NOT NULL column that has no default
+(`REQUIRED`), as Postgres does.
 
 **What the parser makes of the grammar section** (since 2026-09-24, every
 path: upload, few-shot upload, sync). Only cards you can answer by typing:
@@ -414,7 +429,8 @@ pronunciation note makes no card — only the words or sentences under it do.
 The prompt text for this is one block (`WHAT_BECOMES_A_CARD` in
 `parse-cahier.js`) shared by both prompts, and `keepAnswerable` enforces it
 after the model on all three paths: a `G` card that isn't a drill is dropped
-if `isGrammarCard` reads it as a rule or a sound, and made `V` otherwise.
+if `isGrammarCard` reads it as a rule or a sound, or it is a whole
+conjugation table on one side, and made `V` otherwise.
 
 ---
 
@@ -426,8 +442,12 @@ Storage keeps four cahier category codes (`V`/`E`/`G`/`P` → vocab/expr/gram/
 pron) because that is what the notebook sections are. Those are **not** the
 distinction you study by, so the UI collapses them into three:
 
-- **grammar** — `gram` or `pron` category, or a conjugation drill (front
-  contains `→`, e.g. `aller (subjonctif) → ils/elles`)
+- **grammar** — a card *about* French rather than a piece of it, judged by
+  its shape (`isGrammarCard`), not its stored category: a conjugation drill
+  (front contains `→`, e.g. `aller (subjonctif) → ils/elles`), a grammar term
+  (`GRAMMAR_TERM`), a formula (`+`, `=`, `vs`), a `{respelling}`, or a back
+  that explains a distinction rather than translating. The category only says
+  which notebook section a card came from
 - **vocab** — one word *or one concept*. `la patate douce` is a sweet potato,
   `le chemin de fer` is a railway: one thing to learn, however many words
   French spells it with. Determiners and compound-noun glue (`de`, `à`) don't
@@ -444,7 +464,7 @@ card must be answerable by typing something the matcher can check. So there
 are no rule cards (`Pronoms toniques` → "moi, toi, lui/elle…", which nobody
 types closely enough to be marked right, so it was always a miss) and no
 pronunciation cards (there is no microphone). What remains in `G` is
-conjugation drills and the lessons' production cards. Where a rule or
+conjugation drills and lesson cards. Where a rule or
 pronunciation card had a real word or example sentence underneath, that is an
 ordinary two-way card now. The cahier parser no longer makes either kind (see
 *The linked cahier*), the demo deck (`src/data/cards.js`) was sorted by hand
@@ -459,7 +479,9 @@ answer starts with, because the answer includes it — "Conjugate in the present
 tense, first person singular, with je"; a drill naming no tense is the present.
 Any other lesson card takes its section's line from `LESSON.instructions`. Word
 and phrase cards get none: they are translations, and the input already says
-which language. In English, by the owner's choice.
+which language. Here "grammar" is the stored category (`gram` or `pron`), not
+the shape test above, so the adverb lesson's false friends, stored `G`, get
+"Translate into English". In English, by the owner's choice.
 
 Note the filter exists by explicit user request. Studying one type at a time
 is blocked practice and costs retention; the default is `All`.
@@ -538,7 +560,9 @@ The parser prompt also forbids producing these in the first place.
 
 | Route | Does |
 |---|---|
-| `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, polysemy-aware dedupe |
+| `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, dropping cards nobody could answer (`keepAnswerable`), polysemy-aware dedupe. Its pieces are exported for `cahier-parse.js` and `cahier-sync.js` rather than copied |
+| `cahier-sync.js` | The linked cahier: reads the student's Google Doc and parses only the classes the deck hasn't got. Runs on the server's `ANTHROPIC_API_KEY`, not the student's. See *The linked cahier* |
+| `cahier-daily.js` | The Vercel cron (13:00 UTC, `vercel.json`) that runs `cahier-sync` for every linked doc, up to 40 a run, least recently checked first. Refuses any caller without `CRON_SECRET` |
 | `chat.js` | Tutor chat. Streams (SSE), Sonnet 5 at effort `low`, sent a slice of the deck as context, including the card on screen and **whether its answer has been shown** — until it has, the tutor gives hints, never the answer. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
 | `split-senses.js` | Audits candidate multi-sense cards. Read-only |
 | `apply-splits.js` | Applies approved splits. Service role + manual ownership checks |
@@ -558,13 +582,15 @@ kind, so this needs no classifier.
 | `chat.js` | `claude-sonnet-5`, effort `low` | On the latency path; a vocabulary lookup is not hard inference |
 | `review-answer.js` | `claude-opus-5` | Rare, and it writes to `card_alternates` and to scheduling. Cost of error is real, so it keeps the strongest model |
 | `split-senses.js` | `claude-opus-5` | Batch classification against written-out rules. **Overkill; Sonnet would do**, and being offline it could go through the Batch API at half price |
-| `parse-cahier.js`, `cahier-parse.js` | `claude-haiku-4-5` | Structured extraction from a regular format. Correct as-is |
+| `parse-cahier.js`, `cahier-parse.js`, `cahier-sync.js` | `claude-haiku-4-5` | Structured extraction from a regular format. Correct as-is. The sync uses `parse-cahier.js`'s own call |
 
 `api/_lib/` is skipped by Vercel's function discovery (underscore prefix), so
 it is import-only.
 
 **Environment:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_EMAIL`,
-optionally `ANTHROPIC_API_KEY` (owner only), plus `VITE_SUPABASE_URL`,
+`ANTHROPIC_API_KEY` (the owner's: the admin's fallback, and what the linked
+cahier is parsed with — without it that feature refuses to run), `CRON_SECRET`
+(the daily cahier check), plus `VITE_SUPABASE_URL`,
 `VITE_SUPABASE_ANON_KEY` and `VITE_ADMIN_EMAIL` on the client. Azure Speech
 vars are gone with the endpoints that read them.
 
@@ -585,7 +611,10 @@ address was public, being read from a `VITE_` variable. That reached
 `api/_lib/anthropicKey.js` decides who pays. The caller supplies their own
 key in an `x-anthropic-key` header; without one the endpoint answers **402**
 with `code: "byok_required"` and the client offers the connect dialog. Only
-`ADMIN_EMAIL` falls back to the server's `ANTHROPIC_API_KEY`.
+`ADMIN_EMAIL` falls back to the server's `ANTHROPIC_API_KEY`. The exception
+is the linked cahier (`cahier-sync`, `cahier-daily`): it always uses the
+server's key, since it runs with no student there to pay — see *The linked
+cahier*.
 
 Client side, `src/lib/anthropicKey.js` keeps the key in `localStorage` under
 `anthropic-key:<userId>` and `src/ApiKeyModal.jsx` is the UI (profile menu →
@@ -603,9 +632,9 @@ what the code actually sends.
 
 ## Maintenance scripts (`scripts/`)
 
-Deck maintenance that is real work but is nobody's *feature*. Both run from a
-terminal against production, read `.env.local` themselves, and **default to
-writing nothing** — `--apply` is what makes them write.
+Deck maintenance that is real work but is nobody's *feature*. All of them run
+from a terminal against production, read `.env.local` themselves, and
+**default to writing nothing** — `--apply` is what makes them write.
 
 | Script | Does |
 |---|---|
@@ -669,15 +698,15 @@ can never undo 007.
   back to listing everything and say why, rather than showing an empty list.
   Resolving is done by `scripts/resolve-feedback.mjs`; the app has no button.
   **Search-and-replace the admin email before running it**
-- `011_cahier_link` — `cahier_links`: the doc a student studies from, a
-  fingerprint per class already turned into cards, when it was last read, what
-  it last added and why it last failed. Owner-only policies; no delete policy
-  is needed beyond the student's own. See *The linked cahier*
 - `010_two_directions` — the English-side FSRS state on `user_cards` (the eight
   `en_` columns, all new, a check constraint and a due index), and
   `card_reviews`, one row per answer, with owner-only select / insert / update
   policies and no delete. Additive and re-runnable; the existing columns are
   the French-side state, unchanged
+- `011_cahier_link` — `cahier_links`: the doc a student studies from, a
+  fingerprint per class already turned into cards, when it was last read, what
+  it last added and why it last failed. Owner-only policies; no delete policy
+  is needed beyond the student's own. See *The linked cahier*
 
 **A cautionary tale worth knowing:** the first version of 006 treated the
 `dates` array as review history. It isn't — those are the *lesson* dates a word
@@ -1015,7 +1044,7 @@ of these were "fixed" against an assumption and shipped broken.
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Twenty-one suites: seven needing no browser,
+`npm test` — see `tests/README.md`. Twenty-three suites: nine needing no browser,
 the rest driving the real app in headless Chromium against a mock Supabase,
 asserting on **measured** values (geometry, computed styles, request payloads)
 rather than on intent.
@@ -1044,6 +1073,13 @@ suite exists to enforce, both learned from checks that lied:
   answer writes only the existing columns, an English-side one only `en_`
   columns (`answering`, `serving`); a write to the wrong side corrupts a
   schedule silently, and nothing on screen shows it.
+- **A stand-in database must refuse what the live one refuses.** Twice a
+  write passed every check against a stand-in that accepted anything and
+  failed on the live app at first use: the reset's null in a NOT NULL column
+  (2026-09-14) and the linked cahier's partial upsert (2026-09-25).
+  Both stand-ins now copy the live constraint: the mock and `answering`
+  refuse a null in any column of `USER_CARDS_NOT_NULL` (harness), and
+  `cahier-sync`'s refuses an insert missing a column in `REQUIRED`.
 - **Find elements by a marker the component owns**, never by their copy or by
   a structural coincidence. `data-feedback-sheet` and `data-attach-card` exist
   for this. Finding the sheet by its subtitle broke when the subtitle was
@@ -1066,8 +1102,10 @@ suite exists to enforce, both learned from checks that lied:
 
 A lesson is a fixed set of cards built from a teacher's materials, the same for
 everyone. `src/data/lessons/` holds them; `LESSONS` in `index.js` is the
-catalogue. The first is **L'impératif** (108 cards), built from Laura Caufour's
-LFL METHOD lesson and exercise PDFs.
+catalogue. There are two: **L'impératif** (108 cards), built from Laura
+Caufour's LFL METHOD lesson and exercise PDFs, and **Adjectif ou adverbe ?**
+(81 cards, below), written for the app. Each carries its cards, `notes`,
+`teachingOrder` and `instructions`.
 
 The shape of it:
 
@@ -1090,19 +1128,21 @@ The shape of it:
   non-GET on `user_cards` with `200 []` and then goes on serving the same fixed
   deck, so an insert that never happened and one that silently failed looked
   identical. `lesson-sync` gives `user_cards` a real in-memory store (GET,
-  upsert, delete) and asserts on what the student ends up with: 108 cards, each
-  keyed, studiable, with all four note sections rendering; a second visit
-  writing nothing at all; and an existing deck keeping its own cards and their
-  FSRS state.
-- **Synced on load, once per mount.** A student finds L'impératif in their deck
-  without pressing anything. The lesson is the authority, so the sync also
+  upsert, delete) and asserts on what the student ends up with: every card of
+  every lesson and nothing else; the impératif's cards each keyed and
+  studiable, and every one of its note tabs rendering; a second visit writing
+  nothing at all; and an existing deck keeping its own cards and their FSRS
+  state, including a card whose front a lesson also ships.
+- **Synced on load, once per mount.** A student finds every lesson in their
+  deck without pressing anything. The lesson is the authority, so the sync also
   *retires* cards it no longer contains: that is how the eight abandoned "state
   the rule" cards were removed from decks that had already added them. Only
   writes when the deck and the lesson actually differ.
 - **`lessonFilter` narrows the candidate pool** exactly as `typeFilter` does, so
   a lesson still schedules through FSRS rather than becoming a separate mode.
 - **Notes live on the lesson** (`LESSON.notes`) and render in `LessonPanel`, a
-  slide-over reusing the tutor's mount/enter mechanics. Distilled for glancing
+  slide-over reusing the tutor's mount/enter mechanics, back on its first tab
+  whenever it closes or the lesson changes. Distilled for glancing
   at mid-card, not for reading: tables for paradigms, two columns for
   contrasts, and the rules people get wrong called out on their own.
 
@@ -1113,8 +1153,9 @@ The shape of it:
   That is a statement, not a question, and there is nothing to type. Each rule
   is now carried by examples that make you apply it.
 - **Every French-answered card carries an arrow in its front.** Load bearing:
-  `classifyCard()` treats it as a conjugation drill, and `answerLang()` reads it
-  to know the typed answer should be French rather than English.
+  `classifyCard()` treats it as a conjugation drill, `answerLang()` reads it
+  to know the typed answer should be French rather than English, and on a
+  lesson card it is what gets the answer marked exactly.
 - **The card wears its lesson as a badge, and the paradigm drills still name
   the mood.** `finir (impératif) → tu`, the same shape as the deck's own
   `aller (subjonctif) → ils/elles`. They used to rely on the badge alone, and
@@ -2506,7 +2547,8 @@ pronunciation cards.
   same held for the deck's conjugation drills — "je vend", "il dois".
 - **Rule and pronunciation cards gone.** The owner's 117 grammar and
   pronunciation cards were sorted by hand with them: 61 drills kept, 27
-  turned into 40 ordinary cards, 29 archived. Applied to the demo deck;
+  turned into 40 new cards (38 words and phrases, 2 drills), 29 archived.
+  Applied to the demo deck, whose `G` section is now 63 drills;
   `scripts/sort-grammar-cards.mjs` applies it to real decks. The parser no
   longer makes them. Two phrase cards were corrected on the way ("…que je
   n'avais pas fait de tennis"; *à temps* is in time, not on time).
@@ -2538,6 +2580,35 @@ tidied into itself now keeps its row (`sameFrench`, or one new card sharing
 most of its words). Only one of the 8 accounts studies regularly (the owner's,
 34 study days); the rest stopped or never started.
 
+### 2026-09-25 — the linked cahier: a partial upsert that could never work
+
+**What broke.** Every sync after linking failed. The owner's account showed
+"Couldn't read that cahier" on a link that had never been checked. Every
+status write — when it last checked, what it added, why it failed — went
+through the same upsert that links a doc, carrying only the changed fields.
+An upsert is an insert that then resolves a conflict, and Postgres checks the
+insert row first: it had no `doc_id` or `doc_url`, both NOT NULL, so it failed
+before it looked for the row it would have updated. The linking run itself
+died at its status write. A run that did parse classes had already written
+their cards by then, so it couldn't record them as read, and the next run
+would pay to parse them again (without duplicating a card: one already in the
+deck is matched by its front, and already carries that class's date).
+
+**Why the tests missed it.** The `cahier-sync` stand-in accepted any upsert.
+The same lesson as the reset on 2026-09-14, learned a second time — see the
+new rule under *Testing*.
+
+**Why the message said nothing.** The dialog read the hook's `error` state
+from the render it was called in, which was stale, so it showed the generic
+line while the server had given the reason.
+
+**The fix.** `linkDoc` (an upsert of the whole row) only when linking or
+relinking; `updateLink` (a plain update) for everything after. `sync` in
+`useCahierSync` returns `{ ok, error }`, and the dialog shows that error. The
+stand-in now refuses an upsert missing a NOT NULL column (`REQUIRED`), and
+the suite checks that a run records when it looked, both on the run that
+links and on one that finds nothing new.
+
 ## Open items
 
 - **A few rules are filed as words or phrases**, outside the sort (it only
@@ -2545,16 +2616,26 @@ most of its words). Only one of the 8 accounts studies regularly (the owner's,
   "double pronoms (COD + COI)" → "pronoun order…" in the owner's deck. Most of
   the 19 cards `isGrammarCard` flags among words and phrases are fine — "il
   faut + infinitif" → "one must" is a pattern with a translation you can type.
+- **"un article" reads as grammar.** `GRAMMAR_TERM` matches `articles?`, so a
+  plain word card — "un article", "les articles" — shows under Grammar in the
+  filter and in By type. A false positive, not a wrong card; the term needs
+  its grammar sense, the way `accords? (?:du|des|avec)` does. The parser's
+  backstop (`keepAnswerable`) uses the same test, so such a word filed under
+  `G` would be dropped rather than re-filed as a word.
 - **The accent in -ément is not checked** (précisément vs précisement), because
   accents are ignored for everyone. The adverb lesson keeps only three such
   cards for that reason.
 
-- **Two-way scheduling has not been seen on the live app.** Tested against the
-  mock and a read-only snapshot of the owner's deck (2026-09-14 History). The
-  owner is to press Reset all progress once it is live — the first real use of
-  the reset, and it should leave every card reading not yet seen on Stats. Then
-  worth checking signed in: in Mixed, words come up both ways; EN→FR asks
-  grammar as written; a record lands in `card_reviews` for every answer.
+- **Two-way scheduling has not been checked on the live app.** Tested against
+  the mock and a read-only snapshot of the owner's deck (2026-09-14 History).
+  Reset all progress has since been used live and left every card new both
+  ways. Still worth checking signed in: in Mixed, words come up both ways;
+  EN→FR asks grammar as written; a record lands in `card_reviews` for every
+  answer.
+- **The linked cahier has not yet worked on the live app.** Every sync failed
+  until the 2026-09-25 fix, which is tested against the stand-in only. Worth
+  checking signed in: the owner's link should show a "last checked" time and
+  the classes since 5 September should be in the deck.
 
 - **A private cahier needs Google sign-in.** The linked doc is read with no
   credentials at all, which is why it has to be shared as "anyone with the
@@ -2576,8 +2657,10 @@ most of its words). Only one of the 8 accounts studies regularly (the owner's,
   container.** `reflow` — see *Working protocol*. On 2026-09-14 it failed two
   runs in three on unchanged `main` ("the tutor reflow actually ran — 0px of
   padding", once a `page.goto` timeout instead), so a failure there is not a
-  signal either way. (`layout`'s long-standing failure turned
-  out to be a real 5px card shift, fixed 2026-09-13.) They measure movement frame
+  signal either way. It still does: on 2026-09-25 that first check failed on
+  unchanged code, a timing flake rather than a regression. (`layout`'s
+  long-standing failure turned out to be a real 5px card shift, fixed
+  2026-09-13.) They measure movement frame
   by frame, and this machine's headless Chrome delivers far fewer frames:
   sampling the feedback panel's open measured five in 600ms. `motion` was the
   third, and was fixed by asking the animation itself
@@ -2637,16 +2720,14 @@ most of its words). Only one of the 8 accounts studies regularly (the owner's,
   API call. It needs the owner's key, a dry run read end to end, and then the
   decision to write.
 - **The lesson bar should be built on the lesson's own sections.** Agreed but
-  not built. Every card carries a section (`forms`, `irregular`, `ind2imp`,
-  `negative`, `pronominal`, `ex1`…`ex8`, `phrase`) and nothing reads it. The
-  one place that unpacks a lesson card is `reconcileLessons`
-  (`src/lib/lessonSync.js`), which destructures `([f, b, c])` and drops the
-  fourth element on the floor. The section still never reaches a stored row,
-  but it no longer has to: since 2026-09-12 `lessonRank`
-  (`src/data/lessons/index.js`) looks each lesson card up in the lesson's own
-  data by its key, and `teachingOrder` on the lesson already lists the
-  sections in the order they're taught. A per-section bar can read the
-  section the same way, with no change to the row.
+  not built, and worked out for the impératif. Every card carries a section
+  (there: `forms`, `irregular`, `ind2imp`, `negative`, `pronominal`,
+  `ex1`…`ex8`, `phrase`) and the bar doesn't read it. The section never
+  reaches a stored row, and doesn't have to: `lessonRank` and the instruction
+  line (`src/data/lessons/index.js`) already look each lesson card's section
+  up in the lesson's own data by its key, and `teachingOrder` on the lesson
+  lists the sections in the order they're taught. A per-section bar can read
+  the section the same way, with no change to the row.
 
   The 14 sections group into the four tabs the notes panel already uses, which
   is what would let the bar and the notes share one vocabulary: tapping a chip
@@ -2671,14 +2752,17 @@ most of its words). Only one of the 8 accounts studies regularly (the owner's,
   FSRS reviews. Ten minutes on the 8 negative cards is dozens of reviews on 8
   cards in one sitting, which is the 45-reviews-in-a-minute bug wearing a new
   hat.
-- **A second lesson has not been attempted.** The generator idea — parsing
-  Laura's PDFs into cards automatically — was scoped but not built, and
-  designing it from one example would be a mistake. Her materials look
+- **The lesson generator is not built.** The idea — parsing Laura's PDFs into
+  cards automatically — was scoped but not built. The second lesson
+  (*Adjectif ou adverbe ?*) was written for the app, not from her sheets, so
+  the impératif is still the one example, and designing from one example
+  would be a mistake. Her materials look
   templated (numbered sections, *Détail* callouts, a "phrases à apprendre par
   cœur" list); worth confirming across two or three more lessons first.
 - **`expandConjugations` is mood-blind.** `SUBJECT_PRONOUNS` is a fixed
   six-person list indexed positionally and the tense enum has no `impératif`,
-  so a three-form table imports as `être → je = "sois"`. It did not bite the
+  so a three-form table imports as `être → je = "sois"`, and the instruction
+  line then asks for the present tense. It did not bite the
   impératif module because those cards were authored rather than parsed, but it
   will bite the next cahier containing a non-indicative paradigm.
 - **"Flips look jumpy and glitchy" is reported but unreproduced.** Four
