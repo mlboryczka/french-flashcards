@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 import { CAT_DB_TO_UI } from "./lib/cardCategories";
 import { isArchived } from "./lib/archive";
+import { withLocalAnswers } from "./lib/directions";
 
 // Loads the user's flashcard deck from user_cards.
 //
@@ -147,6 +148,15 @@ export function useUserDeck(user) {
   // FlashcardApp renders a bare "Loading…" whenever !loaded, which unmounts
   // the entire tree — including whichever panel just triggered the reload.
   const loadedForUser = useRef(null);
+  // Every fetch that has landed, and when the latest one set off. FlashcardApp
+  // deals a block from this deck, and deals again when a fetch lands after the
+  // block was dealt: the deck it was dealt from may have been the copy saved in
+  // the browser, days old, or one that missed answers given on another device.
+  const [fetched, setFetched] = useState({ seq: 0, at: null });
+  // Answers given on this page in the last hour: row_id -> { cols, at }. A
+  // fetch can read a row before its answer's save lands; these are laid back
+  // over it (see withLocalAnswers).
+  const localAnswers = useRef(new Map());
 
   useEffect(() => {
     let cancelled = false;
@@ -167,6 +177,7 @@ export function useUserDeck(user) {
       setLoaded(false);
     }
     (async () => {
+      const startedAt = Date.now();
       // Supabase caps responses at 1000 rows per request (server-side,
       // regardless of .limit()). Paginate with .range() to fetch all cards.
       const PAGE = 1000;
@@ -217,7 +228,14 @@ export function useUserDeck(user) {
       const shaped = allRows.filter((row) => !isArchived(row)).map(shapeRow);
         // Sort by frequency desc to match legacy buildDeck ordering
         shaped.sort((a, b) => b.freq - a.freq);
-        setCards(shaped);
+      const hourAgo = Date.now() - 60 * 60 * 1000;
+      const mine = new Map();
+      for (const [rowId, w] of localAnswers.current) {
+        if (w.at < hourAgo) localAnswers.current.delete(rowId);
+        else mine.set(rowId, w.cols);
+      }
+      setCards(withLocalAnswers(shaped, mine));
+      setFetched((f) => ({ seq: f.seq + 1, at: startedAt }));
       setLoaded(true);
       loadedForUser.current = userId;
       writeCache(userId, shaped);
@@ -240,6 +258,10 @@ export function useUserDeck(user) {
   // is always at least as new as what it has written.
   const patch = useCallback((rowId, fields) => {
     if (rowId == null) return;
+    if (fields && ("last_review" in fields || "en_last_review" in fields)) {
+      const had = localAnswers.current.get(rowId);
+      localAnswers.current.set(rowId, { cols: { ...(had?.cols || {}), ...fields }, at: Date.now() });
+    }
     setCards((prev) => prev.map((c) => (c.row_id === rowId ? { ...c, ...fields } : c)));
   }, []);
 
@@ -259,9 +281,11 @@ export function useUserDeck(user) {
   // has succeeded. The cache is dropped rather than rewritten — the next load
   // writes it from the server.
   const patchAll = useCallback((fields) => {
+    // A reset: no answer from before it may be laid back over the next fetch.
+    localAnswers.current.clear();
     setCards((prev) => prev.map((c) => ({ ...c, ...fields })));
     try { if (userId) localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
   }, [userId]);
 
-  return { cards, loaded, reload, patch, patchAll, add };
+  return { cards, loaded, reload, patch, patchAll, add, freshSeq: fetched.seq, fetchedAt: fetched.at };
 }

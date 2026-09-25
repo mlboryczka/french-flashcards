@@ -1,7 +1,7 @@
 // Bugs found by driving the app, each with the check that would have caught
 // it. Written from the requirement — what the user should see — not from the
 // shape of the fix.
-import { openApp, checker, finish, settled } from "../harness.mjs";
+import { openApp, checker, finish, settled, servedDeck, firstBlockItems, sessionCounter } from "../harness.mjs";
 
 const ck = checker();
 
@@ -137,6 +137,44 @@ const ck = checker();
   });
   ck("the doc tab has a box for the link", linkTab.hasBox, JSON.stringify(linkTab));
 
+  await browser.close();
+}
+
+// ── A block is dealt from the deck as it is now, not from an old copy ────────
+//
+// The browser keeps a copy of the deck so the app appears at once, and that
+// copy is only saved when the page loads, so it can be days old. The first
+// block was dealt from it, and when the up-to-date deck arrived a moment later
+// only the cards' details were updated, not which cards were in the block: on
+// 2026-09-23 a block dealt from a five-day-old copy asked 22 cards that weren't
+// due and left out 54 that were. Here the saved copy says every card is new,
+// and the deck, which arrives late, says most of them are due.
+{
+  const deck = await servedDeck();
+  const CAT = { V: "vocab", E: "expr", G: "gram", P: "pron" };
+  const stale = deck.map((r) => ({
+    f: r.front, b: r.back, cat: CAT[r.category] || "vocab", dates: r.dates || [], freq: (r.dates || []).length,
+    id: r.front.toLowerCase().trim(), row_id: r.id, flagged: false, batch_id: null, source: r.source || null, created_at: null,
+    next_due_at: null, lapses: 0, stability: null, difficulty: null, fsrs_state: 0, reps: 0, last_review: null, last_answer_correct: null,
+    en_next_due_at: null, en_lapses: 0, en_stability: null, en_difficulty: null, en_fsrs_state: 0, en_reps: 0, en_last_review: null, en_last_answer_correct: null,
+  }));
+  const { browser, page } = await openApp({
+    route: async (p) => {
+      await p.evaluate((cards) => localStorage.setItem(
+        "deck-cache:00000000-0000-0000-0000-000000000001", JSON.stringify({ v: 2, cards })), stale);
+      await p.route("**/rest/v1/user_cards*", async (r) => {
+        if (r.request().method() === "GET") await new Promise((res) => setTimeout(res, 1500));
+        await r.continue();
+      });
+    },
+  });
+  const staleBlock = firstBlockItems(stale.map((c) => ({ ...c, category: c.cat === "expr" ? "E" : c.cat === "vocab" ? "V" : "G" }))).length;
+  const expected = firstBlockItems(deck).length;
+  await page.waitForTimeout(4000);
+  const counter = await sessionCounter(page);
+  ck("the fixture tells the two apart", staleBlock !== expected, `${staleBlock} vs ${expected}`);
+  ck("once the deck arrives, the block is the one the deck deals",
+     counter?.index === 1 && counter?.total === expected, `card ${counter?.index} of ${counter?.total}, the deck deals ${expected}`);
   await browser.close();
 }
 

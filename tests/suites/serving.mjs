@@ -10,7 +10,7 @@
 process.env.TZ = "America/New_York";
 
 import { buildSession, orderNewCards, classDaysOf, placeRetry, applyAnswer } from "../../src/lib/sessionQueue.js";
-import { SIDE_FIELDS, sideOf, itemKey } from "../../src/lib/directions.js";
+import { SIDE_FIELDS, sideOf, itemKey, withLocalAnswers } from "../../src/lib/directions.js";
 import { localISODate, localISODateDaysAgo } from "../../src/lib/studyDay.js";
 import { lessonRank } from "../../src/data/lessons/index.js";
 import LESSON from "../../src/data/lessons/imperatif.js";
@@ -371,6 +371,32 @@ console.log("\n  a missed card is retried inside the block, never after it");
   const allRetries = [...block(10), { id: "x", _retry: true }, { id: "y", _retry: true }];
   ck("a retry never displaces another retry",
      placeRetry(allRetries, 9, { id: "b9" }, 20) === allRetries);
+}
+
+// ── A fetch never undoes an answer this page has given ─────────────────────
+// A fetch can read a row before its answer's save lands. The card came back
+// with its old state, looked due again, and was asked and counted twice. An
+// answer given since on another device is newer, and is the one kept.
+{
+  const iso = (ms) => new Date(ms).toISOString();
+  const fetchedRow = { row_id: 1, f: "la moitié", fsrs_state: 2, stability: 2, last_review: iso(NOW - 4 * DAY), next_due_at: iso(NOW - DAY), last_answer_correct: false,
+                       en_fsrs_state: 0, en_last_review: null };
+  const answered = { fsrs_state: 2, stability: 5, last_review: iso(NOW), next_due_at: iso(NOW + 5 * DAY), last_answer_correct: true };
+  const [kept] = withLocalAnswers([fetchedRow], new Map([[1, answered]]));
+  ck("an answer the fetch hasn't caught up with is kept", kept.last_review === answered.last_review && kept.next_due_at === answered.next_due_at && kept.stability === 5);
+  ck("and the other way round is left as fetched", kept.en_fsrs_state === 0 && kept.en_last_review === null);
+
+  const elsewhere = { ...fetchedRow, last_review: iso(NOW + 60000), next_due_at: iso(NOW + 9 * DAY), stability: 9 };
+  const [theirs] = withLocalAnswers([elsewhere], new Map([[1, answered]]));
+  ck("a later answer from another device wins", theirs.stability === 9 && theirs.next_due_at === elsewhere.next_due_at);
+
+  const enAnswer = { en_fsrs_state: 2, en_stability: 3, en_last_review: iso(NOW), en_next_due_at: iso(NOW + 3 * DAY), en_last_answer_correct: true };
+  const [en] = withLocalAnswers([fetchedRow], new Map([[1, enAnswer]]));
+  ck("an answer asked in English is kept on the English side only",
+     en.en_stability === 3 && en.en_next_due_at === enAnswer.en_next_due_at && en.stability === 2 && en.last_review === fetchedRow.last_review);
+
+  const untouched = [fetchedRow];
+  ck("no answers given: the fetch as it is", withLocalAnswers(untouched, new Map()) === untouched);
 }
 
 const n = ck.fails();

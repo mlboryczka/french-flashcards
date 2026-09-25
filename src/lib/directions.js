@@ -89,6 +89,38 @@ export function resetColumns(now = new Date()) {
   };
 }
 
+// Answers this page has given, laid back over a freshly fetched deck where the
+// fetch doesn't have them yet.
+//
+// An answer is saved in the background, and a fetch can read the row before
+// that save lands: the card comes back with its old state, looks due again,
+// and is asked and counted a second time. `answers` maps a row_id to the
+// columns this page wrote to it (either way round, or both); a way round is
+// put back only where this page's last review is later than the fetch's. An
+// answer given later on another device is later still, so it wins.
+export function withLocalAnswers(cards, answers) {
+  if (!answers || answers.size === 0) return cards;
+  return cards.map((card) => {
+    const written = answers.get(card.row_id);
+    if (!written) return card;
+    let out = card;
+    for (const dir of DIRECTIONS) {
+      const col = columnOf("last_review", dir);
+      if (!written[col]) continue;
+      const mine = new Date(written[col]).getTime();
+      const theirs = card[col] ? new Date(card[col]).getTime() : -Infinity;
+      if (!(mine > theirs)) continue;
+      const side = {};
+      for (const f of SIDE_FIELDS) {
+        const c = columnOf(f, dir);
+        if (c in written) side[c] = written[c];
+      }
+      out = { ...out, ...side };
+    }
+    return out;
+  });
+}
+
 // A card asked one way: the unit a block is made of. The same card can be in a
 // block twice, once each way, so anything that tells queue entries apart —
 // corrections, unsaved answers, the card kept on screen across a new block —

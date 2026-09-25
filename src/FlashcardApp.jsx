@@ -299,7 +299,7 @@ function typedGotIt(typeResult) {
 
 export default function FlashcardApp({ user, onSignOut }) {
   const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
-  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, patchAll: patchAllDeckCards, add: addDeckCard } = useUserDeck(user);
+  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, patchAll: patchAllDeckCards, add: addDeckCard, freshSeq: deckFreshSeq, fetchedAt: deckFetchedAt } = useUserDeck(user);
   // The linked cahier, read again when the app opens: a class taught after
   // the last visit is already cards by the time the student studies.
   const cahier = useCahierSync(user);
@@ -327,6 +327,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   // The deck-build effect uses this to tell "filters changed, fresh
   // session" apart from "userCards re-referenced, just patch in place".
   const filterSigRef = useRef(null);
+  // Which fetch of the deck the block was dealt from, and on which day. When
+  // either has moved on, the block is dealt again — see the deck-build effect.
+  const dealtSeqRef = useRef(null);
+  const dealtDayRef = useRef(null);
+  // Bumped on coming back to the tab on a new day, to run that check.
+  const [recheck, setRecheck] = useState(0);
   const [mode, setMode] = useState("study"); // study | stats | feedback
   // seen/got/missed count TYPED answers only — those are verifiable, and
   // accuracy built from self-reported flips would be meaningless. `answered`
@@ -659,7 +665,24 @@ export default function FlashcardApp({ user, onSignOut }) {
     // counter to wherever the current card lands in the new ordering.
     // Instead, patch each card's fields in place by row_id and drop any
     // that were deleted — session order, idx, and retries stay intact.
-    if (!filterChanged && deck.length > 0) {
+    //
+    // Unless the block was dealt from an out-of-date deck. A block is dealt from
+    // the deck in memory, and on opening the app that is the copy saved in the
+    // browser, which is only saved when the page loads — so it can be days old
+    // — and a page left open knows nothing of answers given on another device.
+    // On 2026-09-23 a block dealt from a five-day-old copy asked 22 cards that
+    // weren't due and left out 54 that were; the up-to-date deck arrived a
+    // second later and only patched the cards in place. And a block dealt one
+    // evening and worked the next morning holds the evening's due cards: the
+    // cards missed the day before, which come first, weren't in it
+    // (2026-09-24). So when a fetch has landed, or the day has turned, since
+    // the block was dealt, a block not yet started is dealt again from scratch,
+    // and one under way keeps what has been shown, answered or lined up for a
+    // retry while the cards not yet reached are dealt again.
+    const today = localISODate();
+    const outOfDate = dealtSeqRef.current !== deckFreshSeq || dealtDayRef.current !== today;
+    const started = blockAnswersRef.current.size > 0 || answerSeen;
+    if (!filterChanged && deck.length > 0 && !(outOfDate && !started)) {
       const byRow = new Map(candidates.map(c => [c.row_id, c]));
       const patched = deck
         .map(c => {
@@ -670,8 +693,31 @@ export default function FlashcardApp({ user, onSignOut }) {
           return { ...u, shownDir: c.shownDir, flippable: isTwoWay(u), _bucket: c._bucket, _retry: c._retry, _rid: c._rid };
         })
         .filter(Boolean);
-      setDeck(patched);
-      setIdx(i => Math.min(i, Math.max(0, patched.length - 1)));
+      let next = patched;
+      if (outOfDate) {
+        const at = Math.min(idx, patched.length - 1);
+        const head = patched.slice(0, at + 1);
+        const tail = patched.slice(at + 1);
+        const kept = new Set(tail.filter((c) => c._retry || blockAnswersRef.current.has(slotKeyOf(c))));
+        const room = tail.length - kept.size;
+        const fill = room > 0
+          ? buildSession(candidates, {
+              direction: dirRef.current,
+              target: room,
+              spotCheckSlots: tail.filter((c) => !kept.has(c) && c._bucket === "spot").length,
+              lessonMode: lessonFilter !== "all",
+              lessonRank,
+              inBlock: [...head, ...kept],
+            }).queue
+          : [];
+        let f = 0;
+        next = [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
+        setSessionCounts(countBuckets(next));
+        dealtSeqRef.current = deckFreshSeq;
+        dealtDayRef.current = today;
+      }
+      setDeck(next);
+      setIdx(i => Math.min(i, Math.max(0, next.length - 1)));
       return;
     }
 
@@ -706,8 +752,10 @@ export default function FlashcardApp({ user, onSignOut }) {
       ? cards.findIndex(c => itemKey(c) === preservedKey)
       : -1;
     if (preservedIdx > 0) cards.unshift(cards.splice(preservedIdx, 1)[0]);
-    else if (preservedIdx < 0) setFlipped(false);
+    else if (preservedIdx < 0) { setFlipped(false); setTypedAnswer(""); }
     blockAnswersRef.current = new Map();
+    dealtSeqRef.current = deckFreshSeq;
+    dealtDayRef.current = localISODate();
     setDeck(cards);
     setSessionCounts(counts);
     setIdx(0);
@@ -715,7 +763,47 @@ export default function FlashcardApp({ user, onSignOut }) {
     setSessionDone(false);
     setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, typeFilter, lessonFilter, userCards, blockSeq]);
+  }, [loaded, typeFilter, lessonFilter, userCards, blockSeq, deckFreshSeq, recheck]);
+
+  // Answers given somewhere else — another device, another tab — since the
+  // deck in memory was fetched. Coming back to the tab asks for their ids,
+  // which is one small query; the whole deck is read again only when there is
+  // one this page didn't give, and the block is then dealt again from it.
+  // Ids this page has written are known, as are ones a check has already
+  // acted on.
+  const knownReviewIdsRef = useRef(new Set());
+  const lastElsewhereCheckRef = useRef(0);
+  const checkElsewhere = useCallback(async () => {
+    if (!user?.id || !deckFetchedAt) return;
+    if (Date.now() - lastElsewhereCheckRef.current < 15000) return;
+    lastElsewhereCheckRef.current = Date.now();
+    // Ten minutes' margin for a device whose clock runs behind.
+    const since = new Date(deckFetchedAt - 10 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("card_reviews")
+      .select("id")
+      .eq("user_id", user.id)
+      .gte("answered_at", since)
+      .limit(1000);
+    if (error || !Array.isArray(data)) return;
+    const unknown = data.filter((r) => !knownReviewIdsRef.current.has(r.id));
+    if (!unknown.length) return;
+    for (const r of unknown) knownReviewIdsRef.current.add(r.id);
+    reloadDeck();
+  }, [user?.id, deckFetchedAt, reloadDeck]);
+  useEffect(() => {
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      if (dealtDayRef.current && dealtDayRef.current !== localISODate()) setRecheck((n) => n + 1);
+      checkElsewhere();
+    };
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("focus", onReturn);
+    return () => {
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("focus", onReturn);
+    };
+  }, [checkElsewhere]);
 
   const card = deck[idx];
 
@@ -1114,6 +1202,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     }
     const before = isCorrection ? earlier.before : recordsReview ? sideColumns(sideOf(card, cardDir), cardDir) : null;
     const reviewId = isCorrection ? earlier.reviewId : newReviewId();
+    knownReviewIdsRef.current.add(reviewId);
     blockAnswersRef.current.set(slotKey, { before, got, reviewId });
     if (sr) {
       setDeck(prev => prev.map(c =>
@@ -1296,6 +1385,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     setTypeResult(null);
     setFeedbackState(null); setFeedbackVerdict(null);
     setBlockSeq(n => n + 1);
+    // Dealt from the deck in memory, which has every answer given here; if
+    // any were given elsewhere meanwhile, the deck is read again and the new
+    // block dealt again from it.
+    checkElsewhere();
   };
 
   // Keyboard shortcuts (study mode). Uses refs so the handler always
