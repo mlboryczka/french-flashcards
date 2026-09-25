@@ -401,6 +401,108 @@ console.log("\n  archive — out of circulation, recoverable");
   ck("ordinary rows are not", !isArchived({ source: "cahier-upload" }) && !isArchived({ source: null }) && !isArchived({}));
 }
 
+// ── Cahier parser: a card must be answerable by typing ─────────────────────
+// The owner's rule (2026-09-24): no grammar-rule cards, no pronunciation
+// cards; the grammar that stays is the conjugation drill. api/parse-cahier.js
+// enforces it after the model (keepAnswerable) and no longer keeps a
+// conjugation table beside its drills (expandConjugations). Every upload path
+// runs both. Self-contained — its own import — so it moves or goes as one block.
+{
+  const { keepAnswerable, expandConjugations } = await import("../../api/parse-cahier.js");
+  const G = (front, back, extra = {}) => ({ front, back, category: "G", dates: ["2026-09-24"], ...extra });
+  const outcome = (card) => {
+    const out = keepAnswerable([card]);
+    return out.length === 0 ? "dropped" : out[0].category;
+  };
+
+  console.log("\n  cahier parser — a rule or a sound note is not a card");
+  for (const [front, back] of [
+    ["Pronoms toniques", "moi, toi, lui/elle…"],
+    ["qui = sujet / que = COD", "qui = subject / que = direct object"],
+    ["moins + adj / moins de + nom", "less + adjective / less + noun"],
+    ["du riz {ri}", "riz: silent z"],
+    ["vivre : je vis, tu vis, il vit, nous vivons, vous vivez, ils vivent", "to live (present tense)"],
+    ["relatif → adverbe", "relativement"],
+    // Starts and ends with accented letters: \b missed both edges until
+    // GRAMMAR_TERM used \p{L} lookarounds.
+    ["passé composé avec être", "passé composé with être"],
+  ]) {
+    const got = outcome(G(front, back));
+    ck(`"${front}" → dropped`, got === "dropped", got === "dropped" ? "" : `kept as ${got}`);
+  }
+
+  console.log("\n  cahier parser — a conjugation drill stays grammar");
+  for (const [front, back] of [
+    ["vivre → je", "je vis"],
+    ["aller (subj) → que je", "que j'aille"],
+    ["devoir → pp", "dû"],
+    ["devoir → participe passé", "dû"],
+    ["vivre (présent) → je", "je vis"],
+  ]) {
+    const got = outcome(G(front, back));
+    ck(`"${front}" → G`, got === "G", got === "G" ? "" : `got ${got}`);
+  }
+
+  console.log("\n  cahier parser — a real word under the grammar heading is an ordinary card");
+  for (const [front, back] of [
+    ["mon copain", "my boyfriend"],
+    ["du riz", "rice"],
+    ["le seul projet que j'ai vu", "the only project I saw"],
+  ]) {
+    const got = outcome(G(front, back));
+    ck(`"${front}" → V`, got === "V", got === "V" ? "" : `got ${got}`);
+  }
+  {
+    const card = G("mon copain", "my boyfriend");
+    keepAnswerable([card]);
+    ck("re-tagging copies the card rather than editing the caller's", card.category === "G");
+    const v = { front: "je viens de + infinitif", back: "I have just + infinitive", category: "V", dates: [] };
+    const out = keepAnswerable([v]);
+    ck("a V card is left alone, even one shaped like a rule", out.length === 1 && out[0] === v, JSON.stringify(out));
+    const table = G("être : je suis, tu es, il est", "to be", {
+      conjugation: true, infinitive: "être", tense: "présent", forms: ["je suis", "tu es", "il est", null, null, null],
+    });
+    ck("a table still waiting to be expanded is passed through for the commit",
+       keepAnswerable([table])[0] === table);
+  }
+
+  console.log("\n  cahier parser — a table becomes its drills, and only its drills");
+  {
+    const table = G("vivre : je vis, tu vis, il vit, nous vivons, vous vivez, ils vivent", "to live (present tense)", {
+      conjugation: true, infinitive: "vivre", tense: "présent",
+      forms: ["je vis", "tu vis", "il vit", "nous vivons", "vous vivez", "ils vivent"],
+    });
+    const word = { front: "une colline", back: "a hill", category: "V", dates: ["2026-09-24"] };
+    const { expanded, drillsGenerated } = expandConjugations([table, word]);
+    const fronts = expanded.map((c) => c.front);
+    ck("one drill per form", drillsGenerated === 6 && fronts.includes("vivre (présent) → nous"), JSON.stringify(fronts));
+    ck("the table card itself is not kept — its front lists every answer",
+       !fronts.includes(table.front), JSON.stringify(fronts));
+    ck("each drill asks for one form, with its pronoun",
+       expanded.find((c) => c.front === "vivre (présent) → il/elle")?.back === "il vit");
+    ck("ordinary cards pass through", expanded.some((c) => c.front === "une colline" && c.back === "a hill" && c.category === "V"));
+    ck("and every drill survives the answerable check as grammar",
+       keepAnswerable(expanded).filter((c) => c.category === "G").length === 6);
+
+    const partial = G("aller : je vais, tu vas, il va", "to go", {
+      conjugation: true, infinitive: "aller", tense: "présent", forms: ["je vais", "tu vas", "il va", null, null, null],
+    });
+    const p = expandConjugations([partial]);
+    ck("a table with gaps gives drills for the forms it has, and no table card",
+       p.drillsGenerated === 3 && p.expanded.length === 3 && !p.expanded.some((c) => c.front === partial.front),
+       JSON.stringify(p.expanded.map((c) => c.front)));
+
+    const noVerb = G("vivre : je vis, tu vis, il vit", "to live", {
+      conjugation: true, infinitive: null, tense: "présent", forms: ["je vis", "tu vis", "il vit"],
+    });
+    const nv = expandConjugations([noVerb]);
+    ck("a table that yields no drills is kept for the answerable check to judge",
+       nv.drillsGenerated === 0 && nv.expanded.length === 1 && !("conjugation" in nv.expanded[0]),
+       JSON.stringify(nv.expanded));
+    ck("which drops it", keepAnswerable(nv.expanded).length === 0, JSON.stringify(keepAnswerable(nv.expanded)));
+  }
+}
+
 const n = ck.fails();
 console.log(n ? `\n  FAILED: ${n}` : "\n  all checks passed");
 process.exit(n ? 1 : 0);

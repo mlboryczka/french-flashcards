@@ -92,8 +92,9 @@ function tokens(text) {
 // Grammar filter. The category is a section marker, not a card type.
 //
 // So grammar is decided by what the card looks like. Every pattern below was
-// derived from the 117 cards in this deck's grammar and pronunciation
-// sections; see tests/suites/logic.mjs, which runs the whole corpus through it.
+// derived from the 117 cards that were in this deck's grammar and pronunciation
+// sections, now kept in scripts/data/grammar-sort-decisions.json since most
+// were sorted out of the deck (2026-09-24); see tests/suites/logic.mjs.
 
 // Bare "(adj)" / "(adv)" / "(pp: agi)" are part-of-speech tags on ordinary
 // vocabulary — hundreds of cards carry them, and they mean nothing here.
@@ -103,8 +104,13 @@ const POS_TAG = /\((?:adj|adv|n|nom|v|f|m|pl|pp)[^)]*\)/gi;
 // d'accord" reads as grammar; "son" is left out entirely because the sound
 // term is indistinguishable from the possessive, and phonetic cards are caught
 // by the brace rule anyway.
+//
+// Word edges are lookarounds on \p{L}, not \b: without the u flag \b treats
+// "é" as a non-letter, so a term that starts or ends with one — "passé
+// composé", "élision", "prononcé" — never matched, and the parser's backstop
+// let "passé composé avec être" through as a word card.
 const GRAMMAR_TERM =
-  /\b(pronoms?|toniques?|articles?|partitifs?|accords? (?:du|des|avec)|participes?|cod|coi|relatifs?|sujet|négation|liaison|élision|conjugaison|imparfait|conditionnel|subjonctif|indicatif|impératif|plus-que-parfait|passé composé|pp|présent|futur|auxiliaire|préposition|infinitif|placement|prononcé|prononciation|voie passive)\b/i;
+  /(?<![\p{L}\p{N}_])(pronoms?|toniques?|articles?|partitifs?|accords? (?:du|des|avec)|participes?|cod|coi|relatifs?|sujet|négation|liaison|élision|conjugaison|imparfait|conditionnel|subjonctif|indicatif|impératif|plus-que-parfait|passé composé|pp|présent|futur|auxiliaire|préposition|infinitif|placement|prononcé|prononciation|voie passive)(?![\p{L}\p{N}_])/iu;
 
 // Pattern templates: "il faut + infinitif", "pas aussi … que", "cela = ça".
 // An ellipsis only marks a template when something follows it — a trailing "…"

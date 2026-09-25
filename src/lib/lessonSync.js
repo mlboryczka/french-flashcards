@@ -34,6 +34,13 @@ import { lessonSource, lessonIdOf, lessonCardKeyOf, lessonCardKey } from "./less
  *             before keys existed is indistinguishable from an edited one, and
  *             deleting a card someone corrected is worse than leaving one the
  *             lesson has retired. Returned so the caller can say so.
+ *   taken   — lesson cards NOT inserted because the deck already has a card of
+ *             its own with that exact front. The insert is an upsert on
+ *             (user_id, front), so it would have turned the student's card
+ *             into the lesson's — new back, new category, and its class dates
+ *             replaced by none. A single-word lesson front ("actuellement",
+ *             in the adverb lesson) can easily already be in a cahier deck.
+ *             The student keeps their card; the lesson goes without it.
  */
 export function reconcileLessons(lessons, deckCards) {
   const missing = [];
@@ -41,6 +48,9 @@ export function reconcileLessons(lessons, deckCards) {
   const retext = [];
   const stale = [];
   const unkeyed = [];
+  const taken = [];
+  // Fronts the deck holds as its own cards, not a lesson's.
+  const own = new Set((deckCards || []).filter((card) => !lessonIdOf(card)).map((card) => card.f));
 
   for (const lesson of lessons) {
     const want = new Map(
@@ -81,6 +91,7 @@ export function reconcileLessons(lessons, deckCards) {
 
     for (const [key, c] of want) {
       if (claimed.has(key)) continue;
+      if (own.has(c.f)) { taken.push({ lesson: lesson.id, front: c.f }); continue; }
       missing.push({
         front: c.f,
         back: c.b,
@@ -91,5 +102,5 @@ export function reconcileLessons(lessons, deckCards) {
     }
   }
 
-  return { missing, rekey, retext, stale, unkeyed };
+  return { missing, rekey, retext, stale, unkeyed, taken };
 }

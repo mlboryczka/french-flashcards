@@ -8,6 +8,16 @@ import { createClient } from "@supabase/supabase-js";
 
 import { requireUser } from "./_lib/auth.js";
 import { requireAnthropicKey } from "./_lib/anthropicKey.js";
+// What a card may be, and the code that holds the model to it, are
+// parse-cahier.js's — imported, not copied. This file is the upload dialog's
+// extract step and parse-cahier's commit is its last, so the two halves of one
+// upload must agree on what a card is.
+import {
+  WHAT_BECOMES_A_CARD,
+  keepAnswerable,
+  cleanFrenchFront,
+  splitSlashPairs,
+} from "./parse-cahier.js";
 export const config = {
   api: {
     bodyParser: { sizeLimit: "10mb" },
@@ -19,9 +29,9 @@ const DEFAULT_MODEL = "claude-haiku-4-5";
 
 const BASE_SYSTEM = `You are extracting flashcards from a French student's daily lesson notes.
 
-The text below is one lesson day from a cahier (notebook) kept by a French teacher. It contains French vocabulary, expressions, pronunciation notes, and grammar rules.
+The text below is one lesson day from a cahier (notebook) kept by a French teacher. It has French vocabulary and expressions (under "Vocabulaire Expressions"), and pronunciation notes, grammar rules, conjugations and example sentences (under "Prononciation Grammaire").
 
-Your job: extract every French term/phrase/rule as a flashcard with an English translation.
+Your job: turn every French word, expression and sentence into a flashcard with an English translation, and every conjugated form into a drill. Grammar rules and pronunciation notes are not cards — see WHAT BECOMES A CARD below.
 
 Rules:
 1. Preserve the EXACT French spelling including accents, apostrophes, and punctuation. Do not "correct" anything.
@@ -29,12 +39,11 @@ Rules:
 3. For gender pairs like "un vendeur / une vendeuse" or "gros, grosse (adj)", keep them as a single card.
 4. Translate naturally into English.
 5. Skip lines that are clearly not flashcard material (homework, URLs, section headers themselves).
-6. Each card gets a category: "V" for Vocabulaire/Expressions, "G" for Prononciation/Grammaire.
+6. Each card gets a category, "V" or "G", as set out under WHAT BECOMES A CARD below. "G" is ONLY for conjugation drills and conjugation tables; every other card is "V", whichever section it came from.
 7. If a line pairs two different words with "//", split them into separate cards.
 8. "on" in conversational French means "we", not "one".
 
-Return ONLY a JSON array. Each element: {"front": "...", "back": "...", "category": "V" | "G"}.
-If the block has no extractable cards, return [].`;
+${WHAT_BECOMES_A_CARD}`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -277,7 +286,9 @@ export default async function handler(req, res) {
   });
 }
 
-// Shared per-block Claude call. Returns an array of {front, back, category}.
+// Shared per-block Claude call. Returns an array of {front, back, category},
+// plus a conjugation table's fields when the card is one, and only cards that
+// can be answered by typing (keepAnswerable).
 // Throws on bad response so the caller can aggregate errors across blocks.
 async function callClaudeOnce(anthropic, model, systemPrompt, text) {
   if (!text || text.trim().length < 20) return [];
@@ -302,7 +313,7 @@ async function callClaudeOnce(anthropic, model, systemPrompt, text) {
   if (!Array.isArray(parsed)) {
     throw new Error("Claude did not return a JSON array");
   }
-  return parsed
+  const cards = parsed
     .filter(
       (c) =>
         c &&
@@ -314,8 +325,32 @@ async function callClaudeOnce(anthropic, model, systemPrompt, text) {
       front: c.front.trim(),
       back: c.back.trim(),
       category: c.category,
+      // A conjugation table carries what parse-cahier's commit needs to turn
+      // it into drills. These fields used to be dropped here, so a table
+      // uploaded through the dialog never became drills: it was saved as one
+      // card whose front listed every answer.
+      ...(c.conjugation === true
+        ? {
+            conjugation: true,
+            infinitive: typeof c.infinitive === "string" ? c.infinitive.trim() : null,
+            tense: typeof c.tense === "string" ? c.tense.trim() : null,
+            forms: Array.isArray(c.forms) ? c.forms : null,
+          }
+        : {}),
     }))
     .filter((c) => c.front.length > 0 && c.back.length > 0);
+  // Here as well as at the commit, so what this returns — and what
+  // cards_parsed counts — is only cards the student could get. A table is
+  // passed through for the commit to expand; the commit runs this again after.
+  //
+  // Cleaned and split first, exactly as the commit and the sync do before
+  // they judge a card. Judged raw, a G card whose French side still carries
+  // its English gloss — "je vivais (I lived - imparfait)" — reads as a rule
+  // and was dropped here, although the commit would have cleaned it to "je
+  // vivais" and kept it; the same notebook gave the sync a card the dialog
+  // lost. Both steps give the same result when the commit repeats them.
+  const cleaned = cards.map((c) => ({ ...c, front: cleanFrenchFront(c.front, c.back) }));
+  return keepAnswerable(splitSlashPairs(cleaned));
 }
 
 // Build the few-shot block: group by category, take top 5 categories by
@@ -366,7 +401,9 @@ function describeCategory(cat) {
       "Keep gendered pairs (masculine/feminine) as a single card",
     wrong_disambiguator:
       "Pick short, meaningful disambiguator parentheticals",
-    wrong_card_type: "Classify cards correctly as V (vocab) vs G (grammar)",
+    // G is only for conjugation drills and tables now (see WHAT_BECOMES_A_CARD).
+    wrong_card_type:
+      "Classify cards correctly: G only for conjugation drills and tables, V for everything else",
     reversed_front_back: "Do not swap front/back fields",
     duplicate_detected: "Do not emit duplicate cards of the same concept",
     spelling_correction:

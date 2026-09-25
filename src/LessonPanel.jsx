@@ -72,6 +72,9 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
   // always lands on the lesson's first section rather than wherever you were
   // three cards ago.
   useEffect(() => { if (!open) setTab(0); }, [open]);
+  // And when it switches to another lesson: a tab index from one lesson's
+  // notes means nothing in another's.
+  useEffect(() => { setTab(0); }, [lesson?.id]);
 
   if (!mounted || !lesson) return null;
   const sections = lesson.notes || [];

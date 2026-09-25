@@ -15,6 +15,7 @@
 // went out.
 import { openApp, finish, checker, settled } from "../harness.mjs";
 import LESSON from "../../src/data/lessons/imperatif.js";
+import { LESSONS } from "../../src/data/lessons/index.js";
 import { lessonCardKey } from "../../src/lib/lessonSource.js";
 
 // A card's identity is the hash of the front it was FIRST written with: a
@@ -138,8 +139,13 @@ console.log(`\n  a new account, empty deck — "${LESSON.title}" has ${LESSON.ca
   ck("each is tagged with the key its lesson identity depends on", badKey.length === 0,
      badKey.length ? `${badKey.length} mistagged, e.g. ${JSON.stringify(badKey[0].source)}` : "all keyed");
 
+  // Every lesson in the catalogue arrives the same way; this case looks
+  // closely at the first. Everything else in the deck must be a lesson card.
+  const allLessonCards = LESSONS.reduce((n, l) => n + l.cards.length, 0);
+  const notLesson = store.rows.filter((r) => !String(r.source || "").startsWith("lesson:"));
   ck("and nothing else was invented alongside them",
-     store.rows.length === got.length, `${store.rows.length} rows total, ${got.length} from the lesson`);
+     notLesson.length === 0 && store.rows.length === allLessonCards,
+     `${store.rows.length} rows, ${allLessonCards} cards across ${LESSONS.length} lessons, ${notLesson.length} not from a lesson`);
 
   await browser.close();
 }
@@ -221,13 +227,14 @@ console.log("\n  and the student can study it and read the notes");
 // with them the FSRS history hanging off each one.
 console.log("\n  a second visit changes nothing");
 {
-  const seed = LESSON.cards.map((card) => { const [front, back, category] = card; return {
+  // Every lesson in the catalogue, already synced.
+  const seed = LESSONS.flatMap((lesson) => lesson.cards.map((card) => { const [front, back, category] = card; return {
     front, back, category,
     dates: [], flagged_for_review: false, batch_id: null,
-    source: `lesson:${LESSON.id}#${keyOf(card)}`,
+    source: `lesson:${lesson.id}#${keyOf(card)}`,
     next_due_at: null, lapses: 2, stability: 12, difficulty: 6,
     fsrs_state: 2, reps: 5, last_review: null, last_answer_correct: true,
-  }; });
+  }; }));
   const store = makeStore(seed);
   const before = store.rows.length;
   const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });
@@ -255,6 +262,12 @@ console.log("\n  an existing deck gains the lesson without losing anything");
     { front: "grimper", back: "to climb", category: "V", dates: [], flagged_for_review: false,
       batch_id: null, source: "cahier-upload", next_due_at: null, lapses: 0, stability: null,
       difficulty: null, fsrs_state: 0, reps: 0, last_review: null, last_answer_correct: null },
+    // A front the adverb lesson ships too. The lesson insert is an upsert on
+    // (user_id, front), so it used to turn this card into the lesson's —
+    // another back and category, and the class dates gone.
+    { front: "actuellement", back: "currently", category: "V", dates: ["2026-03-02"], flagged_for_review: false,
+      batch_id: null, source: "cahier-upload", next_due_at: null, lapses: 0, stability: 4,
+      difficulty: 5, fsrs_state: 2, reps: 3, last_review: null, last_answer_correct: true },
   ];
   const store = makeStore(own);
   const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });
@@ -269,6 +282,12 @@ console.log("\n  an existing deck gains the lesson without losing anything");
   const hill = mine.find((r) => r.front === "une colline");
   ck("with their scheduling untouched", hill && hill.reps === 9 && hill.stability === 30,
      hill ? `reps ${hill.reps}, stability ${hill.stability}` : "row gone");
+  const same = store.rows.filter((r) => r.front === "actuellement");
+  const act = same[0];
+  ck("a card of theirs that a lesson also ships stays theirs",
+     same.length === 1 && act.source === "cahier-upload" && act.back === "currently" && act.category === "V" &&
+       JSON.stringify(act.dates) === JSON.stringify(["2026-03-02"]) && act.reps === 3,
+     act ? JSON.stringify({ source: act.source, back: act.back, category: act.category, dates: act.dates }) : "row gone");
 
   await browser.close();
 }

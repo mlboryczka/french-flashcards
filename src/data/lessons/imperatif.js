@@ -81,7 +81,7 @@ export const CARDS = [
   ["Donne-lui → au négatif", "Ne lui donne pas", "G", "negative"],
   ["Prends-en → au négatif", "N'en prends pas", "G", "negative"],
   ["Attendez-nous → au négatif", "Ne nous attendez pas", "G", "negative"],
-  ["Parlons-en → au négatif", "N'en parlons plus", "G", "negative"],
+  ["Parlons-en → au négatif", "N'en parlons pas / N'en parlons plus", "G", "negative"],
   ["se lever (impératif) → tu", "Lève-toi", "G", "pronominal", "se lever → tu"],
   ["se lever (impératif) → nous", "Levons-nous", "G", "pronominal", "se lever → nous"],
   ["se lever (impératif) → vous", "Levez-vous", "G", "pronominal", "se lever → vous"],
@@ -384,6 +384,21 @@ export const LESSON = {
     "pronominal", "ex5",
     "phrase", "ex8",
   ],
+  // The line shown above a grammar card saying what to type (see
+  // src/lib/cardInstruction.js). The paradigm drills — "finir (impératif) →
+  // tu" — get theirs from their own shape, which names the person, so only the
+  // transformation sections are listed. The translation sections (ex3, ex4,
+  // ex8, phrase) are two-way phrase cards and carry no line.
+  instructions: {
+    ind2imp: "Turn this into the imperative, keeping the same person",
+    negative: "Make this imperative negative",
+    pronominal: "Make this imperative negative",
+    ex1: "Turn this advice into the imperative, keeping the same person",
+    ex2: "Make this imperative negative",
+    ex5: "Turn this advice into the imperative, keeping the same person",
+    ex6: "Turn this advice into the imperative, keeping the same person",
+    ex7: "Turn this advice into the imperative, keeping the same person",
+  },
 };
 
 export default LESSON;

@@ -16,12 +16,18 @@
 //   1. Conjugation drill expansion — when Claude flags a card as a
 //      conjugation table (e.g. "vivre : je vis, tu vis, il vit..."), we
 //      expand it into per-form drill cards ("vivre (présent) → je" / "je
-//      vis") AND keep the summary card for passive review.
+//      vis"). The table card itself is NOT kept once it has drills: its
+//      front lists every answer, so as a card it answers itself.
 //
 //   2. Polysemy splitting — during dedupe, if the same French front appears
 //      with semantically divergent English backs (e.g. "voler" = "to steal"
 //      vs "to fly"), we keep BOTH cards with disambiguator parentheticals
 //      appended to the front instead of merging them.
+//
+//   3. Only answerable cards — every card must be one you can answer by
+//      typing something the app can check (the owner's rule, 2026-09-24).
+//      Grammar rules and pronunciation notes are not; keepAnswerable drops
+//      any the model produced anyway. See its comment.
 //
 // Response:
 //   {
@@ -44,6 +50,12 @@ import { requireUser } from "./_lib/auth.js";
 // into cards. They are exported rather than copied, so the two paths can never
 // drift into parsing the same notebook differently.
 import { requireAnthropicKey } from "./_lib/anthropicKey.js";
+// The same two tests the app itself uses, imported rather than copied: what the
+// study screen calls a conjugation drill, and what the Grammar filter calls a
+// rule. If the parser judged cards by different rules from the app, a card it
+// let through could still be one the app treats as a rule.
+import { isConjugationDrill } from "../src/lib/cardInstruction.js";
+import { isGrammarCard } from "../src/lib/cardTypes.js";
 export const config = {
   api: {
     bodyParser: { sizeLimit: "10mb" },
@@ -244,9 +256,14 @@ async function handleCommit(req, res, adminClient, userId) {
   // Step 1: expand conjugation tables into drill cards
   const { expanded, drillsGenerated } = expandConjugations(splitCards);
 
+  // Step 1b: drop the rule and pronunciation cards the model produced despite
+  // being told not to, and re-tag as V the plain words it filed under G.
+  // After expansion, so a table has already become its drills.
+  const answerable = keepAnswerable(expanded);
+
   // Step 2: dedupe with polysemy splitting (cross-chunk: works because
   // we now have the full set of cards in a single function call)
-  const { deduped, splits } = dedupeWithPolysemy(expanded);
+  const { deduped, splits } = dedupeWithPolysemy(answerable);
 
   // Step 3: write to Supabase
   if (replace) {
@@ -290,7 +307,7 @@ async function handleCommit(req, res, adminClient, userId) {
   const allDates = [...new Set(deduped.flatMap((c) => c.dates))].sort();
 
   console.log(
-    `[parse-cahier] commit: raw=${rawCards.length} slashSplit=${splitCards.length} expanded=${expanded.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} errors=${errors.length}`
+    `[parse-cahier] commit: raw=${rawCards.length} slashSplit=${splitCards.length} expanded=${expanded.length} notAnswerable=${expanded.length - answerable.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} errors=${errors.length}`
   );
 
   return res.status(200).json({
@@ -374,39 +391,41 @@ function stripHomework(text) {
 // Claude extraction
 // ═══════════════════════════════════════════════════════════════════════════
 
-const EXTRACTION_PROMPT = `You are extracting flashcards from a French student's daily lesson notes.
+// What may become a card, how each kind of item under "Prononciation
+// Grammaire" is treated, the conjugation-table special case, and the reply
+// format. Shared by this file's prompt and cahier-parse.js's (the upload
+// dialog's extract step), so the two upload paths can't drift into different
+// ideas of what a card is. The owner's rule behind it, 2026-09-24: a card must
+// be answerable by typing something the app can check. A grammar rule has no
+// one answer to type, and the app has no microphone for a pronunciation note.
+//
+// keepAnswerable enforces the same rule in code, because the model won't
+// always follow it — the prompt is the first line, not the only one.
+//
+// A drill's persons are listed word for word because keepAnswerable keeps a
+// drill only when parseDrill knows its person: "qu'il/elle" is one, but "que
+// il/elle" and "qu'il/qu'elle" are not, and a drill written that way would be
+// dropped as a rule.
+export const WHAT_BECOMES_A_CARD = `WHAT BECOMES A CARD:
+The student sees one side of a card and TYPES the other, and the app checks what they typed. So every card needs one answer that can be typed and checked. The app has no microphone, and a rule cannot be typed back as an answer: grammar rules and pronunciation notes are NOT cards.
 
-The text below is one lesson day from a cahier (notebook) kept by a French teacher. It contains French vocabulary, expressions, pronunciation notes, and grammar rules, organized under two headers:
-- "Vocabulaire Expressions" — vocabulary words AND expressions/phrases, mixed together
-- "Prononciation Grammaire" — pronunciation notes AND grammar rules, mixed together
+Categories — do not decide them by where an item sits in the text:
+- "V" — every ordinary card: a French word, expression or sentence on the front, its English translation on the back. That is everything from "Vocabulaire Expressions", AND every real French word, phrase or example sentence found under "Prononciation Grammaire".
+- "G" — ONLY a conjugation drill (below) or a conjugation table (SPECIAL CASE below). Nothing else is ever "G".
 
-Your job: extract every French term/phrase/rule as a flashcard with an English translation.
-
-Rules:
-1. Preserve the EXACT French spelling including accents, apostrophes, and punctuation. Do not "correct" anything.
-2. Keep articles (un, une, le, la, les, des, du) when present — they're semantically meaningful in French.
-3. For gender pairs like "un vendeur / une vendeuse" or "gros, grosse (adj)", keep them as a single card.
-4. When two items are separated by / on the same line:
-   - Gender pairs (un vendeur / une vendeuse) → one card (rule 3)
-   - Single-word verb synonyms of the exact same action (mémoriser / retenir) → one card
-   - Different expressions or phrases (au début / d'abord, faire payer / to charge) → TWO separate cards, each with its own translation. "au début" = "at the beginning" and "d'abord" = "first" are distinct expressions and must be separate cards.
-5. Translate naturally into English. For expressions, give the idiomatic English equivalent, not a literal word-by-word translation.
-6. Skip lines that are clearly not flashcard material: homework assignments, URLs, footer references, teacher's personal notes, section headers themselves ("Vocabulaire Expressions", "Prononciation Grammaire").
-7. For each card, assign a category:
-   - "V" if it came from the Vocabulaire Expressions section
-   - "G" if it came from the Prononciation Grammaire section
-   Use the position in the text to determine this — items before "Prononciation Grammaire" are V, items after are G.
-8. If an item has a SHORT inline English translation (e.g. "louer - to rent", "She had to / she was supposed to = elle devait"), use that translation.
-   BUT: if the parenthetical is a LONG contextual explanation of when/why the phrase is used (e.g. "S'il partait à l'heure (he never leaves on time but I imagine a world where he does)"), that is NOT a translation — it's a usage note. Translate the French phrase directly and APPEND the context note in parentheses on the English side. Example: front = "S'il partait à l'heure", back = "If he left on time (he never leaves on time but I imagine a world where he does)". The test: if the parenthetical describes a scenario or situation rather than giving a direct equivalent, translate the French yourself and keep the parenthetical as context.
-8b. NEVER leave English on the French side. The front is the prompt — if it contains the translation, the card answers itself. "je suis allé (I went (passé composé))" must become front = "je suis allé", back = "I went (passé composé)". Grammar markers stay on the front: "(adj)", "(f)", "(pl)", "(subj)".
-8c. NEVER put two different French headwords on one card. If a spelling covers two words — "les frais" (the costs, a plural noun) and "frais" (fresh, an adjective) — emit TWO cards with the correct front for each: front "les frais" back "the costs / the expenses", and front "frais (adj)" back "fresh". Never join unrelated senses with a semicolon. " / " between near-synonyms of ONE sense is fine.
-9. Do not invent cards. Only extract what's actually in the text.
-10. If a line pairs two different words with "//" like "léger // lourd (adj)", split them into TWO separate cards: one for "léger (adj)" → "light" and one for "lourd (adj)" → "heavy". Two different French words with different meanings must always be separate cards.
-10b. The same goes for " / " joining two DIFFERENT forms or ideas rather than two ways of saying one thing. "il neige / il neigeait" is two tenses, "un avantage / l'inconvénient" is two opposite words, "copier / coller" is two actions: each is TWO cards. " / " stays only for near-synonyms of one meaning ("compter sur / dépendre de") and for gender pairs ("un vendeur / une vendeuse").
-10c. A past participle drill asks for the participle, so the participle never appears on the front. "pp de devoir : dû" becomes front "devoir → participe passé", back "dû". Likewise, never put a French form inside a note on the English side: "to re-elect (past participle: réélu)" becomes back "to re-elect", plus a separate "réélire → participe passé" / "réélu" card if the notebook gives the participle.
-10d. Copy the French exactly, and never drop a word. If the notebook line is missing a word the grammar requires, restore it — "je sais que peux m'ennuyer" is "je sais que je peux m'ennuyer". A missing subject pronoun or article is a transcription slip, not the French being taught.
-10e. No full stop at the end of a front or a back. Keep ? and ! where the French has them.
-11. In conversational French, "on" means "we" (not "one"). Translate "on" as "we" unless the context is clearly formal/literary. For example: "on était" = "we were", "on allait" = "we were going", "on s'est dit" = "we said to each other".
+What to do with each item under "Prononciation Grammaire":
+- A full conjugation table (3 or more forms) → the SPECIAL CASE below.
+- A single conjugated form, or a past participle → one drill card, category "G". The front is "infinitive (tense) → person", or "infinitive → participe passé" for a participle; the back is the form, with its pronoun. The tense is one of: présent, imparfait, futur, passé composé, plus-que-parfait, conditionnel, subjonctif, impératif. The person is written exactly as one of: je, tu, il/elle, nous, vous, ils/elles — and for the subjonctif, exactly as one of: que je, que tu, qu'il/elle, que nous, que vous, qu'ils/elles.
+    "je vis (vivre)" → front "vivre (présent) → je", back "je vis"
+    "que j'aille" → front "aller (subjonctif) → que je", back "que j'aille"
+    "pp de devoir : dû" → front "devoir → participe passé", back "dû"
+- A real French word, phrase or example sentence → an ordinary card, category "V", with its English translation. Drop any {respelling} or sound note from both sides.
+    "mon copain" → front "mon copain", back "my boyfriend"
+- A rule, explanation or pattern → NO card. "moins + adj / moins de + nom", "qui = sujet / que = COD", "passé composé avec être", "Pronoms toniques : moi, toi, lui/elle…" all produce nothing. The one exception: each FULL French example sentence the rule gives becomes its own "V" card with its English translation.
+    "qui = sujet : l'homme qui parle" → one card: front "l'homme qui parle", back "the man who is speaking"
+- A pronunciation note → NO card about the sound. The real French word it is about becomes a "V" card with its English translation, and nothing about how it sounds.
+    "du riz {ri} — silent z" → front "du riz", back "rice"
+  A note with no real word in it (a sound, a spelling pattern, a list of letters) produces nothing.
 
 SPECIAL CASE — CONJUGATION TABLES:
 If you see a full conjugation listed inline across multiple forms, like:
@@ -428,14 +447,47 @@ Example conjugation card:
    "tense": "présent",
    "forms": ["je vis", "tu vis", "il vit", "nous vivons", "vous vivez", "ils vivent"]}
 
-Only use the conjugation flag for FULL tables with 3 or more forms listed. A single form like "je viens de + infinitif" is NOT a conjugation table — it's a regular grammar card.
+Only use the conjugation flag for FULL tables with 3 or more forms listed. A single form is not a table: it is a drill card (above). A pattern like "je viens de + infinitif" is a rule, so it is no card at all.
 
 Return ONLY a JSON array, no preamble, no markdown fences, no explanation. Each element is either:
   {"front": "...", "back": "...", "category": "V" | "G"}
 or for conjugation tables:
   {"front": "...", "back": "...", "category": "G", "conjugation": true, "infinitive": "...", "tense": "...", "forms": [...]}
 
-If the block has no extractable cards, return [].
+If the block has no extractable cards, return [].`;
+
+const EXTRACTION_PROMPT = `You are extracting flashcards from a French student's daily lesson notes.
+
+The text below is one lesson day from a cahier (notebook) kept by a French teacher, organized under two headers:
+- "Vocabulaire Expressions" — vocabulary words AND expressions/phrases, mixed together
+- "Prononciation Grammaire" — pronunciation notes, grammar rules, conjugations and example sentences, mixed together
+
+Your job: turn every French word, expression and sentence into a flashcard with an English translation, and every conjugated form into a drill. Grammar rules and pronunciation notes are not cards — see WHAT BECOMES A CARD below.
+
+Rules:
+1. Preserve the EXACT French spelling including accents, apostrophes, and punctuation. Do not "correct" anything.
+2. Keep articles (un, une, le, la, les, des, du) when present — they're semantically meaningful in French.
+3. For gender pairs like "un vendeur / une vendeuse" or "gros, grosse (adj)", keep them as a single card.
+4. When two items are separated by / on the same line:
+   - Gender pairs (un vendeur / une vendeuse) → one card (rule 3)
+   - Single-word verb synonyms of the exact same action (mémoriser / retenir) → one card
+   - Different expressions or phrases (au début / d'abord, faire payer / to charge) → TWO separate cards, each with its own translation. "au début" = "at the beginning" and "d'abord" = "first" are distinct expressions and must be separate cards.
+5. Translate naturally into English. For expressions, give the idiomatic English equivalent, not a literal word-by-word translation.
+6. Skip lines that are clearly not flashcard material: homework assignments, URLs, footer references, teacher's personal notes, section headers themselves ("Vocabulaire Expressions", "Prononciation Grammaire").
+7. For each card, assign a category, "V" or "G", as set out under WHAT BECOMES A CARD below. "G" is ONLY for conjugation drills and conjugation tables; every other card is "V", whichever section it came from.
+8. If an item has a SHORT inline English translation (e.g. "louer - to rent", "She had to / she was supposed to = elle devait"), use that translation.
+   BUT: if the parenthetical is a LONG contextual explanation of when/why the phrase is used (e.g. "S'il partait à l'heure (he never leaves on time but I imagine a world where he does)"), that is NOT a translation — it's a usage note. Translate the French phrase directly and APPEND the context note in parentheses on the English side. Example: front = "S'il partait à l'heure", back = "If he left on time (he never leaves on time but I imagine a world where he does)". The test: if the parenthetical describes a scenario or situation rather than giving a direct equivalent, translate the French yourself and keep the parenthetical as context.
+8b. NEVER leave English on the French side. The front is the prompt — if it contains the translation, the card answers itself. "je suis allé (I went (passé composé))" must become front = "je suis allé", back = "I went (passé composé)". Grammar markers stay on the front: "(adj)", "(f)", "(pl)", "(subj)".
+8c. NEVER put two different French headwords on one card. If a spelling covers two words — "les frais" (the costs, a plural noun) and "frais" (fresh, an adjective) — emit TWO cards with the correct front for each: front "les frais" back "the costs / the expenses", and front "frais (adj)" back "fresh". Never join unrelated senses with a semicolon. " / " between near-synonyms of ONE sense is fine.
+9. Do not invent cards. Only extract what's actually in the text.
+10. If a line pairs two different words with "//" like "léger // lourd (adj)", split them into TWO separate cards: one for "léger (adj)" → "light" and one for "lourd (adj)" → "heavy". Two different French words with different meanings must always be separate cards.
+10b. The same goes for " / " joining two DIFFERENT forms or ideas rather than two ways of saying one thing. "il neige / il neigeait" is two tenses, "un avantage / l'inconvénient" is two opposite words, "copier / coller" is two actions: each is TWO cards. " / " stays only for near-synonyms of one meaning ("compter sur / dépendre de") and for gender pairs ("un vendeur / une vendeuse").
+10c. A past participle drill asks for the participle, so the participle never appears on the front. "pp de devoir : dû" becomes front "devoir → participe passé", back "dû". Likewise, never put a French form inside a note on the English side: "to re-elect (past participle: réélu)" becomes back "to re-elect", plus a separate "réélire → participe passé" / "réélu" card if the notebook gives the participle.
+10d. Copy the French exactly, and never drop a word. If the notebook line is missing a word the grammar requires, restore it — "je sais que peux m'ennuyer" is "je sais que je peux m'ennuyer". A missing subject pronoun or article is a transcription slip, not the French being taught.
+10e. No full stop at the end of a front or a back. Keep ? and ! where the French has them.
+11. In conversational French, "on" means "we" (not "one"). Translate "on" as "we" unless the context is clearly formal/literary. For example: "on était" = "we were", "on allait" = "we were going", "on s'est dit" = "we said to each other".
+
+${WHAT_BECOMES_A_CARD}
 
 Here is the lesson text:
 
@@ -550,43 +602,133 @@ function distributeQualifier(parts, index) {
 // Conjugation expansion
 // ═══════════════════════════════════════════════════════════════════════════
 
+// A table becomes one drill per form, and the table card itself goes. It used
+// to be kept "for passive review", but its front — "vivre : je vis, tu vis,
+// il vit, …" — lists every answer, so it answers itself and isn't a drill;
+// there is nothing on it to type that the card hasn't already shown.
+//
+// A table that yields no drills (no infinitive, no usable forms) is kept as a
+// plain card, stripped of its metadata, and left to keepAnswerable, which
+// drops it — a whole table on one side is not a card either.
 export function expandConjugations(cards) {
   const output = [];
   let drillsGenerated = 0;
 
   for (const card of cards) {
-    // Always keep the original as a clean card (strip metadata fields)
-    output.push({
-      front: card.front,
-      back: card.back,
-      category: card.category,
-      dates: card.dates,
-      source: "cahier-upload",
-    });
-
-    if (!card.conjugation) continue;
-    if (!card.infinitive) continue;
-    if (!Array.isArray(card.forms) || card.forms.length === 0) continue;
-
-    const tenseLabel =
-      card.tense && card.tense !== "unknown" ? ` (${card.tense})` : "";
-
-    for (let i = 0; i < Math.min(6, card.forms.length); i++) {
-      const form = card.forms[i];
-      if (!form || typeof form !== "string" || !form.trim()) continue;
-      const pronoun = SUBJECT_PRONOUNS[i];
+    const drills = card.conjugation ? conjugationDrills(card) : [];
+    if (drills.length === 0) {
+      // A clean card (metadata fields stripped).
       output.push({
-        front: `${card.infinitive}${tenseLabel} → ${pronoun}`,
-        back: form.trim(),
-        category: "G",
-        dates: [...card.dates],
-        source: "conjugation-drill",
+        front: card.front,
+        back: card.back,
+        category: card.category,
+        dates: card.dates,
+        source: "cahier-upload",
       });
-      drillsGenerated++;
+      continue;
     }
+    output.push(...drills);
+    drillsGenerated += drills.length;
   }
 
   return { expanded: output, drillsGenerated };
+}
+
+function conjugationDrills(card) {
+  if (!card.infinitive) return [];
+  if (!Array.isArray(card.forms) || card.forms.length === 0) return [];
+
+  const tenseLabel =
+    card.tense && card.tense !== "unknown" ? ` (${card.tense})` : "";
+
+  const drills = [];
+  for (let i = 0; i < Math.min(6, card.forms.length); i++) {
+    const form = card.forms[i];
+    if (!form || typeof form !== "string" || !form.trim()) continue;
+    const pronoun = SUBJECT_PRONOUNS[i];
+    drills.push({
+      front: `${card.infinitive}${tenseLabel} → ${pronoun}`,
+      back: form.trim(),
+      category: "G",
+      dates: Array.isArray(card.dates) ? [...card.dates] : [],
+      source: "conjugation-drill",
+    });
+  }
+  return drills;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Only cards that can be answered by typing
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The owner's rule (2026-09-24): a card must be answerable by typing something
+// the app can check. A grammar rule — "Pronoms toniques" → "moi, toi,
+// lui/elle…", "qui = sujet / que = COD" — has no one answer to type. A
+// pronunciation note — "du riz {ri}" → "riz: silent z" — is about a sound,
+// and the app has no microphone. Neither is a card any more. The grammar that
+// stays is the conjugation drill: "vivre (présent) → je" / "je vis".
+//
+// The prompt (WHAT_BECOMES_A_CARD) says all this, and the model mostly
+// listens. "Mostly" is the problem: for as long as this parser has existed it
+// was told to tag by POSITION, everything under the grammar heading G, and a
+// rule card that slips through is shown, failed and rescheduled for ever. So
+// the rule is enforced here too, on every card, in every upload path: the
+// upload dialog's commit (below), cahier-parse's extract, and the linked-doc
+// sync (cahier-sync.js).
+//
+// Run it AFTER expandConjugations, so a table has already become its drills.
+// Only G cards are judged, in this order:
+//   1. a conjugation drill stays G;
+//   2. a table still waiting to be expanded (conjugation: true) passes
+//      through, for expandConjugations to turn into drills — cahier-parse
+//      runs this before the commit expands;
+//   3. anything that reads as a rule or a sound note — isGrammarCard, the
+//      test the Grammar filter uses — or as a whole conjugation table on one
+//      side is dropped;
+//   4. what is left is a real word or sentence that happened to sit under the
+//      grammar heading ("mon copain", "le seul projet que j'ai vu"), and it
+//      becomes an ordinary card, V.
+// V cards are left alone. Pure: returns a new array, and a re-tagged card is a
+// copy, never the caller's object.
+export function keepAnswerable(cards) {
+  const out = [];
+  for (const card of cards || []) {
+    if (!card || card.category !== "G") {
+      out.push(card);
+      continue;
+    }
+    if (isConjugationDrill(card.front)) {
+      out.push(card);
+      continue;
+    }
+    if (card.conjugation === true) {
+      out.push(card);
+      continue;
+    }
+    if (
+      isGrammarCard({ f: card.front, b: card.back }) ||
+      isConjugationTable(card.front) ||
+      isConjugationTable(card.back)
+    ) {
+      continue;
+    }
+    out.push({ ...card, category: "V" });
+  }
+  return out;
+}
+
+// A whole conjugation table on one side — "vivre : je vis, tu vis, il vit, …",
+// "que j'aille, que tu ailles, qu'il aille". isGrammarCard doesn't catch one,
+// because there is no rule vocabulary in it, so it is named here: three or
+// more comma-separated parts that each start with a subject pronoun. Only ever
+// asked of G cards, so a V sentence that lists three clauses is never judged.
+const PERSON_START =
+  /^(?:que\s+|qu['’])?(?:j['’]|(?:je|tu|il|elle|on|nous|vous|ils|elles)(?:\/(?:il|elle|ils|elles))?\s)/i;
+
+function isConjugationTable(text) {
+  // "vivre : je vis, …" — the infinitive and its colon come off first.
+  const body = String(text || "").replace(/^[^:,]*:\s*/, "");
+  return body.split(/\s*[,;]\s*/).filter((part) => PERSON_START.test(part)).length >= 3;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

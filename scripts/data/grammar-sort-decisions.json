@@ -1,0 +1,886 @@
+{
+ "about": "The owner-reviewed sort of the 117 grammar and pronunciation cards in the original deck (2026-09-24). keep = a typeable drill; convert = replaced by newCards; archive = taken out of study, row kept. edits = two existing phrase cards corrected at the same time.",
+ "decisions": [
+  {
+   "front": "Pronoms toniques",
+   "back": "moi, toi, lui/elle, nous, vous, eux/elles (after prepositions: pour moi, avec elle)",
+   "decision": "archive",
+   "why": "a rule, nothing to type"
+  },
+  {
+   "front": "moins + adj / moins de + nom",
+   "back": "moins affectueux (less affectionate) / moins de monde (fewer people)",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "moins de monde / moins de gens",
+     "back": "fewer people",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "qui = sujet / que = COD (relatifs)",
+   "back": "who/which (subject) vs whom/which (direct object) in relative clauses",
+   "decision": "archive",
+   "why": "a rule"
+  },
+  {
+   "front": "cela = ça",
+   "back": "cela is the formal written form of ça",
+   "decision": "archive",
+   "why": "a rule"
+  },
+  {
+   "front": "les articles partitifs: du, de la, de l'",
+   "back": "unspecified quantities: du pain, de la soupe, de l'eau",
+   "decision": "archive",
+   "why": "a rule; the examples are too basic to be cards"
+  },
+  {
+   "front": "COD: le, la, les / COI: lui, leur",
+   "back": "Direct objects: le/la/les | Indirect objects: lui/leur (verbs with à)",
+   "decision": "archive",
+   "why": "a rule"
+  },
+  {
+   "front": "Ordre des pronoms: me/te → le/la/les → lui/leur → y → en",
+   "back": "order of object pronouns before the verb",
+   "decision": "archive",
+   "why": "a rule"
+  },
+  {
+   "front": "ne…plus / ne…jamais / ne…rien / ne…personne",
+   "back": "no longer / never / nothing / nobody — negation patterns",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "Je ne mange jamais de viande",
+     "back": "I never eat meat / I don't ever eat meat",
+     "category": "E"
+    },
+    {
+     "front": "Je n'ai rien vu",
+     "back": "I didn't see anything / I saw nothing / I haven't seen anything",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "passé composé avec être",
+   "back": "movement/state verbs use être + agreement: elle est allée, ils sont partis",
+   "decision": "archive",
+   "why": "a rule; the examples are too basic to be cards"
+  },
+  {
+   "front": "accord du pp avec avoir + COD placé avant",
+   "back": "past participle agrees with preceding direct object",
+   "decision": "archive",
+   "why": "a rule"
+  },
+  {
+   "front": "adverb placement in passé composé",
+   "back": "In passé composé, common adverbs (bien, beaucoup, mal, tout, déjà, trop) go BETWEEN auxiliary and past participle — not after. j'ai bien dormi, j'ai beaucoup mangé, j'ai tout fait",
+   "decision": "archive",
+   "why": "its examples (j'ai bien dormi, j'ai beaucoup mangé, j'ai tout fait) are already cards"
+  },
+  {
+   "front": "pronom y: aller, retourner, rester, être",
+   "back": "orally, 'y' is only used with these 4 verbs in short responses",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "J'y vais",
+     "back": "I'm going (there) / I'm off / I'm going",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "meilleur = + bon (adj) / mieux = + bien (adv)",
+   "back": "better as adjective vs adverb: le meilleur ami / il parle mieux",
+   "decision": "archive",
+   "why": "a rule; the new adverb lesson covers meilleur / mieux"
+  },
+  {
+   "front": "avoir besoin de + nom / verbe",
+   "back": "to need + noun / verb (especially physical/psychological needs)",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "avoir besoin de",
+     "back": "to need",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "savoir + information / connaître + nom",
+   "back": "to know (facts) vs to know (people/places)",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "savoir",
+     "back": "to know (a fact, or how to do something)",
+     "category": "V"
+    },
+    {
+     "front": "connaître",
+     "back": "to know (a person or a place)",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "seul (adj) = alone / seulement (adv) = only",
+   "back": "exception: 'the only + noun' → la seule chose",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "seul, seule",
+     "back": "alone / on my own / on one's own",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "ce que (COD) / ce qui (sujet)",
+   "back": "'what' in statements: je sais ce que tu veux (obj) / je sais ce qui se passe (subj)",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "Je sais ce que tu veux",
+     "back": "I know what you want (tu)",
+     "category": "E"
+    },
+    {
+     "front": "Je sais ce qui se passe",
+     "back": "I know what's going on / I know what's happening",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "sentir + sensation / se sentir + adj / ressentir + émotion",
+   "back": "feel (sensation) / feel (state) / feel (emotion)",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "sentir",
+     "back": "to smell",
+     "category": "V"
+    },
+    {
+     "front": "Je me sens mal",
+     "back": "I don't feel well / I feel bad / I feel sick / I feel ill",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "dans 10 minutes (from now) / en 10 minutes (within)",
+   "back": "time prepositions: dans = starting point, en = duration",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "dans une heure",
+     "back": "in an hour (from now)",
+     "category": "E"
+    },
+    {
+     "front": "en une heure",
+     "back": "in an hour (it takes an hour)",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "en + pays féminin / au + pays masculin",
+   "back": "en France, en Inde / au Liban, au Texas",
+   "decision": "archive",
+   "why": "a rule; its examples become cards from #98"
+  },
+  {
+   "front": "an (with number) / année (with content)",
+   "back": "5 ans / cette année, bonne année",
+   "decision": "archive",
+   "why": "a rule; the examples are too basic"
+  },
+  {
+   "front": "jour (with number) / journée (with content)",
+   "back": "5 jours / une bonne journée (bon weekend)",
+   "decision": "archive",
+   "why": "a rule; the examples are too basic"
+  },
+  {
+   "front": "penser de (opinion) / penser à (in mind)",
+   "back": "Qu'est-ce que tu penses de ça? (opinion) / Je pense à toi (mentally)",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "Qu'est-ce que tu penses de ça ?",
+     "back": "What do you think of that? / What do you think about that? (tu)",
+     "category": "E"
+    },
+    {
+     "front": "Je pense à toi",
+     "back": "I'm thinking of you / I think of you / I think about you / I'm thinking about you",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "s'asseoir / être assis",
+   "back": "action: to sit down / state: to be seated",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "s'asseoir",
+     "back": "to sit down / to sit",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "s'allonger / être allongé",
+   "back": "action: to lie down / state: to be lying down",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "être allongé",
+     "back": "to be lying down",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "s'endormir / être endormi",
+   "back": "action: to fall asleep / state: to be asleep",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "s'endormir",
+     "back": "to fall asleep / to go to sleep",
+     "category": "V"
+    },
+    {
+     "front": "être endormi",
+     "back": "to be asleep",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "si + présent → futur",
+   "back": "real condition: Si il part à l'heure, il arrivera à temps",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "S'il part à l'heure, il arrivera à temps",
+     "back": "If he leaves on time, he'll arrive in time / If he leaves on time, he will arrive in time",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "si + imparfait → conditionnel",
+   "back": "hypothetical: Si j'étais riche, j'achèterais une maison",
+   "decision": "archive",
+   "why": "\"si j'étais riche, j'achèterais une maison\" is already a card"
+  },
+  {
+   "front": "si + plus-que-parfait → conditionnel passé",
+   "back": "contrary-to-fact: Si j'avais su, je n'aurais pas dit ça",
+   "decision": "archive",
+   "why": "\"si j'avais su, je n'aurais pas dit ça\" is already a card"
+  },
+  {
+   "front": "ça fait X que + présent",
+   "back": "it's been X since (ongoing): ça fait 6 mois que j'habite ici",
+   "decision": "archive",
+   "why": "\"ça fait 6 mois que j'habite ici\" is already a card"
+  },
+  {
+   "front": "ça faisait X que + imparfait",
+   "back": "it had been X since (past ongoing): ça faisait 2 jours que j'avais pas fait",
+   "decision": "archive",
+   "why": "\"ça faisait 2 jours que j'avais pas fait du tennis\" is already a card"
+  },
+  {
+   "front": "depuis + présent (durée)",
+   "back": "English uses present perfect for ongoing action; French uses PRESENT + depuis. 'I have lived here for 6 months' = 'j'habite ici depuis 6 mois'",
+   "decision": "archive",
+   "why": "\"j'habite ici depuis 6 mois\" is already a card"
+  },
+  {
+   "front": "depuis quand vs depuis combien de temps",
+   "back": "'depuis quand' asks for a starting point (depuis 2020); 'depuis combien de temps' asks for a duration (depuis 3 ans)",
+   "decision": "archive",
+   "why": "\"depuis combien de temps tu apprends le français ?\" and \"depuis quand habites-tu à Paris ?\" are already cards"
+  },
+  {
+   "front": "vivre → je",
+   "back": "je vis",
+   "decision": "keep"
+  },
+  {
+   "front": "vivre → tu",
+   "back": "tu vis",
+   "decision": "keep"
+  },
+  {
+   "front": "vivre → il/elle",
+   "back": "il vit",
+   "decision": "keep"
+  },
+  {
+   "front": "vivre → nous",
+   "back": "nous vivons",
+   "decision": "keep"
+  },
+  {
+   "front": "vivre → vous",
+   "back": "vous vivez",
+   "decision": "keep"
+  },
+  {
+   "front": "vivre → ils/elles",
+   "back": "ils vivent",
+   "decision": "keep"
+  },
+  {
+   "front": "vivre → pp",
+   "back": "vécu (aux. avoir)",
+   "decision": "keep"
+  },
+  {
+   "front": "suivre → je",
+   "back": "je suis",
+   "decision": "keep"
+  },
+  {
+   "front": "suivre → il/elle",
+   "back": "il suit",
+   "decision": "keep"
+  },
+  {
+   "front": "suivre → nous",
+   "back": "nous suivons",
+   "decision": "keep"
+  },
+  {
+   "front": "suivre → ils/elles",
+   "back": "ils suivent",
+   "decision": "keep"
+  },
+  {
+   "front": "vendre → je",
+   "back": "je vends",
+   "decision": "keep"
+  },
+  {
+   "front": "vendre → il/elle",
+   "back": "il vend",
+   "decision": "keep"
+  },
+  {
+   "front": "vendre → nous",
+   "back": "nous vendons",
+   "decision": "keep"
+  },
+  {
+   "front": "vendre → ils/elles",
+   "back": "ils vendent",
+   "decision": "keep"
+  },
+  {
+   "front": "recevoir → je",
+   "back": "je reçois",
+   "decision": "keep"
+  },
+  {
+   "front": "recevoir → il/elle",
+   "back": "il reçoit",
+   "decision": "keep"
+  },
+  {
+   "front": "recevoir → nous",
+   "back": "nous recevons",
+   "decision": "keep"
+  },
+  {
+   "front": "recevoir → ils/elles",
+   "back": "ils reçoivent",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → je",
+   "back": "je dois",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → il/elle",
+   "back": "il doit",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → nous",
+   "back": "nous devons",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → ils/elles",
+   "back": "ils doivent",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → pp",
+   "back": "dû",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → imparfait (je)",
+   "back": "je devais (I had to / was supposed to)",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → conditionnel (je)",
+   "back": "je devrais (I should)",
+   "decision": "keep"
+  },
+  {
+   "front": "devoir → conditionnel passé (je)",
+   "back": "j'aurais dû (I should have)",
+   "decision": "keep"
+  },
+  {
+   "front": "investir → je",
+   "back": "j'investis (model: finir → 2nd group)",
+   "decision": "keep"
+  },
+  {
+   "front": "investir → il/elle",
+   "back": "il investit",
+   "decision": "keep"
+  },
+  {
+   "front": "investir → nous",
+   "back": "nous investissons",
+   "decision": "keep"
+  },
+  {
+   "front": "investir → ils/elles",
+   "back": "ils investissent",
+   "decision": "keep"
+  },
+  {
+   "front": "aller (subj) → que je",
+   "back": "que j'aille",
+   "decision": "keep"
+  },
+  {
+   "front": "aller (subj) → que tu",
+   "back": "que tu ailles",
+   "decision": "keep"
+  },
+  {
+   "front": "aller (subj) → qu'il",
+   "back": "qu'il aille",
+   "decision": "keep"
+  },
+  {
+   "front": "aller (subj) → que nous",
+   "back": "que nous allions",
+   "decision": "keep"
+  },
+  {
+   "front": "aller (subj) → qu'ils",
+   "back": "qu'ils aillent",
+   "decision": "keep"
+  },
+  {
+   "front": "partir (subj) → que je",
+   "back": "que je parte",
+   "decision": "keep"
+  },
+  {
+   "front": "partir (subj) → que nous",
+   "back": "que nous partions",
+   "decision": "keep"
+  },
+  {
+   "front": "voir (subj) → que je",
+   "back": "que je voie",
+   "decision": "keep"
+  },
+  {
+   "front": "voir (subj) → que nous",
+   "back": "que nous voyions",
+   "decision": "keep"
+  },
+  {
+   "front": "faire (subj) → que nous",
+   "back": "que nous fassions",
+   "decision": "keep"
+  },
+  {
+   "front": "venir (subj) → que nous",
+   "back": "que nous venions",
+   "decision": "keep"
+  },
+  {
+   "front": "dire (subj) → que je",
+   "back": "que je dise",
+   "decision": "keep"
+  },
+  {
+   "front": "connaître (subj) → que je",
+   "back": "que je connaisse",
+   "decision": "keep"
+  },
+  {
+   "front": "écrire (subj) → que je",
+   "back": "que j'écrive",
+   "decision": "keep"
+  },
+  {
+   "front": "avoir (subj) → que tu",
+   "back": "que tu aies",
+   "decision": "keep"
+  },
+  {
+   "front": "être (subj) → que tu",
+   "back": "que tu sois (je veux que tu sois contente)",
+   "decision": "keep"
+  },
+  {
+   "front": "répondre → je",
+   "back": "je réponds",
+   "decision": "keep"
+  },
+  {
+   "front": "répondre → il/elle",
+   "back": "il répond",
+   "decision": "keep"
+  },
+  {
+   "front": "répondre → ils/elles",
+   "back": "ils répondent",
+   "decision": "keep"
+  },
+  {
+   "front": "prendre → pp",
+   "back": "pris",
+   "decision": "keep"
+  },
+  {
+   "front": "comprendre → pp",
+   "back": "compris",
+   "decision": "keep"
+  },
+  {
+   "front": "mettre → pp",
+   "back": "mis",
+   "decision": "keep"
+  },
+  {
+   "front": "résoudre → pp",
+   "back": "résolu",
+   "decision": "keep"
+  },
+  {
+   "front": "élire → pp",
+   "back": "élu",
+   "decision": "keep"
+  },
+  {
+   "front": "offrir → pp",
+   "back": "offert",
+   "decision": "keep"
+  },
+  {
+   "front": "convaincre → pp",
+   "back": "convaincu",
+   "decision": "keep"
+  },
+  {
+   "front": "voir → imparfait (je)",
+   "back": "je voyais",
+   "decision": "keep"
+  },
+  {
+   "front": "boire → imparfait (je)",
+   "back": "je buvais",
+   "decision": "keep"
+  },
+  {
+   "front": "venir → imparfait (ils)",
+   "back": "ils venaient",
+   "decision": "keep"
+  },
+  {
+   "front": "apprendre → imparfait (je)",
+   "back": "j'apprenais",
+   "decision": "keep"
+  },
+  {
+   "front": "s'asseoir / être assis",
+   "back": "to sit down / to be seated (action vs state)",
+   "decision": "archive",
+   "why": "duplicate of #24"
+  },
+  {
+   "front": "s'allonger / être allongé",
+   "back": "to lie down / to be lying down (action vs state)",
+   "decision": "archive",
+   "why": "duplicate of #25"
+  },
+  {
+   "front": "s'endormir / être endormi",
+   "back": "to fall asleep / to be asleep (action vs state)",
+   "decision": "archive",
+   "why": "duplicate of #26"
+  },
+  {
+   "front": "en Inde / au Liban",
+   "back": "en + fem country (en Inde) / au + masc country (au Liban)",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "en Inde",
+     "back": "in India / to India",
+     "category": "V"
+    },
+    {
+     "front": "au Liban",
+     "back": "in Lebanon / to Lebanon",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "pluS d'énergie (S prononcé)",
+   "back": "S in 'plus' pronounced before vowel or when meaning 'more'",
+   "decision": "archive",
+   "why": "pronunciation only; \"plus d'énergie\" is too basic to be a card"
+  },
+  {
+   "front": "compte {contt}",
+   "back": "pronounced without the final 'e'",
+   "decision": "archive",
+   "why": "pronunciation only; \"un compte\" is already a card"
+  },
+  {
+   "front": "que j'aille",
+   "back": "-aille rhymes with English 'eye' {ay} — same sound as travaille, taille, médaille",
+   "decision": "archive",
+   "why": "pronunciation only; \"aller (subj) → que je\" is already a card"
+  },
+  {
+   "front": "les frais / une fraise",
+   "back": "frais {frè} fees vs fraise {frèz} strawberry",
+   "decision": "archive",
+   "why": "pronunciation only; \"des frais\" and \"une fraise\" are already cards"
+  },
+  {
+   "front": "du riz {ri}",
+   "back": "riz: silent z",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "du riz",
+     "back": "(some) rice",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "rue {ru} vs roue {roo}",
+   "back": "rue (street) vs roue (wheel) — different vowels",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "une rue",
+     "back": "a street",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "complet / complète",
+   "back": "masc: {complè} / fem: {complèt} — T pronounced in feminine",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "complet, complète",
+     "back": "complete / full (no places left, e.g. a hotel or train)",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "je mets / le cas",
+   "back": "mets: silent T and S / cas: silent S",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "dans ce cas",
+     "back": "in that case",
+     "category": "E"
+    },
+    {
+     "front": "mettre → je",
+     "back": "je mets",
+     "category": "G"
+    }
+   ]
+  },
+  {
+   "front": "un fils {fiss} / un fil {fill} / une fille {fiyy}",
+   "back": "son / thread / girl — three distinct sounds",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "un fils",
+     "back": "a son",
+     "category": "V"
+    },
+    {
+     "front": "un fil",
+     "back": "a thread / a wire",
+     "category": "V"
+    },
+    {
+     "front": "une fille",
+     "back": "a girl / a daughter",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "que j'aille {eye} vs que j'aie {ay}",
+   "back": "subj aller vs subj avoir — different sounds",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "avoir (subj) → que je",
+     "back": "que j'aie",
+     "category": "G"
+    }
+   ]
+  },
+  {
+   "front": "japonais / japonaise",
+   "back": "masc: {japonè} / fem: {japonèz} — Z in feminine",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "japonais, japonaise",
+     "back": "Japanese",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "il y a {ya} / il y en a pas {yen na pa}",
+   "back": "common contraction in spoken French",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "il n'y en a pas",
+     "back": "there isn't any / there aren't any / there are none / there is none",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "liaison: les + voyelle",
+   "back": "S in 'les' links with a Z sound — e.g., les {z}autres, les {z}écouteurs",
+   "decision": "archive",
+   "why": "pronunciation only"
+  },
+  {
+   "front": "plus (negation) = silent S / plus (more) = S pronounced",
+   "back": "Il ne travaille plus {plu} / Il travaille plus {plüss}",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "Il ne lit plus",
+     "back": "He doesn't read anymore / He no longer reads / He's stopped reading",
+     "category": "E"
+    },
+    {
+     "front": "Il lit plus qu'avant",
+     "back": "He reads more than before / He reads more than he used to",
+     "category": "E"
+    }
+   ]
+  },
+  {
+   "front": "le son 'œ'",
+   "back": "vœu sounds like 'veux' {vuh}; sœur sounds like the 'eur' in professeur {suhr}",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "un vœu",
+     "back": "a wish / a vow",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "heureux / heureuse",
+   "back": "masc: {eureux} / fem: {eureuz}",
+   "decision": "archive",
+   "why": "pronunciation only; \"heureux, heureuse\" is already a card"
+  },
+  {
+   "front": "ne m'attends pas",
+   "back": "liaison: {nuh mattahn pa}",
+   "decision": "archive",
+   "why": "pronunciation only; \"Ne m'attends pas\" is in the imperative lesson, which every student has"
+  },
+  {
+   "front": "un cheval / des chevaux",
+   "back": "singular {sheval} / plural {shevo} — irregular",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "un cheval",
+     "back": "a horse",
+     "category": "V"
+    },
+    {
+     "front": "des chevaux",
+     "back": "horses",
+     "category": "V"
+    }
+   ]
+  },
+  {
+   "front": "il est surpris / elle est surprise",
+   "back": "masc: silent S / fem: Z pronounced",
+   "decision": "convert",
+   "newCards": [
+    {
+     "front": "surpris, surprise",
+     "back": "surprised",
+     "category": "V"
+    }
+   ]
+  }
+ ],
+ "edits": [
+  {
+   "front": "ça faisait 2 jours que j'avais pas fait du tennis",
+   "newFront": "ça faisait 2 jours que je n'avais pas fait de tennis",
+   "newBack": "it had been 2 days since I'd played tennis",
+   "why": "written French needs ne, and du becomes de after a negation"
+  },
+  {
+   "front": "s'il est parti à l'heure, il arrivera à temps",
+   "newBack": "if he left on time, he'll arrive in time",
+   "why": "à temps is in time; on time is à l'heure"
+  }
+ ]
+}

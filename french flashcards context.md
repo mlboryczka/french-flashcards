@@ -269,7 +269,21 @@ answer per card per day rule:
 
 - **Typing** (the default for a new student). The matcher grades: a small
   typo is right ("close enough"), a wrong article is wrong, Show answer is
-  wrong. Checked, so it is the stronger evidence. Tapping the card with an
+  wrong. **Except on a French-answered drill** (a `→` in the front, shown
+  French side): there the answer must be exact once case, accents,
+  punctuation and parentheses are set aside (`matchAnswer`'s `exact`). The
+  tolerance accepted exactly what the drills drill — "je vend" for je vends,
+  "que j'aie" for que j'aille, chères and chèrement for cher, évidamment for
+  évidemment — and a close enough counts as remembered. Only a real
+  conjugation drill or a lesson card is marked exactly; a leftover rule card
+  with an arrow and an English answer is not. Exact is exact about what, not
+  how it is quoted (`drillAlternates`): an `il/elle` drill takes either
+  pronoun, a subjunctive is right with or without its que, a drill stored
+  without a pronoun ("vienne") takes the pronoun the instruction line asks
+  for ("que je vienne"), and a lesson card takes the lesson's current answer
+  even on a row synced before the lesson widened it. Only "/" separates exact
+  answers — a comma is part of one. Everywhere, œ may be typed oe, a phone's ’
+  is an apostrophe and … is punctuation. Checked, so it is the stronger evidence. Tapping the card with an
   answer typed checks it; Escape clears the box and gives nothing up. An
   accepted "my answer should be accepted" dispute is recorded as right.
 - **Flipping.** The student turns the card and grades themselves. Got It and
@@ -390,6 +404,18 @@ the open item.
 Guarded by the `cahier-sync` suite (no browser): a stand-in database, doc and
 Claude, with the number of Claude calls counted, because that is the bill.
 
+**What the parser makes of the grammar section** (since 2026-09-24, every
+path: upload, few-shot upload, sync). Only cards you can answer by typing:
+conjugation tables become drills (and the table card itself is no longer
+kept — its front listed every answer), a single form becomes a drill
+(`infinitive (tense) → person`), and a real word, phrase or example sentence
+becomes an ordinary `V` card whatever section it sat in. A rule statement or a
+pronunciation note makes no card — only the words or sentences under it do.
+The prompt text for this is one block (`WHAT_BECOMES_A_CARD` in
+`parse-cahier.js`) shared by both prompts, and `keepAnswerable` enforces it
+after the model on all three paths: a `G` card that isn't a drill is dropped
+if `isGrammarCard` reads it as a rule or a sound, and made `V` otherwise.
+
 ---
 
 ## Card types: grammar / vocab / phrase
@@ -412,6 +438,28 @@ distinction you study by, so the UI collapses them into three:
 
 Used for the **All / Grammar / Vocab / Phrases** filter in the Cards view, the
 **By type** panel in Stats, and the tag on each card in Hardest Cards.
+
+**A grammar card is a drill, or it isn't a card** (owner, 2026-09-24). Every
+card must be answerable by typing something the matcher can check. So there
+are no rule cards (`Pronoms toniques` → "moi, toi, lui/elle…", which nobody
+types closely enough to be marked right, so it was always a miss) and no
+pronunciation cards (there is no microphone). What remains in `G` is
+conjugation drills and the lessons' production cards. Where a rule or
+pronunciation card had a real word or example sentence underneath, that is an
+ordinary two-way card now. The cahier parser no longer makes either kind (see
+*The linked cahier*), the demo deck (`src/data/cards.js`) was sorted by hand
+with the owner, and `scripts/sort-grammar-cards.mjs` sorts existing decks.
+
+**Every grammar card says what to type** — one line above the prompt
+(`cardInstructionFor` in `src/data/lessons/index.js`, `data-card-instruction`).
+`vivre → je` never said which tense, and `relatif → adverbe` read as a word to
+translate. A conjugation drill's line comes from its own shape
+(`src/lib/cardInstruction.js`): tense and person by name, and the pronoun the
+answer starts with, because the answer includes it — "Conjugate in the present
+tense, first person singular, with je"; a drill naming no tense is the present.
+Any other lesson card takes its section's line from `LESSON.instructions`. Word
+and phrase cards get none: they are translations, and the input already says
+which language. In English, by the owner's choice.
 
 Note the filter exists by explicit user request. Studying one type at a time
 is blocked practice and costs retention; the default is `All`.
@@ -564,6 +612,7 @@ writing nothing** — `--apply` is what makes them write.
 | `fix-multi-sense.mjs` | The multi-sense cleanup end to end: scan, audit, apply. `DECK_USER_ID` narrows it to one deck; omit it for every user |
 | `resolve-disputes.mjs` | Works the backlog of "my answer should have been accepted" claims left in `feedback_submissions` |
 | `resolve-feedback.mjs` | Lists open `beta_feedback`, and marks entries resolved (`--note`, `--apply`) once they are fixed. Needs `migration_009` |
+| `sort-grammar-cards.mjs` | The one-off clear-out of rule and pronunciation cards from every deck (2026-09-24): keeps conjugation drills, turns the rest into ordinary cards where real French sits underneath, archives what is only a rule or a sound. The owner's hand-made sort of the original 117 (`scripts/data/grammar-sort-decisions.json`) decides every card it covers; Claude decides the rest, checked, and anything that fails the check is left undecided. The dry run writes the proposal to `backups/`; `--apply <proposal>` applies exactly that file, after a full backup. Lesson cards are never touched |
 | `reset-fsrs-seed.mjs` | Puts cards still carrying `migration_007`'s guessed state — due at exactly the instant it ran, never answered since — back to not yet seen. `--apply` backs every row up to `backups/` (gitignored) first. Run for all decks on 2026-09-14; a dry run now finds none |
 
 Two things worth knowing about them:
@@ -1080,6 +1129,42 @@ The shape of it:
   cards. A worksheet's twenty pronominal verbs work because they are twenty in
   one sitting; as cards they would be twenty review streams for one rule. The
   test is whether an item teaches something no other card teaches.
+- **Every section says what to type** (`LESSON.instructions`, one line per
+  section; drills derive theirs). The line must never give the answer away:
+  the adverb lesson's two gap sections use the same cue word for opposite
+  answers (`cher → Ces chaussures coûtent ___` is cher, `cher → Une victoire
+  ___ acquise` is chèrement), so their lines are word for word the same.
+- **A lesson never writes over a student's own card.** Missing lesson cards
+  are upserted on `(user_id, front)`, so a lesson front the deck already had
+  would have become the lesson's card — new back and category, class dates
+  gone. `reconcileLessons` now skips those (`taken`) and the student keeps
+  theirs. Single-word fronts make it likely: the adverb lesson's false friends
+  (`actuellement`) can be in any cahier deck.
+
+### Adjectif ou adverbe ?
+
+The second lesson (`src/data/lessons/adverbes.js`, 81 cards, five notes tabs),
+written for the app rather than taken from Laura's sheets: adverbs from
+adjectives, and the pairs English speakers mix up — relatif → relativement,
+bon or bien, coûter cher but chèrement acquis, -amment or -emment, adjectives
+with no -ment form, the -ment false friends, enfin or finalement. Drafted at
+124 cards, checked by independent reviews (a native-teacher read, a dictionary
+check against Larousse / Le Robert / CNRTL, a marking check, a curriculum
+check, each finding re-checked by a skeptic), cut to 81 by the sampling rule,
+and approved card by card by the owner.
+
+Things in it that are deliberate:
+
+- **The false friends are one-way** (`G` with no arrow: French shown, English
+  typed). Both ways, the English side kept marking right French wrong — for
+  "lately", *récemment* is as good as *dernièrement*, and this lesson teaches it.
+- **Only three -ément cards.** The accent is the whole point of précisément,
+  and accents are ignored everywhere so that English keyboards aren't marked
+  down. The three kept are words worth knowing anyway; the rest are in the notes.
+- **The gap cards never put the cue in parentheses.** `cleanFrenchPrompt`
+  removes a parenthetical from the prompt when it repeats a word of the
+  answer, and in `cher → … coûtent ___` the answer is the cue. Cue first, then
+  the arrow, then the sentence.
 
 ---
 
@@ -2401,7 +2486,68 @@ server code failed to load — `auth` among them. The signature of a file-sync
 tool (iCloud or Drive) inside the project folder. `npm ci` repaired it. If the
 folder stays synced it will happen again; `node_modules` should be excluded.
 
+### 2026-09-24 — adverbs, and no more cards you can't answer
+
+**Asked for.** A lesson on adjectives and adverbs — relatif / relativement,
+and the cases where the adverb is another word or the same word. Then, from
+reviewing it: every grammar card should say what it wants typed, and there
+should be no card you can't answer by typing — no rule cards, no
+pronunciation cards.
+
+**Built.**
+
+- **Adjectif ou adverbe ?** — the second lesson (see *Lessons*). Drafted at
+  124 cards, checked by independent reviews, 80 of 99 findings surviving a
+  skeptic, cut to 81, then approved card by card by the owner.
+- **The instruction line** above every grammar card (see *Card types*).
+- **Exact marking for French-answered drills** (see *Flipping and typing*).
+  The reviews ran the real matcher on the lesson's own traps and every one
+  passed as "close enough": chères, chèrement, évidamment, relatifment. The
+  same held for the deck's conjugation drills — "je vend", "il dois".
+- **Rule and pronunciation cards gone.** The owner's 117 grammar and
+  pronunciation cards were sorted by hand with them: 61 drills kept, 27
+  turned into 40 ordinary cards, 29 archived. Applied to the demo deck;
+  `scripts/sort-grammar-cards.mjs` applies it to real decks. The parser no
+  longer makes them. Two phrase cards were corrected on the way ("…que je
+  n'avais pas fait de tennis"; *à temps* is in time, not on time).
+- **A lesson no longer writes over a student's card** with the same front.
+
+**Found on the way.** `GRAMMAR_TERM` never matched a term starting or ending
+with an accented letter (`\b` without the `u` flag), so "passé composé avec
+être" read as a word. The matcher never accepted "oe" for œ, nor a phone's ’ for
+an apostrophe. And `lessonRank` keyed lesson cards by their current front while
+the sync keys rows by their first one, so the 27 reworded impératif drills —
+the forms and irregular sections, taught first — had no rank and were served
+last; the `serving` suite missed it because its fixture keyed them the same
+wrong way.
+
+**The live sort (applied 2026-09-24, owner's go-ahead).** The live decks held
+far more than the 117 the owner reviewed: 1,907 grammar and pronunciation cards
+across 8 decks (the owner's alone ~630 — `src/data/cards.js` is an old
+snapshot). No `ANTHROPIC_API_KEY` in `.env.local`, so the 1,783 cards the
+reviewed file didn't cover were sorted in-session by agents with the script's
+own prompt, each batch re-checked by a second (37 changed), then checked by
+`validateClaudeResult`. Result: 104 drills kept; ~1,360 re-filed in place as
+words and phrases, history kept — most were never rules, just filed under the
+grammar heading; ~210 replaced by the French under them; ~240 archived; 111
+new cards not added because the deck already had them. Every row touched is in
+`backups/grammar-sort-applied-2026-09-24T23-59-01-566Z.json`. Found while
+applying: the script replaced a card whenever its new front differed at all —
+a full stop, a capital — restarting ~350 cards' history for nothing; a card
+tidied into itself now keeps its row (`sameFrench`, or one new card sharing
+most of its words). Only one of the 8 accounts studies regularly (the owner's,
+34 study days); the rest stopped or never started.
+
 ## Open items
+
+- **A few rules are filed as words or phrases**, outside the sort (it only
+  reads `G`/`P`): "voie passive" → "passive: être + participe passé" and
+  "double pronoms (COD + COI)" → "pronoun order…" in the owner's deck. Most of
+  the 19 cards `isGrammarCard` flags among words and phrases are fine — "il
+  faut + infinitif" → "one must" is a pattern with a translation you can type.
+- **The accent in -ément is not checked** (précisément vs précisement), because
+  accents are ignored for everyone. The adverb lesson keeps only three such
+  cards for that reason.
 
 - **Two-way scheduling has not been seen on the live app.** Tested against the
   mock and a read-only snapshot of the owner's deck (2026-09-14 History). The

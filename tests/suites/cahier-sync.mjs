@@ -20,6 +20,9 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
 // after the class it came from, so a card can be traced back to its class.
 let claudeCalls = 0;
 let claudeFails = false;
+// When set, the stand-in answers with exactly these cards instead — for
+// replaying what the real model does with a class's grammar section.
+let claudeReply = null;
 const claude = createServer((req, res) => {
   claudeCalls++;
   let body = "";
@@ -30,7 +33,7 @@ const claude = createServer((req, res) => {
     // The block text arrives inside a JSON string, so stop at the first thing
     // that isn't a letter rather than at whitespace.
     const word = /MOT ([A-Za-zéèêàç]+)/.exec(body)?.[1] || "mot";
-    const cards = [{ front: word, back: `word ${word}`, category: "V" }];
+    const cards = claudeReply || [{ front: word, back: `word ${word}`, category: "V" }];
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({
       id: "msg", type: "message", role: "assistant", model: "test",
@@ -177,6 +180,52 @@ console.log("\n  a word taught again keeps the card the student has");
   ck("but the new class is added to the classes it came up in",
      JSON.stringify(card.dates) === '["2026-01-10","2026-09-12"]', JSON.stringify(card.dates));
   ck("and it is reported as seen again, not as new", r.cardsAdded === 0 && r.cardsSeenAgain === 1, JSON.stringify(r));
+}
+
+console.log("\n  a class's grammar rules and sound notes never reach the deck");
+{
+  // The owner's rule (2026-09-24): a card must be answerable by typing. So a
+  // rule or a pronunciation note is not a card, a word that sat under the
+  // grammar heading is an ordinary one, and a conjugation table becomes its
+  // drills and nothing else. This replays a model that ignored the prompt and
+  // tagged the whole grammar section G, as it did for as long as it was told
+  // to tag by position — the sync runs unattended, so nothing else catches it.
+  const admin = fakeAdmin({ user_cards: [], cahier_links: [] });
+  doc.text = cahier([[13, "septembre", "grammaire"]]);
+  claudeReply = [
+    { front: "une colline", back: "a hill", category: "V" },
+    { front: "Pronoms toniques", back: "moi, toi, lui/elle…", category: "G" },
+    { front: "qui = sujet / que = COD", back: "qui = subject / que = direct object", category: "G" },
+    { front: "du riz {ri}", back: "riz: silent z", category: "G" },
+    { front: "mon copain", back: "my boyfriend", category: "G" },
+    { front: "devoir → participe passé", back: "dû", category: "G" },
+    {
+      front: "vivre : je vis, tu vis, il vit, nous vivons, vous vivez, ils vivent",
+      back: "to live (present tense)", category: "G",
+      conjugation: true, infinitive: "vivre", tense: "présent",
+      forms: ["je vis", "tu vis", "il vit", "nous vivons", "vous vivez", "ils vivent"],
+    },
+  ];
+  claudeCalls = 0;
+  const r = await run(admin, { url: URL_1 });
+  claudeReply = null;
+  const fronts = deck(admin).map((c) => c.front);
+  const card = (front) => deck(admin).find((c) => c.front === front);
+  ck("the class is read, once", r.ok && claudeCalls === 1, JSON.stringify(r));
+  ck("no grammar-rule card is written",
+     !fronts.includes("Pronoms toniques") && !fronts.includes("qui = sujet / que = COD"), JSON.stringify(fronts));
+  ck("no pronunciation card is written", !fronts.some((f) => f.includes("{")), JSON.stringify(fronts));
+  ck("a plain word from the grammar section is an ordinary card", card("mon copain")?.category === "V", JSON.stringify(card("mon copain")));
+  ck("a drill stays a grammar card", card("devoir → participe passé")?.category === "G", JSON.stringify(card("devoir → participe passé")));
+  ck("a conjugation table becomes one drill per form",
+     ["je", "tu", "il/elle", "nous", "vous", "ils/elles"].every((p) => card(`vivre (présent) → ${p}`)?.category === "G"),
+     JSON.stringify(fronts));
+  ck("and the table itself, which answers itself, is not written",
+     !fronts.some((f) => f.startsWith("vivre :")), JSON.stringify(fronts));
+  ck("vocabulary is untouched", card("une colline")?.category === "V");
+  // une colline, mon copain, the dû drill, and vivre's six.
+  ck("and what was added is what it reports", r.cardsAdded === deck(admin).length && deck(admin).length === 3 + 6,
+     `${r.cardsAdded} reported, ${deck(admin).length} in the deck`);
 }
 
 console.log("\n  a long backlog is worked through in runs, newest class first");

@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const ENV_FILE = join(ROOT, ".env.local");
-const NEEDS_BROWSER = (name) => !["logic", "apply-splits", "auth", "dates", "serving", "progress", "cahier-sync"].includes(name);
+const NEEDS_BROWSER = (name) => !["logic", "apply-splits", "auth", "dates", "serving", "progress", "cahier-sync", "grammar-sort", "instructions"].includes(name);
 
 const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 const suites = readdirSync(join(HERE, "suites"))

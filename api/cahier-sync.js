@@ -48,6 +48,7 @@ import {
   extractCardsFromBlock,
   splitSlashPairs,
   expandConjugations,
+  keepAnswerable,
   dedupeWithPolysemy,
   cleanFrenchFront,
 } from "./parse-cahier.js";
@@ -187,7 +188,11 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
 
   const cleaned = raw.map((c) => (c && c.front && c.back ? { ...c, front: cleanFrenchFront(c.front, c.back) } : c));
   const { expanded } = expandConjugations(splitSlashPairs(cleaned));
-  const { deduped } = dedupeWithPolysemy(expanded);
+  // The same steps as an upload's commit, in the same order: a class's grammar
+  // rules and pronunciation notes never become cards (a card must be answerable
+  // by typing), and a plain word the model filed under G becomes V. This path
+  // matters most for it — it runs unattended, and nobody reviews what it adds.
+  const { deduped } = dedupeWithPolysemy(keepAnswerable(expanded));
 
   const written = await writeCards(admin, userId, deduped);
 

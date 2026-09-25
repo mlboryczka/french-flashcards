@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
-import { LESSONS, lessonIdOf, lessonRank } from "./data/lessons";
+import { LESSONS, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } from "./data/lessons";
 import { reconcileLessons } from "./lib/lessonSync";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./lib/cardText";
+import { drillAlternates, isConjugationDrill } from "./lib/cardInstruction";
 import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 import { classifyCard, CARD_TYPES, TYPE_LABEL, TYPE_COLOR } from "./lib/cardTypes";
 import { useUserDeck } from "./useUserDeck";
@@ -83,9 +84,14 @@ const PRONUNCIATION_ENABLED = false;
 // Strip accents, lowercase, remove parentheticals and punctuation
 function normalize(s) {
   return s.toLowerCase()
+    // Most keyboards have no œ or æ key: "une soeur" is how "une sœur" gets
+    // typed, and it was marked wrong (2 edits on a short word, limit 0).
+    .replace(/œ/g, "oe").replace(/æ/g, "ae")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/\([^)]*\)/g, "")
-    .replace(/[.,!?;:""''«»]/g, "")
+    // Curly quotes too: phones type ’, so "d’un air" and "d'un air" differ
+    // by a character the reader can't see.
+    .replace(/[.,!?;:""''«»’‘“”…]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -143,8 +149,15 @@ function stripParens(s) {
   do { prev = out; out = out.replace(/\([^()]*\)/g, " "); } while (out !== prev);
   return out.replace(/\(.*$/, " ").replace(/\)/g, " ").replace(/\s+/g, " ").trim();
 }
-// Match typed answer against correct answer, handling alternatives and fuzz
-function matchAnswer(typed, correct, extraAlts = []) {
+// Match typed answer against correct answer, handling alternatives and fuzz.
+//
+// `exact` turns the fuzz off: the typed answer must equal one of the
+// alternatives once case, accents, punctuation and parentheses are set aside.
+// It is for French-answered grammar drills, where the typo tolerance accepted
+// exactly the mistakes being drilled — "je vend" for je vends, "il dois" for
+// il doit, "que j'aie" for que j'aille, chères and chèrement for cher,
+// évidamment for évidemment — and a "Close enough" counts as remembered.
+function matchAnswer(typed, correct, extraAlts = [], { exact = false } = {}) {
   const t = normalize(typed);
   if (!t) return { match: false };
 
@@ -176,6 +189,15 @@ function matchAnswer(typed, correct, extraAlts = []) {
         for (const ap of subParts) alternatives.push(ap);
       }
     }
+  }
+
+  if (exact) {
+    // Only "/" separates answers here. The comma/semicolon split above is for
+    // glosses, and in an exact answer a comma is part of it: "Oui, j'y vais"
+    // split into "Oui" and "j'y vais" would accept "oui" and refuse the whole.
+    const squash = (x) => normalize(x).replace(/\s+/g, " ").trim();
+    const pool = sources.flatMap((src) => { const x = stripParens(src) || src; return [x, ...x.split("/")]; });
+    return { match: pool.some((alt) => squash(alt) && squash(alt) === squash(t)) };
   }
 
   for (const alt of alternatives) {
@@ -1178,8 +1200,21 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!card || !typedAnswer.trim()) return;
     const correctText = card.shownDir === "fr" ? card.b : card.f;
     const altKey = `${card.id}:${card.shownDir}`;
-    const extraAlts = alternates[altKey] || [];
-    const result = matchAnswer(typedAnswer, correctText, extraAlts);
+    // A French-answered drill ("vivre → je", "relatif → adverbe") is marked
+    // exactly; see matchAnswer. An "il/elle" drill takes either pronoun, and
+    // a subjunctive is right with or without its que.
+    // Only a real drill or a lesson card: a leftover rule card with an arrow
+    // ("si + imparfait → conditionnel") has English prose for an answer.
+    const drill = card.shownDir === "fr" && String(card.f || "").includes("→") &&
+      (isConjugationDrill(card.f) || !!lessonIdOf(card));
+    const extraAlts = [
+      ...(alternates[altKey] || []),
+      ...(drill ? drillAlternates(card.f, card.b) : []),
+      // The lesson's current answer, which a deck synced before a lesson
+      // widened it doesn't have on its row.
+      ...(card.shownDir === "fr" ? [lessonBackFor(card)].filter(Boolean) : []),
+    ];
+    const result = matchAnswer(typedAnswer, correctText, extraAlts, { exact: drill });
     if (result.match) {
       setTypeResult(result.close ? "close" : "correct");
       setFlipped(true);
@@ -1500,7 +1535,12 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user || !deckLoaded || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const { missing, rekey, retext, stale, unkeyed } = reconcileLessons(LESSONS, userCards);
+      const { missing, rekey, retext, stale, unkeyed, taken } = reconcileLessons(LESSONS, userCards);
+      if (taken.length) {
+        // The deck already has its own card with that front; the lesson card
+        // would have overwritten it. See reconcileLessons.
+        console.info(`[lessons] ${taken.length} lesson card(s) skipped; the deck has its own:`, taken.map((t) => t.front));
+      }
       if (unkeyed.length) {
         // Written before lesson cards had a stable key, and matching nothing in
         // the lesson now. That is either a card the lesson retired or one the
@@ -2230,6 +2270,10 @@ export default function FlashcardApp({ user, onSignOut }) {
             {LESSONS.map((lesson) => {
               const owned = userCards.filter((c) => lessonIdOf(c) === lesson.id);
               const added = owned.length > 0;
+              // A lesson card whose front the deck already had as its own is
+              // not added (reconcileLessons' `taken`), but the word is there.
+              const ownFronts = new Set(userCards.filter((c) => !lessonIdOf(c)).map((c) => c.f));
+              const inDeck = owned.length + lesson.cards.filter(([f]) => ownFronts.has(f)).length;
               return (
                 <div key={lesson.id} style={S.lessonCard}>
                   <div style={S.lessonHead}>
@@ -2250,7 +2294,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   </div>
                   <div style={S.lessonMeta}>
                     {added
-                      ? `${owned.length} of ${lesson.cards.length} cards in your deck`
+                      ? `${Math.min(inDeck, lesson.cards.length)} of ${lesson.cards.length} cards in your deck`
                       : `${lesson.cards.length} cards · adding to your deck`}
                     {" · "}
                     {lesson.source}
@@ -2598,6 +2642,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   // The arrow is the test, the same marker classifyCard treats as definitive
   // for a conjugation drill.
   const cardLesson = card ? LESSONS.find((l) => l.id === lessonIdOf(card)) || null : null;
+  // What to type, above the prompt of a grammar card: "Conjugate in the
+  // present tense, first person singular, with je", "Write the adverb for this
+  // adjective". "vivre → je" never said which tense, and "relatif → adverbe"
+  // read as a word to translate. Grammar cards are only ever shown French side.
+  const instruction = card && card.shownDir === "fr" ? cardInstructionFor(card) : null;
 
   const answerLang = (c) =>
     !c ? "English"
@@ -2837,6 +2886,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={{...S.cardFront, pointerEvents: flipped ? "none" : "auto"}}>
                     {cardLesson && <div style={S.cardBadge}>{cardLesson.title}</div>}
+                    {instruction && <div style={S.cardInstruction} data-card-instruction>{instruction}</div>}
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
                       <div style={S.cardAudio}>
@@ -4099,7 +4149,7 @@ const S = {
   // each face instead; they are inset:0 so their size is the card's, and they
   // hold no 3D children of their own.
   card: { position:"relative", height:"100%", minHeight:170, maxHeight:"min(375px, 62.5cqw)", maxWidth:"100%", transformStyle:"preserve-3d", transition:"transform 0.55s cubic-bezier(0.4, 0, 0.2, 1)", aspectRatio:"1.6 / 1" },
-  cardFront: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
+  cardFront: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"safe center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden" },
   cardBack: { containerType:"size", backfaceVisibility:"hidden", position:"absolute", inset:0, transform:"rotateY(180deg)", background:T.color.surfaceLowest, border:"none", borderRadius:T.radius.xl, padding:"28px 30px", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", boxShadow:"0 8px 32px rgba(3,22,50,0.08)", overflow:"hidden", borderTop:`3px solid ${T.color.secondary}` },
   cardCat: { position:"absolute", top:14, left:18, display:"flex", alignItems:"center", gap:7, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:600 },
   langBadge: { position:"absolute", top:14, right:18, fontSize:9, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:T.color.surfaceHigh, padding:"3px 9px", borderRadius:T.radius.full, letterSpacing:"0.08em", fontWeight:600, textTransform:"uppercase" },
@@ -4121,6 +4171,7 @@ const S = {
   // Sentence case needs a little more size and a lot less tracking than the
   // 9px micro-caps it replaces.
   cardBadge: { position:"absolute", top:23, right:70, padding:"4px 10px", borderRadius:999, border:`1px solid ${T.color.outline || "rgba(3,22,50,0.18)"}`, fontSize:10.5, fontWeight:600, letterSpacing:"0.01em", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:"transparent", pointerEvents:"none", maxWidth:"48%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  cardInstruction: { fontSize:"clamp(12px, 4.6cqh, 15px)", textAlign:"center", fontWeight:600, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, lineHeight:1.35, maxWidth:"34em", margin:"0 auto 14px", padding:"0 12px" },
   cardText: { fontSize:"clamp(19px, 10.7cqh, 40px)", textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:"clamp(16px, 8.3cqh, 31px)", textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },

@@ -193,7 +193,14 @@ export function cardBox(page) {
       top: Math.round(r.top), bottom: Math.round(r.bottom),
       width: Math.round(r.width), height: Math.round(r.height),
       centreX: Math.round(r.left + r.width / 2),
-      front: el.children[0]?.innerText.split("\n")[0] || "",
+      // The prompt, not the instruction line above it ("Conjugate in …").
+      front: (() => {
+        const face = el.children[0];
+        if (!face) return "";
+        const line = face.querySelector("[data-card-instruction]")?.innerText || "";
+        const text = face.innerText;
+        return (line ? text.replace(line, "") : text).trim().split("\n")[0] || "";
+      })(),
       back: el.children[1]?.innerText.split("\n")[0] || "",
     };
   });
