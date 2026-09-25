@@ -165,11 +165,6 @@ export const NOTES = [
       { t: "sub", v: "Ends in a vowel · -ment goes on the masculine" },
       { t: "note", v: "When the masculine ends in **-é, -i or -u**, add -ment to the masculine, not the feminine: *vraie* but *vraiment*." },
       { t: "forms", label: "Examples", v: ["vrai → vraiment", "poli → poliment", "absolu → absolument", "carré → carrément"] },
-      { t: "list", v: [
-        { v: "**gai** traditionally keeps its e.", ex: "gaiement (1990 spelling: gaiment)" },
-        { v: "A few in -u traditionally take a circumflex where the e was. The 1990 spelling drops it.", ex: "assidûment · crûment" },
-        { v: "**fou, mou, nouveau** end in -u but have a special feminine, so they follow the main rule.", ex: "fou → folle → follement · nouveau → nouvelle → nouvellement" },
-      ]},
       { t: "sub", v: "-ément · learn these one by one" },
       { t: "note", v: "A small set takes **-ément**: the -e of the feminine becomes -é. *précise → précisément*, *énorme → énormément*, *expresse → expressément*. No rule says which adjectives do it, so learn them one by one." },
       { t: "forms", label: "Examples", v: ["précisément", "profondément", "énormément", "intensément", "communément", "aveuglément", "expressément"] },
