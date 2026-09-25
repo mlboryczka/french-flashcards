@@ -304,7 +304,7 @@ export const LESSON = {
     ement: "Write the adverb for this adjective",
     amment: "Write the adverb for this adjective",
     irregular: "Write the adverb for this adjective",
-    choose: "Fill the gap with the right one of the two words, in the right form",
+    choose: "Fill in the correct form (adj or adv)",
     // The same words for both sections on purpose: "cher → … coûtent ___" and
     // "cher → … ___ acquise" must not say which of cher / chèrement is wanted.
     invariable: "Fill the gap using the word given, in the form that fits",

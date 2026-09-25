@@ -1319,12 +1319,22 @@ export default function FlashcardApp({ user, onSignOut }) {
   // the whole time. Beside the card it only takes the keyboard while it is
   // what you are using: focus inside it, or your last click was in it (the
   // inert-click case above, where focus falls to the body).
+  //
+  // So are the lesson notes. They counted as an overlay wherever they sat, so
+  // studying a lesson with its notes open beside the card left Enter, Space
+  // and the arrows dead: after a typed answer the only way on was to click
+  // Continue. The notes have nothing to type into, so beside the card they
+  // take a key only when it is pressed on one of their own buttons, reached
+  // with Tab. Not a clicked one: Chrome leaves focus on a tab you click, and
+  // that held the keys the same way. (Nor :focus-visible, which Chrome turns
+  // on for a clicked button at the very keypress being asked about.)
   const roomToReflow = (panelWidth) =>
     winWidth - (sidebarMin ? SIDEBAR_MIN_WIDTH : SIDEBAR_WIDTH) - panelWidth >= MIN_REFLOW_CONTENT;
   const chatReflow = showChat && !isNarrow && roomToReflow(CHAT_PANEL_WIDTH);
   const lessonReflow = showLessonPanel && !isNarrow && roomToReflow(LESSON_PANEL_WIDTH);
   const overlayOpen =
-    (showChat && !chatReflow) || showFeedback || showUpload || showKeyModal || showLessonPanel ||
+    (showChat && !chatReflow) || showFeedback || showUpload || showKeyModal ||
+    (showLessonPanel && !lessonReflow) ||
     showProfileMenu || showFeedbackModal || showUsersModal || editingCard != null;
   const pointerInTutorRef = useRef(false);
   useEffect(() => {
@@ -1344,13 +1354,27 @@ export default function FlashcardApp({ user, onSignOut }) {
   useEffect(() => { if (!showChat) pointerInTutorRef.current = false; }, [showChat]);
   const tutorHasKeyboard = () =>
     pointerInTutorRef.current || !!document.activeElement?.closest?.("[data-tutor-panel]");
+  // Whether focus last moved by Tab rather than by a click.
+  const tabbedRef = useRef(false);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Tab") tabbedRef.current = true; };
+    const onPointer = () => { tabbedRef.current = false; };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, []);
+  const notesHaveKeyboard = () =>
+    tabbedRef.current && !!document.activeElement?.closest?.("[data-lesson-panel]");
 
   useEffect(() => {
     if (mode !== "study" || typeMode || overlayOpen || sessionDone) return;
     const handler = (e) => {
       if (!card) return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (tutorHasKeyboard()) return;
+      if (tutorHasKeyboard() || notesHaveKeyboard()) return;
       if (e.key === " ") { e.preventDefault(); flipRef.current(); }
       // A card is only graded once its answer has been seen. Before that the
       // grading keys turn it over instead — they used to record Got It (or
@@ -1375,7 +1399,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     const gotIt = typedRecalled;
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (tutorHasKeyboard()) return;
+      if (tutorHasKeyboard() || notesHaveKeyboard()) return;
       if (e.key === "Enter" || e.key === " " || e.key === "ArrowRight") {
         e.preventDefault();
         answerRef.current(gotIt, "typed");
@@ -2658,6 +2682,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     // With an answer typed but not checked, tapping the card checks it. It
     // used to be Show answer: the typed text was ignored and a miss recorded.
     if (!typeResult) return typedAnswer.trim() ? submitTyped() : giveUpTyped();
+    // Turned back to its question with the turn-back arrow: a tap turns it
+    // over again. Moving on from there would record the answer from a card
+    // the student was only re-reading.
+    if (!flipped) return flip();
     answer(typedRecalled, "typed");
   };
 
@@ -2911,6 +2939,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {effectiveTypeMode && !typeResult && <div style={S.cardHint}>Tap to show answer</div>}
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                     {!showFeedback && <ReportCardButton onReport={reportCard} nextToInfo={!effectiveTypeMode} />}
+                    {answerSeen && <TurnCardButton onTurn={flip} toAnswer />}
                   </div>
                   <div style={{...S.cardBack, pointerEvents: flipped ? "auto" : "none"}}>
                     {cardLesson && <div style={S.cardBadge}>{cardLesson.title}</div>}
@@ -2936,6 +2965,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       </button>
                     </div>
                     {!showFeedback && <ReportCardButton onReport={reportCard} />}
+                    {answerSeen && <TurnCardButton onTurn={flip} />}
                   </div>
                 </div>
               </div>
@@ -3382,6 +3412,11 @@ function EditCardModal({ card, onClose, onSave, onDelete }) {
   const [back, setBack] = useState(card.b);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // A word or phrase card is a translation: French on one side, English on
+  // the other, whichever way round it was asked. Any other card (a
+  // conjugation drill, a lesson exercise) is a question and its answer, often
+  // both in French, so "French / English" mislabelled it.
+  const [frontLabel, backLabel] = isTwoWay(card) ? ["French", "English"] : ["Question", "Answer"];
 
   const handleSave = async () => {
     if (!front.trim() || !back.trim()) {
@@ -3404,14 +3439,14 @@ function EditCardModal({ card, onClose, onSave, onDelete }) {
           <h2 style={EM.title}>Edit card</h2>
           <button style={EM.closeBtn} onClick={onClose} disabled={saving}>×</button>
         </div>
-        <label style={EM.label}>French</label>
+        <label style={EM.label}>{frontLabel}</label>
         <input
           style={EM.input}
           value={front}
           onChange={(e) => setFront(e.target.value)}
           disabled={saving}
         />
-        <label style={EM.label}>English</label>
+        <label style={EM.label}>{backLabel}</label>
         <textarea
           style={EM.textarea}
           value={back}
@@ -3672,6 +3707,31 @@ function ReportCardButton({ onReport, nextToInfo = false }) {
     >
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M4 22V4" /><path d="M4 4h13l-2 4 2 4H4" />
+      </svg>
+    </button>
+  );
+}
+
+// ─── TURN THE CARD BACK ──────────────────────────────────────────────────
+// A small U-turn arrow in the card's top-left corner, once the answer has
+// been seen: on the answer side it turns the card back to its question, and
+// on the question side over to the answer again. Turning records nothing; the
+// grade is still Got It / Again, or Continue after a typed answer. Never
+// shown before the answer, where it would be a way to peek. Stops the click
+// so the card underneath doesn't also flip, continue or grade.
+function TurnCardButton({ onTurn, toAnswer = false }) {
+  const label = toAnswer ? "See the answer again" : "See the question again";
+  return (
+    <button
+      type="button"
+      data-turn-card={toAnswer ? "answer" : "question"}
+      style={{ ...S.cardActionBtn, ...S.cardTurnBtn }}
+      onClick={(e) => { e.stopPropagation(); onTurn(); }}
+      title={label}
+      aria-label={label}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={toAnswer ? { transform: "scaleX(-1)" } : undefined}>
+        <path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
       </svg>
     </button>
   );
@@ -3997,6 +4057,8 @@ const S = {
   // The pencil, the flag and the ⓘ are matching 30px circles 14px in from the
   // card's edges, so the pencil and the flag share a centre line.
   cardActionsFloat: { position:"absolute", top:14, right:14, display:"flex", gap:6 },
+  // The turn-back arrow mirrors the pencil, in the top-left corner.
+  cardTurnBtn: { position:"absolute", top:14, left:14, zIndex:5 },
 
   // ── Big icon-button actions: AGAIN / GOT IT ───────────────────────
   // The button itself is a borderless flex column. The colored 80×80
