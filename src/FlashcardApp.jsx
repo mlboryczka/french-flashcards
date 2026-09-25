@@ -13,7 +13,6 @@ import { useUserDeck } from "./useUserDeck";
 import { useCahierSync } from "./useCahierSync";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
-import { CahierLink } from "./CahierLink";
 import { BetaFeedback } from "./BetaFeedback";
 import ApiKeyModal from "./ApiKeyModal";
 import { keyHeaders, hasKey } from "./lib/anthropicKey";
@@ -378,7 +377,6 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // Upload & onboarding state
   const [showUpload, setShowUpload] = useState(false);
-  const [showCahierLink, setShowCahierLink] = useState(false);
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
   // Tutor chat slide-over — global, so it opens from any view.
   const [showChat, setShowChat] = useState(false);
@@ -1873,8 +1871,8 @@ export default function FlashcardApp({ user, onSignOut }) {
         <CahierUpload
           open={showUpload}
           user={user}
+          cahier={cahier}
           onClose={() => setShowUpload(false)}
-          onOpenCahier={() => { setShowUpload(false); setShowCahierLink(true); }}
           hasExisting={false}
           initialTab={uploadInitialTab}
           onSuccess={(result) => {
@@ -2068,19 +2066,12 @@ export default function FlashcardApp({ user, onSignOut }) {
               </button>
               {showProfileMenu && (
                 <div style={S.profileMenuBottom}>
-                  <div style={S.profileMenuEmail}>{user.email}</div>
                   <button
                     data-tutor-toggle
                     style={S.profileMenuItem}
                     onClick={() => { openChat(); setShowProfileMenu(false); }}
                   >
                     Ask the tutor
-                  </button>
-                  <button
-                    style={S.profileMenuItem}
-                    onClick={() => { setShowCahierLink(true); setShowProfileMenu(false); }}
-                  >
-                    {cahier.link ? "Your cahier ✓" : "Link your cahier"}
                   </button>
                   <button
                     style={S.profileMenuItem}
@@ -2170,8 +2161,8 @@ export default function FlashcardApp({ user, onSignOut }) {
       <CahierUpload
         open={showUpload}
         user={user}
+        cahier={cahier}
         onClose={() => setShowUpload(false)}
-        onOpenCahier={() => { setShowUpload(false); setShowCahierLink(true); }}
         hasExisting={userCards.length > 0}
         initialTab={uploadInitialTab}
         onSuccess={(result) => {
@@ -2184,12 +2175,6 @@ export default function FlashcardApp({ user, onSignOut }) {
             (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
           );
         }}
-      />
-      <CahierLink
-        open={showCahierLink}
-        cahier={cahier}
-        onClose={() => setShowCahierLink(false)}
-        onCardsAdded={() => reloadDeck()}
       />
       {showFeedbackModal && (
         <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />

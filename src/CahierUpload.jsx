@@ -3,26 +3,28 @@ import { supabase } from "./supabase";
 import { T } from "./theme";
 
 import { keyHeaders } from "./lib/anthropicKey";
-// Modal for uploading a cahier ONCE. Two input modes:
+// Modal for getting a cahier into the deck. Three modes:
 //   - paste: user pastes raw text into a textarea
 //   - file:  user uploads a .txt, .pdf or .docx file
 //
 // On submit, sends to /api/parse-cahier with the user's auth token.
 //
-// A cahier the app keeps reading is a different thing and has its own screen,
-// CahierLink.jsx ("Your cahier"). A Google Doc tab lived here for one day with
-// a "keep this up to date" tick box, which put a permanent link inside a
-// one-off form: URL box, two tick boxes, a status panel and an Upload button,
-// for a doc that was already linked. Don't put it back.
+//   - link:  a Google Doc the app keeps reading. Linking it is not an upload:
+//            from then on each class the teacher adds becomes cards on its own
+//            (api/cahier-sync.js), so this tab links and then shows the doc's
+//            state — when it last checked, what it last added, Check now,
+//            Unlink. No tick boxes: linking IS keeping it up to date.
 //
 // Props:
 //   open          — boolean, whether the modal is shown
 //   onClose       — called when user closes without uploading
 //   onSuccess     — called with the server response on successful upload
 //   hasExisting   — if true, shows a "replace existing deck" checkbox
+//   cahier        — useCahierSync(): the linked doc, and the sync itself
 
-export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user, onOpenCahier }) {
-  const [tab, setTab] = useState(initialTab === "file" ? "file" : "paste"); // paste | file
+export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user, cahier }) {
+  const [tab, setTab] = useState(initialTab || "paste"); // paste | file | link
+  const [url, setUrl] = useState("");
   // When the modal is reopened with a different initialTab, switch to it.
   useEffect(() => {
     if (initialTab) setTab(initialTab);
@@ -172,6 +174,38 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
   async function handleSubmit() {
     setError("");
     let mode, content;
+
+    // Linking a doc doesn't go through the three-phase upload: the sync reads
+    // it and parses only the classes the deck hasn't got, a few at a time
+    // until none are left.
+    if (tab === "link") {
+      const href = url.trim();
+      if (!href.includes("docs.google.com/document/")) {
+        setError("That should be a Google Doc link, like https://docs.google.com/document/d/…");
+        return;
+      }
+      setStatus("uploading");
+      setProgress("Reading your cahier…");
+      const result = await cahier?.sync({
+        url: href,
+        force: true,
+        onProgress: (run) => setProgress(
+          run.remaining
+            ? `Adding your classes… ${run.addedSoFar} cards so far, ${run.remaining} classes to go`
+            : `Adding your classes… ${run.addedSoFar} cards so far`
+        ),
+      });
+      setStatus("idle");
+      setProgress("");
+      if (!result?.ok) { setStatus("error"); setError(result?.error || "Couldn't read that cahier."); return; }
+      setUrl("");
+      onSuccess?.({
+        linked: true,
+        cardsInserted: result.cards,
+        datesCovered: result.dates.length,
+      });
+      return;
+    }
 
     if (tab === "paste" || tab === "file") {
       if (!text.trim() || text.trim().length < 50) {
@@ -374,6 +408,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
           {[
             ["paste", "Paste text"],
             ["file", "Upload file"],
+            ["link", "Google Doc link"],
           ].map(([k, label]) => (
             <button
               key={k}
@@ -453,20 +488,49 @@ fonder / créer une entreprise
               </div>
             </>
           )}
-        </div>
 
-        {/* Where the Google Doc went. It was a third tab here until
-            2026-09-25; moving it with no sign left in its place is how the
-            owner found the dialog with "no option to upload cahier". */}
-        {onOpenCahier && (
-          <p style={M.pointer}>
-            Studying from a Google Doc?{" "}
-            <button style={M.pointerLink} onClick={onOpenCahier} disabled={status === "uploading"}>
-              Link your cahier
-            </button>{" "}
-            and each new class becomes cards on its own.
-          </p>
-        )}
+          {tab === "link" && (
+            <>
+              <label style={M.label}>Google Doc link</label>
+              <input
+                type="url"
+                style={M.input}
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://docs.google.com/document/d/…"
+                disabled={status === "uploading"}
+              />
+              <p style={M.linkText}>
+                The app reads the doc when you open it and once each night. Any class it hasn't
+                seen before becomes cards; classes it has already read are never touched, so
+                nothing you've studied changes.
+              </p>
+              <p style={M.linkText}>
+                The doc has to be shared so that anyone with the link can view it.
+              </p>
+              {cahier?.link && (
+                <div style={M.linkedBox} data-cahier-linked>
+                  <div>
+                    <strong>Linked.</strong>{" "}
+                    {cahier.link.last_checked_at
+                      ? `Last checked ${timeAgo(cahier.link.last_checked_at)}.`
+                      : "Not checked yet."}
+                    {cahier.link.last_result?.cards
+                      ? ` Last added ${cahier.link.last_result.cards.toLocaleString()} cards from ${cahier.link.last_result.dates?.length || 0} classes.`
+                      : ""}
+                  </div>
+                  {cahier.link.last_error && <div style={M.error}>{cahier.link.last_error}</div>}
+                  <div style={M.linkedActions}>
+                    <button style={M.smallBtn} disabled={cahier.checking} onClick={() => cahier.sync({ force: true })}>
+                      {cahier.checking ? "Checking…" : "Check now"}
+                    </button>
+                    <button style={M.smallBtn} onClick={() => cahier.unlink()}>Unlink</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
 
         {hasExisting && (
           <label style={M.checkbox}>
@@ -504,6 +568,19 @@ fonder / créer une entreprise
       </div>
     </div>
   );
+}
+
+// "4 minutes ago" — the doc is read minutes ago far more often than days.
+function timeAgo(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return "just now";
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "moments ago";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 const M = {
@@ -667,9 +744,12 @@ const M = {
     marginTop: 10,
     fontWeight: 500,
   },
-  pointer: { fontFamily:T.font.sans, fontSize:13, lineHeight:1.6, color:T.color.onSurfaceVariant, margin:"16px 0 0" },
-  pointerLink: { fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:T.color.primary, background:"transparent",
-    border:"none", padding:0, cursor:"pointer", textDecoration:"underline" },
+  linkText: { fontFamily:T.font.sans, fontSize:13, lineHeight:1.7, color:T.color.onSurfaceVariant, margin:"14px 0 0" },
+  linkedBox: { marginTop:16, padding:"12px 14px", borderRadius:10, background:T.color.surfaceHigh,
+    fontFamily:T.font.sans, fontSize:13, lineHeight:1.6, color:T.color.onSurface, display:"flex", flexDirection:"column", gap:10 },
+  linkedActions: { display:"flex", gap:8 },
+  smallBtn: { fontFamily:T.font.sans, fontSize:12, fontWeight:600, padding:"6px 12px", borderRadius:8,
+    border:`1px solid ${T.color.outline}`, background:T.color.surface, color:T.color.onSurface, cursor:"pointer" },
   hint: {
     fontSize: 12,
     color: T.color.onSurfaceVariant,
