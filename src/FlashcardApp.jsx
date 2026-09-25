@@ -13,6 +13,7 @@ import { useUserDeck } from "./useUserDeck";
 import { useCahierSync } from "./useCahierSync";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
+import { CahierLink } from "./CahierLink";
 import { BetaFeedback } from "./BetaFeedback";
 import ApiKeyModal from "./ApiKeyModal";
 import { keyHeaders, hasKey } from "./lib/anthropicKey";
@@ -377,6 +378,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // Upload & onboarding state
   const [showUpload, setShowUpload] = useState(false);
+  const [showCahierLink, setShowCahierLink] = useState(false);
   const [uploadInitialTab, setUploadInitialTab] = useState("paste");
   // Tutor chat slide-over — global, so it opens from any view.
   const [showChat, setShowChat] = useState(false);
@@ -1871,7 +1873,6 @@ export default function FlashcardApp({ user, onSignOut }) {
         <CahierUpload
           open={showUpload}
           user={user}
-          cahier={cahier}
           onClose={() => setShowUpload(false)}
           hasExisting={false}
           initialTab={uploadInitialTab}
@@ -2076,6 +2077,12 @@ export default function FlashcardApp({ user, onSignOut }) {
                   </button>
                   <button
                     style={S.profileMenuItem}
+                    onClick={() => { setShowCahierLink(true); setShowProfileMenu(false); }}
+                  >
+                    {cahier.link ? "Your cahier ✓" : "Link your cahier"}
+                  </button>
+                  <button
+                    style={S.profileMenuItem}
                     onClick={() => { setUploadInitialTab("paste"); setShowUpload(true); setShowProfileMenu(false); }}
                   >
                     Upload document
@@ -2162,7 +2169,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       <CahierUpload
         open={showUpload}
         user={user}
-        cahier={cahier}
         onClose={() => setShowUpload(false)}
         hasExisting={userCards.length > 0}
         initialTab={uploadInitialTab}
@@ -2176,6 +2182,12 @@ export default function FlashcardApp({ user, onSignOut }) {
             (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
           );
         }}
+      />
+      <CahierLink
+        open={showCahierLink}
+        cahier={cahier}
+        onClose={() => setShowCahierLink(false)}
+        onCardsAdded={() => reloadDeck()}
       />
       {showFeedbackModal && (
         <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />

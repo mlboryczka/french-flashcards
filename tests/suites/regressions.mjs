@@ -110,4 +110,62 @@ const ck = checker();
   await browser.close();
 }
 
+// ── Linking a cahier is not an upload ────────────────────────────────────
+//
+// The link lived in the upload dialog as a third tab with a "keep this up to
+// date" tick box. Opening it on an already-linked doc showed a URL box, two
+// tick boxes, a status panel and an Upload button, for something that needed
+// none of them — "this is super complicated", 2026-09-25. The requirement:
+// a cahier the app keeps reading has its own screen, and the upload dialog is
+// for a one-off upload.
+{
+  const { browser, page } = await openApp({ width: 1400, height: 900 });
+  const openMenu = async () => {
+    await page.evaluate(() => [...document.querySelectorAll("aside button")].find((b) => b.innerText.trim() === "T")?.click());
+    await page.waitForTimeout(250);
+  };
+  const clickMenuItem = async (label) => {
+    const clicked = await page.evaluate((t) => {
+      const b = [...document.querySelectorAll("button")].find((x) => x.innerText.trim() === t);
+      b?.click();
+      return !!b;
+    }, label);
+    await page.waitForTimeout(500);
+    return clicked;
+  };
+
+  await openMenu();
+  ck("the cahier has its own item in the menu", await clickMenuItem("Link your cahier"));
+  const linkScreen = await page.$("[data-cahier-link]");
+  ck("which opens a screen of its own", !!linkScreen);
+  const parts = await page.evaluate(() => {
+    const el = document.querySelector("[data-cahier-link]");
+    if (!el) return null;
+    return {
+      buttons: [...el.querySelectorAll("button")].map((b) => b.innerText.trim()).filter(Boolean),
+      inputs: el.querySelectorAll("input").length,
+      checkboxes: el.querySelectorAll("input[type=checkbox]").length,
+      text: el.innerText,
+    };
+  });
+  ck("with one box for the link and one button to link it",
+     parts?.inputs === 1 && parts.buttons.includes("Link"), JSON.stringify(parts?.buttons));
+  ck("and no tick boxes to read", parts?.checkboxes === 0, `${parts?.checkboxes} tick boxes`);
+  ck("and nothing about uploading or replacing a deck",
+     !/upload|replace/i.test(parts?.text || ""), (parts?.text || "").slice(0, 120));
+
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.querySelector("[data-cahier-link] button[aria-label=Close]")?.click());
+  await page.waitForTimeout(400);
+  await openMenu();
+  await clickMenuItem("Upload document");
+  const uploadTabs = await page.evaluate(() =>
+    [...document.querySelectorAll("button")].map((b) => b.innerText.trim())
+      .filter((t) => ["Paste text", "Upload file", "Google Doc link"].includes(t)));
+  ck("the upload dialog offers pasting and a file, and no doc link",
+     uploadTabs.includes("Paste text") && uploadTabs.includes("Upload file") && !uploadTabs.includes("Google Doc link"),
+     uploadTabs.join(" | "));
+  await browser.close();
+}
+
 await finish({ close: async () => {} }, ck);

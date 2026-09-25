@@ -3,41 +3,35 @@ import { supabase } from "./supabase";
 import { T } from "./theme";
 
 import { keyHeaders } from "./lib/anthropicKey";
-// Modal for uploading a cahier. Three input modes:
+// Modal for uploading a cahier ONCE. Two input modes:
 //   - paste: user pastes raw text into a textarea
-//   - file:  user uploads a .txt file (PDF/DOCX client-side parsing deferred
-//            to a follow-up; for now we accept .txt only)
-//   - link:  user pastes a Google Doc URL (must be "anyone with link can view")
+//   - file:  user uploads a .txt, .pdf or .docx file
 //
 // On submit, sends to /api/parse-cahier with the user's auth token.
 //
-// A LINKED doc is different from an uploaded one: the app keeps reading it,
-// and turns each new class into cards as Laura adds it. That is what the link
-// tab does by default now (api/cahier-sync.js). It parses only the classes the
-// deck hasn't got, so linking a cahier already uploaded last month costs one
-// class, not a year of them.
+// A cahier the app keeps reading is a different thing and has its own screen,
+// CahierLink.jsx ("Your cahier"). A Google Doc tab lived here for one day with
+// a "keep this up to date" tick box, which put a permanent link inside a
+// one-off form: URL box, two tick boxes, a status panel and an Upload button,
+// for a doc that was already linked. Don't put it back.
 //
 // Props:
 //   open          — boolean, whether the modal is shown
 //   onClose       — called when user closes without uploading
 //   onSuccess     — called with the server response on successful upload
 //   hasExisting   — if true, shows a "replace existing deck" checkbox
-//   cahier        — useCahierSync(): the linked doc, and the sync itself
 
-export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user, cahier }) {
-  const [tab, setTab] = useState(initialTab || "paste"); // paste | file | link
+export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab, user }) {
+  const [tab, setTab] = useState(initialTab === "file" ? "file" : "paste"); // paste | file
   // When the modal is reopened with a different initialTab, switch to it.
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab, open]);
   const [text, setText] = useState("");
-  const [url, setUrl] = useState("");
   const [fileName, setFileName] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [replace, setReplace] = useState(hasExisting ? false : true);
-  // Linking is the point of pasting a doc link, so it is on by default.
-  const [keepUpToDate, setKeepUpToDate] = useState(true);
   const [status, setStatus] = useState("idle"); // idle | uploading | error
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
@@ -179,42 +173,6 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
     setError("");
     let mode, content;
 
-    // A linked doc doesn't go through the three-phase upload: the sync reads
-    // it, works out which classes the deck hasn't got, and parses only those,
-    // a few at a time until none are left.
-    if (tab === "link" && keepUpToDate) {
-      const link = url.trim();
-      if (!link.includes("docs.google.com/document/")) {
-        setError("Please paste a Google Doc URL like https://docs.google.com/document/d/...");
-        return;
-      }
-      setStatus("uploading");
-      setProgress("Reading your cahier…");
-      const summary = await cahier?.sync({
-        url: link,
-        force: true,
-        onProgress: (run) => setProgress(
-          run.remaining
-            ? `Adding your classes… ${run.addedSoFar} cards so far, ${run.remaining} classes to go`
-            : `Adding your classes… ${run.addedSoFar} cards so far`
-        ),
-      });
-      if (!summary?.ok) {
-        setStatus("error");
-        setError(summary?.error || "Couldn't read that cahier.");
-        return;
-      }
-      setStatus("idle");
-      setProgress("");
-      onSuccess?.({
-        linked: true,
-        cardsInserted: summary.cards,
-        datesCovered: summary.dates.length,
-        dateRange: summary.dates.length ? [summary.dates[0], summary.dates[summary.dates.length - 1]] : null,
-      });
-      return;
-    }
-
     if (tab === "paste" || tab === "file") {
       if (!text.trim() || text.trim().length < 50) {
         setError("Please paste your cahier text (at least 50 characters).");
@@ -222,15 +180,6 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
       }
       mode = "text";
       content = text;
-    } else if (tab === "link") {
-      if (!url.trim().includes("docs.google.com/document/")) {
-        setError(
-          "Please paste a Google Doc URL like https://docs.google.com/document/d/..."
-        );
-        return;
-      }
-      mode = "url";
-      content = url.trim();
     }
 
     setStatus("uploading");
@@ -418,16 +367,13 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         </div>
 
         <p style={M.desc}>
-          Upload the French lesson notes your teacher keeps for you. We'll extract
-          every word, expression, grammar rule, and pronunciation note, and build
-          your personal flashcard deck.
+          Your lesson notes, turned into cards.
         </p>
 
         <div style={M.tabs}>
           {[
             ["paste", "Paste text"],
             ["file", "Upload file"],
-            ["link", "Google Doc link"],
           ].map(([k, label]) => (
             <button
               key={k}
@@ -446,7 +392,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         <div style={M.tabBody}>
           {tab === "paste" && (
             <>
-              <label style={M.label}>Paste your cahier contents below:</label>
+              <label style={M.label}>Paste copy below</label>
               <textarea
                 style={M.textarea}
                 value={text}
@@ -458,15 +404,12 @@ fonder / créer une entreprise
 ...`}
                 disabled={status === "uploading"}
               />
-              <div style={M.hint}>
-                {text.length.toLocaleString()} characters
-              </div>
             </>
           )}
 
           {tab === "file" && (
             <>
-              <label style={M.label}>Upload your cahier</label>
+              <label style={M.label}>Upload document</label>
               <div
                 style={isDragging ? { ...M.dropZone, ...M.dropZoneActive } : M.dropZone}
                 onClick={() => extracting ? null : fileInputRef.current?.click()}
@@ -510,61 +453,6 @@ fonder / créer une entreprise
               </div>
             </>
           )}
-
-          {tab === "link" && (
-            <>
-              <label style={M.label}>Google Doc URL:</label>
-              <input
-                type="url"
-                style={M.input}
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://docs.google.com/document/d/..."
-                disabled={status === "uploading"}
-              />
-              <div style={M.hint}>
-                Your doc must be shared as "Anyone with the link can view". In
-                Google Docs: File → Share → General access → Anyone with the
-                link → Viewer.
-              </div>
-              <label style={M.checkbox}>
-                <input
-                  type="checkbox"
-                  checked={keepUpToDate}
-                  onChange={(e) => setKeepUpToDate(e.target.checked)}
-                  disabled={status === "uploading"}
-                />
-                <span>
-                  Keep my deck up to date from this doc — each new class becomes cards on its own,
-                  and nothing you already have is changed
-                </span>
-              </label>
-              {cahier?.link && (
-                <div style={M.linkedBox} data-cahier-linked>
-                  <div>
-                    <strong>Linked.</strong>{" "}
-                    {cahier.link.last_checked_at
-                      ? `Last checked ${timeAgo(cahier.link.last_checked_at)}.`
-                      : "Not checked yet."}
-                    {cahier.link.last_result?.cards
-                      ? ` Last added ${cahier.link.last_result.cards} cards from ${cahier.link.last_result.dates?.length || 0} classes.`
-                      : ""}
-                  </div>
-                  {cahier.link.last_error && <div style={M.error}>{cahier.link.last_error}</div>}
-                  <div style={M.linkedActions}>
-                    <button
-                      style={M.smallBtn}
-                      disabled={cahier.checking}
-                      onClick={() => cahier.sync({ force: true })}
-                    >
-                      {cahier.checking ? "Checking…" : "Check now"}
-                    </button>
-                    <button style={M.smallBtn} onClick={() => cahier.unlink()}>Unlink</button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
         </div>
 
         {hasExisting && (
@@ -603,19 +491,6 @@ fonder / créer une entreprise
       </div>
     </div>
   );
-}
-
-// "4 minutes ago" — the doc was read minutes ago far more often than days.
-function timeAgo(iso) {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms)) return "just now";
-  const mins = Math.round(ms / 60000);
-  if (mins < 1) return "moments ago";
-  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 const M = {
@@ -779,11 +654,6 @@ const M = {
     marginTop: 10,
     fontWeight: 500,
   },
-  linkedBox: { marginTop:12, padding:"12px 14px", borderRadius:10, background:T.color.surfaceHigh,
-    fontFamily:T.font.sans, fontSize:13, lineHeight:1.5, color:T.color.onSurface, display:"flex", flexDirection:"column", gap:8 },
-  linkedActions: { display:"flex", gap:8 },
-  smallBtn: { fontFamily:T.font.sans, fontSize:12, fontWeight:600, padding:"6px 12px", borderRadius:8,
-    border:`1px solid ${T.color.outline}`, background:T.color.surface, color:T.color.onSurface, cursor:"pointer" },
   hint: {
     fontSize: 12,
     color: T.color.onSurfaceVariant,

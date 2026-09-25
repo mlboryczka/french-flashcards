@@ -60,7 +60,20 @@ async function open({ patchStatus, api, studyMode, rows } = {}) {
   const typing = () => page.evaluate(() => !!document.querySelector("input[placeholder^='Type ']"));
   const wait = (ms = 400) => page.waitForTimeout(ms);
   const grades = () => writes.filter((w) => w.status === 200).map((w) => w.body.last_answer_correct ?? w.body.en_last_answer_correct);
-  return { browser, page, writes, reviews, state, click, has, typing, wait, grades };
+  // Wait for a write rather than for a length of time. Reset sends one write
+  // for the whole deck, and on a slow run it left after the check had already
+  // read an empty list — which reads as "the reset wrote nothing", the one
+  // thing that check exists to catch.
+  const waitForWrite = async (match, ms = 10000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const hit = writes.find(match);
+      if (hit) return hit;
+      await page.waitForTimeout(100);
+    }
+    return null;
+  };
+  return { browser, page, writes, reviews, state, click, has, typing, wait, grades, waitForWrite };
 }
 
 // Which way round a write went: every key a French-side column, or every key
@@ -295,8 +308,9 @@ console.log("\n  Reset all progress resets both ways round, on every card, and t
   await gotoStats(t.page);
   const streakNow = () => t.page.evaluate(() => Number(/(\d+)\s*day streak/i.exec(document.body.innerText)?.[1]));
   ck("before: a three-day streak", (await streakNow()) === 3, `${await streakNow()}`);
-  await t.click("Reset all progress"); await t.wait(1500);
-  const reset = t.writes.find((w) => /user_id=eq\./.test(w.url));
+  await t.click("Reset all progress");
+  const reset = await t.waitForWrite((w) => /user_id=eq\./.test(w.url));
+  await t.wait(800);
   const expected = [...SIDE_FIELDS, ...EN_FIELDS];
   ck("one write, for every card of this student, and the database accepts it",
      !!reset && reset.status === 200, JSON.stringify(t.writes.map((w) => [w.status, w.url.split("?")[1]])));
