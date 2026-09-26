@@ -303,32 +303,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         batch_id: batchId, // may be null if the parse endpoint couldn't create one
       });
 
-      // ── PHASE 4: BACKFILL BATCH STATS ─────────────────────────────────
-      // Tell upload_batches how many cards actually landed. Best-effort —
-      // a failure here just means the batch row stays with accepted = null.
-      if (batchId && commitData?.cardsInserted != null) {
-        try {
-          await fetch(
-            `/api/upload-batches?id=${encodeURIComponent(batchId)}`,
-            {
-              method: "PATCH",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${session.access_token}`,
-              },
-              body: JSON.stringify({
-                cards_accepted: commitData.cardsInserted,
-                cards_edited_post_parse: 0,
-              }),
-            }
-          );
-        } catch (e) {
-          console.warn(
-            "[CahierUpload] upload_batches PATCH failed:",
-            e?.message || e
-          );
-        }
-      }
+      // How many cards arrived is recorded on the batch by the commit itself.
 
       setStatus("idle");
       onSuccess({ ...commitData, batch_id: batchId });

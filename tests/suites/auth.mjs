@@ -102,7 +102,6 @@ console.log("\n  admin-only endpoints refuse a forged admin token too");
 for (const [name, path] of [
   ["/api/admin-users", "../../api/admin-users.js"],
   ["/api/parse-corrections", "../../api/parse-corrections.js"],
-  ["/api/upload-batches", "../../api/upload-batches.js"],
 ]) {
   const { default: handler } = await import(path);
   const payload = Buffer.from(
@@ -115,6 +114,14 @@ for (const [name, path] of [
   );
   ck(`${name} refuses it`, res.code === 401 || res.code === 403 || res.code === 500,
      `HTTP ${res.code}`);
+}
+
+console.log("\n  fitting a student's FSRS settings needs a signed-in student");
+{
+  const { default: handler } = await import("../../api/fsrs-fit.js");
+  const res = fakeRes();
+  await handler({ method: "POST", headers: {}, query: {}, body: { timeZone: "America/New_York" } }, res);
+  ck("/api/fsrs-fit refuses a caller with no session", res.code === 401 || res.code === 500, `HTTP ${res.code}`);
 }
 
 console.log("\n  who pays: the caller, unless they are the deploy owner");

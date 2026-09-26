@@ -60,10 +60,11 @@ Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.verce
 ## Layout
 
 ```
-api/           13 serverless functions: notebook parsing and the linked
-               cahier's sync, tutor chat, sense splitting, answer
-               adjudication, fitting a student's FSRS settings, admin and
-               upload plumbing. cahier-daily.js is the daily cron. api/_lib is import-only — the underscore
+api/           12 serverless functions — the most Vercel's Hobby plan
+               deploys; a 13th fails the whole deployment: notebook parsing
+               and the linked cahier's sync, tutor chat, sense splitting,
+               answer adjudication, fitting a student's FSRS settings, admin
+               and upload plumbing. cahier-daily.js is the daily cron. api/_lib is import-only — the underscore
                hides it from Vercel's function discovery
 src/           React app
 src/lib/       scheduling, session building, card classification, text

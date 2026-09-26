@@ -316,6 +316,19 @@ async function handleCommit(req, res, adminClient, userId) {
     errors.push({ step: "upsert", error: `${failed.length} card(s) not saved: ${failed[0].error}` });
   }
 
+  // How many of the upload's cards arrived, on its batch row. The dialog used
+  // to send this afterwards to /api/upload-batches, which only the admin may
+  // call, so every student's upload was refused it. Best-effort: a miss here
+  // leaves the count empty and nothing else.
+  if (batchId) {
+    const { error: batchErr } = await adminClient
+      .from("upload_batches")
+      .update({ cards_accepted: inserted, cards_edited_post_parse: 0 })
+      .eq("id", batchId)
+      .eq("user_id", userId);
+    if (batchErr) console.warn("[parse-cahier] upload_batches count not saved:", batchErr.message);
+  }
+
   // Replace: the cards the upload doesn't have. Only once the upload's own
   // cards are all in — a replace that failed half way used to leave a deck
   // emptied and half refilled. See src/lib/replaceDeck.js.
