@@ -6,9 +6,13 @@
 //
 // <verdicts.json> is a list of groups, each with "merge": sets of user_cards
 // ids judged to be one card ("gratuit" and "gratuit (adj)", "le cas" and "un
-// cas"). A set is a list of ids, or { ids, keep, back } where the judging
-// named the card to keep — "une virgule" over "un virgule", a gender slip —
-// and, optionally, the fuller answer it should take from the others. Judging is done beforehand, card by card, not here: look-alikes that
+// cas"). A set is a list of ids, or { ids, keep, back, front } where the
+// judging named the card to keep — "une virgule" over "un virgule", a gender
+// slip — and, optionally, the fuller answer it should take from the others,
+// or a cleaner front ("une voie" for "une voie (a lane, a way, a path)"). A
+// front is only rewritten on a card never answered: the answer record and the
+// tallies know a card by it. A set of one id with a back or front is a
+// correction to that card alone ("l'état" that is really "l'État"). Judging is done beforehand, card by card, not here: look-alikes that
 // are different cards — "la poste" and "le poste", "planter" and "planter
 // (fam)", meanings split on purpose — must never be merged, and no string rule
 // tells them apart reliably.
@@ -78,7 +82,7 @@ if (!userId) { console.error(`No account for ${email}.`); process.exit(1); }
 
 const verdicts = JSON.parse(fs.readFileSync(verdictsFile, "utf8"));
 const sets = verdicts.flatMap((g) => (g.merge || []).map((s) =>
-  Array.isArray(s) ? { group: g.group, ids: s } : { group: g.group, ids: s.ids, keep: s.keep, back: s.back }));
+  Array.isArray(s) ? { group: g.group, ids: s } : { group: g.group, ids: s.ids, keep: s.keep, back: s.back, front: s.front }));
 const ids = [...new Set(sets.flatMap((s) => s.ids))];
 const rows = new Map();
 for (let i = 0; i < ids.length; i += 150) {
@@ -104,19 +108,25 @@ const skipped = [];
 for (const set of sets) {
   const members = set.ids.map((id) => rows.get(id));
   const bad = members.find((r) => !r || r.user_id !== userId || isArchived(r) || String(r.source || "").startsWith("lesson:"));
-  if (bad !== undefined || members.length < 2) { skipped.push({ ...set, why: bad ? `row ${bad?.id ?? "missing"} not mergeable` : "fewer than two" }); continue; }
+  const correction = members.length === 1 && (set.back || set.front);
+  if (bad !== undefined || (members.length < 2 && !correction)) { skipped.push({ ...set, why: bad ? `row ${bad?.id ?? "missing"} not mergeable` : "fewer than two" }); continue; }
   const named = set.keep != null ? members.find((r) => r.id === set.keep) : null;
   // A named keeper gives way only to a card the student has answered when it
   // hasn't been: their progress is never the thing traded for a better label.
   const keep = named && (answered(named) || !members.some(answered)) ? named : keeperOf(members);
   const drop = members.filter((r) => r.id !== keep.id);
   const dates = [...new Set(members.flatMap((r) => (Array.isArray(r.dates) ? r.dates : [])))].sort();
-  plan.push({ group: set.group, keep, drop, dates, back: set.back && set.back !== keep.back ? set.back : null, alsoAnswered: drop.filter(answered).map((r) => r.front) });
+  plan.push({
+    group: set.group, keep, drop, dates,
+    back: set.back && set.back !== keep.back ? set.back : null,
+    front: set.front && set.front !== keep.front && !answered(keep) ? set.front : null,
+    alsoAnswered: drop.filter(answered).map((r) => r.front),
+  });
 }
 
 for (const p of plan) {
   const mark = (r) => `"${r.front}"${answered(r) ? " (answered)" : ""}`;
-  console.log(`keep ${mark(p.keep)}  ←  ${p.drop.map(mark).join(", ")}${p.dates.length !== classes(p.keep) ? `  [classes ${classes(p.keep)} → ${p.dates.length}]` : ""}${p.back ? `  [answer → "${p.back}"]` : ""}`);
+  console.log(`keep ${mark(p.keep)}  ←  ${p.drop.map(mark).join(", ") || "(correction only)"}${p.dates.length !== classes(p.keep) ? `  [classes ${classes(p.keep)} → ${p.dates.length}]` : ""}${p.front ? `  [front → "${p.front}"]` : ""}${p.back ? `  [answer → "${p.back}"]` : ""}`);
 }
 const dropped = plan.reduce((n, p) => n + p.drop.length, 0);
 console.log(`\n${plan.length} set(s): ${dropped} card(s) taken out of study, ${plan.length} kept.`);
@@ -137,6 +147,7 @@ for (const p of plan) {
   const change = {
     ...(p.dates.length !== classes(p.keep) ? { dates: p.dates } : null),
     ...(p.back ? { back: p.back } : null),
+    ...(p.front ? { front: p.front } : null),
   };
   if (Object.keys(change).length) {
     await call(`${base}/rest/v1/user_cards?id=eq.${p.keep.id}&user_id=eq.${userId}`, { method: "PATCH", body: JSON.stringify(change) });
