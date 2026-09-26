@@ -4,6 +4,7 @@ import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" 
 import { LESSONS, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } from "./data/lessons";
 import { reconcileLessons } from "./lib/lessonSync";
 import { archivedSource } from "./lib/archive";
+import { readPlace, writePlace, dropSets, packSet, unpackEntries } from "./lib/studyPlace";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./lib/cardText";
@@ -342,6 +343,25 @@ export default function FlashcardApp({ user, onSignOut }) {
   const dealtDayRef = useRef(null);
   // Bumped on coming back to the tab on a new day, to run that check.
   const [recheck, setRecheck] = useState(0);
+  // Where the student was, kept in this browser (lib/studyPlace.js): the set
+  // for each lesson and for the whole deck — today's only — and which of them
+  // they were in. Read once. Which fetch a set was dealt from means nothing to
+  // a new page, so that is dropped here.
+  const placeRef = useRef(null);
+  if (placeRef.current === null) {
+    const stored = readPlace(user?.id);
+    const today = localISODate();
+    const sets = {};
+    for (const [k, v] of Object.entries(stored?.sets || {})) if (v?.day === today) sets[k] = { ...v, seq: null };
+    placeRef.current = { current: stored?.current || null, sets };
+  }
+  // Which set the deck on screen is: the filters it was dealt for. State, not a
+  // ref, so it changes in the same render as the deck, and a set is only ever
+  // saved under its own key.
+  const [deckSig, setDeckSig] = useState(null);
+  // What the last deal or return of a set was made from — see the guard at the
+  // top of the deck-build effect.
+  const scheduledRef = useRef(null);
   const [mode, setMode] = useState("study"); // study | stats | feedback
   // seen/got/missed count TYPED answers only — those are verifiable, and
   // accuracy built from self-reported flips would be meaningless. `answered`
@@ -368,12 +388,22 @@ export default function FlashcardApp({ user, onSignOut }) {
   // interleaved practice and tests better than drilling one kind in a block.
   // But when you know your conjugations are the weak spot, being able to sit
   // on them for a session is worth more than the interleaving penalty.
-  const [typeFilter, setTypeFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState(() => {
+    const t = placeRef.current.current?.typeFilter;
+    return t === "all" || CARD_TYPES.includes(t) ? t : "all";
+  });
   // Study one lesson's cards instead of the whole deck. "all" is everything.
   // Like typeFilter this narrows the candidate pool the session is built
   // from, so the lesson still schedules through FSRS normally.
-  const [lessonFilter, setLessonFilter] = useState("all");
-  const [dir, setDir] = useState("mix"); // fr | en | mix
+  // Both, and the direction, start where the student left them on this browser.
+  const [lessonFilter, setLessonFilter] = useState(() => {
+    const l = placeRef.current.current?.lessonFilter;
+    return l === "all" || LESSONS.some((x) => x.id === l) ? l : "all";
+  });
+  const [dir, setDir] = useState(() => {
+    const d = placeRef.current.current?.dir;
+    return ["fr", "en", "mix"].includes(d) ? d : "mix"; // fr | en | mix
+  });
   // The direction setting as blocks are dealt, read through a ref so that
   // changing it does not deal a new block (see the effect on `dir`).
   const dirRef = useRef(dir);
@@ -663,10 +693,87 @@ export default function FlashcardApp({ user, onSignOut }) {
     // come (see the effect below) instead of dealing a new block, which threw
     // away the block's running count and a missed card's pending retry.
     const filterSig = `${typeFilter}|${lessonFilter}`;
-    const filterChanged = filterSigRef.current !== filterSig;
+    // A set dealt, or brought back, that hasn't reached the screen yet is not
+    // dealt again from the same deck. Under React's strict mode an effect runs
+    // twice on mount, the second time before the first one's deck is in state:
+    // it dealt a fresh set over one just brought back from the browser.
+    const stamp = { sig: filterSig, blockSeq, fresh: deckFreshSeq, cards: userCards, recheck };
+    const last = scheduledRef.current;
+    if (deck.length === 0 && last && last.sig === stamp.sig && last.blockSeq === stamp.blockSeq &&
+        last.fresh === stamp.fresh && last.cards === stamp.cards && last.recheck === stamp.recheck) return;
+    const prevSig = filterSigRef.current;
+    const filterChanged = prevSig !== filterSig;
     filterSigRef.current = filterSig;
 
     const candidates = candidatesFrom(userCards);
+    const today = localISODate();
+
+    // The cards of a set not yet reached, dealt again from the deck as it now
+    // is. What has been shown, answered or lined up for a retry stays put.
+    const redealRest = (entries, at) => {
+      const head = entries.slice(0, at + 1);
+      const tail = entries.slice(at + 1);
+      const kept = new Set(tail.filter((c) => c._retry || blockAnswersRef.current.has(slotKeyOf(c))));
+      const room = tail.length - kept.size;
+      const fill = room > 0
+        ? buildSession(candidates, {
+            direction: dirRef.current,
+            target: room,
+            spotCheckSlots: tail.filter((c) => !kept.has(c) && c._bucket === "spot").length,
+            lessonMode: lessonFilter !== "all",
+            lessonRank,
+            inBlock: [...head, ...kept],
+          }).queue
+        : [];
+      let f = 0;
+      return [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
+    };
+
+    // Moving between sets: a lesson, the whole deck, a type. The set being
+    // left is kept, and one kept from earlier today carries on where it was —
+    // it used to be thrown away, and coming back dealt a new one from card 1,
+    // dropping the retries lined up in it (2026-09-25). The same on opening
+    // the app, which is also how an update arrives: see lib/studyPlace.js.
+    if (filterChanged) {
+      if (prevSig !== null && deckSig === prevSig && deck.length > 0) {
+        placeRef.current.sets[prevSig] = packSet({
+          deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
+          face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "" },
+          day: dealtDayRef.current, dir: dirRef.current, seq: dealtSeqRef.current,
+        });
+      }
+      const saved = placeRef.current.sets[filterSig];
+      const back = saved && saved.day === today ? unpackEntries(saved, candidates) : null;
+      if (back && back.entries.length > 0) {
+        blockAnswersRef.current = new Map(saved.answers || []);
+        for (const [, a] of blockAnswersRef.current) if (a?.reviewId) knownReviewIdsRef.current.add(a.reviewId);
+        blockStartRef.current = saved.blockStart || progressByArea(userCards);
+        // Unchanged since it was left, it comes back as it was; otherwise the
+        // cards not yet reached are checked against the deck as it now is.
+        const unchanged = saved.seq === deckFreshSeq && saved.dir === dirRef.current;
+        const next = unchanged ? back.entries : redealRest(back.entries, back.idx);
+        const at = Math.min(back.idx, next.length - 1);
+        dealtSeqRef.current = deckFreshSeq;
+        dealtDayRef.current = saved.day;
+        scheduledRef.current = stamp;
+        setDeck(next);
+        setDeckSig(filterSig);
+        setSessionCounts(countBuckets(next));
+        setIdx(at);
+        setSessionDone(!!saved.done);
+        setStats(saved.stats || { seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
+        // The card on screen as it was left: one whose answer had been seen
+        // comes back showing it, so it can't be graded as if seen afresh.
+        const face = saved.face;
+        const seen = !!face?.seen && face.key === itemKey(next[at]);
+        skipFlipAnim.current = true;
+        setFlipped(seen);
+        setTypeResult(seen ? face.typeResult ?? null : null);
+        setTypedAnswer(seen ? face.typed || "" : "");
+        requestAnimationFrame(() => { skipFlipAnim.current = false; });
+        return;
+      }
+    }
 
     // Mid-session userCards refetch (card edit/delete, background reload,
     // Supabase token refresh). Rebuilding here would reshuffle the queue,
@@ -688,10 +795,14 @@ export default function FlashcardApp({ user, onSignOut }) {
     // the block was dealt, a block not yet started is dealt again from scratch,
     // and one under way keeps what has been shown, answered or lined up for a
     // retry while the cards not yet reached are dealt again.
-    const today = localISODate();
-    const outOfDate = dealtSeqRef.current !== deckFreshSeq || dealtDayRef.current !== today;
+    //
+    // A new day starts a new set, whatever state the last one was in: its
+    // answers are all saved, and a set spread over two days makes its
+    // checkpoint meaningless (the owner's choice, 2026-09-26).
+    const outOfDate = dealtSeqRef.current !== deckFreshSeq;
+    const newDay = dealtDayRef.current !== today;
     const started = blockAnswersRef.current.size > 0 || answerSeen;
-    if (!filterChanged && deck.length > 0 && !(outOfDate && !started)) {
+    if (!filterChanged && deck.length > 0 && !newDay && !(outOfDate && !started)) {
       const byRow = new Map(candidates.map(c => [c.row_id, c]));
       const patched = deck
         .map(c => {
@@ -704,26 +815,9 @@ export default function FlashcardApp({ user, onSignOut }) {
         .filter(Boolean);
       let next = patched;
       if (outOfDate) {
-        const at = Math.min(idx, patched.length - 1);
-        const head = patched.slice(0, at + 1);
-        const tail = patched.slice(at + 1);
-        const kept = new Set(tail.filter((c) => c._retry || blockAnswersRef.current.has(slotKeyOf(c))));
-        const room = tail.length - kept.size;
-        const fill = room > 0
-          ? buildSession(candidates, {
-              direction: dirRef.current,
-              target: room,
-              spotCheckSlots: tail.filter((c) => !kept.has(c) && c._bucket === "spot").length,
-              lessonMode: lessonFilter !== "all",
-              lessonRank,
-              inBlock: [...head, ...kept],
-            }).queue
-          : [];
-        let f = 0;
-        next = [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
+        next = redealRest(patched, Math.min(idx, patched.length - 1));
         setSessionCounts(countBuckets(next));
         dealtSeqRef.current = deckFreshSeq;
-        dealtDayRef.current = today;
       }
       setDeck(next);
       setIdx(i => Math.min(i, Math.max(0, next.length - 1)));
@@ -764,8 +858,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     else if (preservedIdx < 0) { setFlipped(false); setTypedAnswer(""); }
     blockAnswersRef.current = new Map();
     dealtSeqRef.current = deckFreshSeq;
-    dealtDayRef.current = localISODate();
+    dealtDayRef.current = today;
+    scheduledRef.current = stamp;
     setDeck(cards);
+    setDeckSig(filterSig);
     setSessionCounts(counts);
     setIdx(0);
     // A rebuilt queue is unworked, whatever the last one's state was.
@@ -881,6 +977,47 @@ export default function FlashcardApp({ user, onSignOut }) {
     feedbackState === "accepted" ||
     (feedbackState === "submitted" && feedbackVerdict?.verdict === "accept");
   const typedRecalled = typedGotIt(typeResult) || disputeAccepted;
+
+  // Keep the set on screen, and which set it is, as it changes: every answer,
+  // every card, the checkpoint, and whether the answer on screen has been seen.
+  // See lib/studyPlace.js; the deck-build effect brings it back.
+  //
+  // Written to storage a moment later rather than on every change, so turning
+  // or grading a card never waits on it — and at once when the page is hidden
+  // or unloaded, which is what a reload, an update or closing the tab does.
+  const pendingPlaceRef = useRef(null);
+  const placeTimerRef = useRef(null);
+  const flushPlace = useCallback(() => {
+    clearTimeout(placeTimerRef.current);
+    placeTimerRef.current = null;
+    const p = pendingPlaceRef.current;
+    pendingPlaceRef.current = null;
+    if (p) writePlace(p.userId, p.write);
+  }, []);
+  useEffect(() => {
+    if (!user?.id || !deckSig || deckSig !== filterSigRef.current || deck.length === 0) return;
+    const set = packSet({
+      deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
+      face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "" },
+      day: dealtDayRef.current, dir, seq: dealtSeqRef.current,
+    });
+    placeRef.current.sets[deckSig] = set;
+    placeRef.current.current = { lessonFilter, typeFilter, dir };
+    pendingPlaceRef.current = { userId: user.id, write: { key: deckSig, set, current: placeRef.current.current, today: localISODate() } };
+    clearTimeout(placeTimerRef.current);
+    placeTimerRef.current = setTimeout(flushPlace, 400);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, deckSig, deck, idx, stats, sessionDone, answerSeen, typeResult, dir, lessonFilter, typeFilter]);
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") flushPlace(); };
+    window.addEventListener("pagehide", flushPlace);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flushPlace);
+      document.removeEventListener("visibilitychange", onHide);
+      flushPlace();
+    };
+  }, [flushPlace]);
 
   // Changing direction applies to the cards still to come — and to the card on
   // screen only if its answer hasn't been seen, for the same reason as the
@@ -1631,6 +1768,11 @@ export default function FlashcardApp({ user, onSignOut }) {
     for (const k of [...unsavedRef.current.keys()]) if (k.startsWith("card:")) unsavedRef.current.delete(k);
     countFailed();
     patchAllDeckCards(reset);
+    // The kept sets hold answers that no longer apply.
+    clearTimeout(placeTimerRef.current);
+    pendingPlaceRef.current = null;
+    placeRef.current.sets = {};
+    dropSets(user.id);
     await resetAllProgress();
     // The streak. Asked to return what it deleted: a delete that row security
     // refuses reports success and removes nothing, and the streak would
@@ -2799,10 +2941,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   // The arrow is the test, the same marker classifyCard treats as definitive
   // for a conjugation drill.
   const cardLesson = card ? LESSONS.find((l) => l.id === lessonIdOf(card)) || null : null;
-  // What to type, above the prompt of a grammar card: "Conjugate in the
-  // present tense, first person singular, with je", "Write the adverb for this
-  // adjective". "vivre → je" never said which tense, and "relatif → adverbe"
-  // read as a word to translate. Grammar cards are only ever shown French side.
+  // What to type, above the prompt of a grammar card: "Present tense, with
+  // je", "Write the adverb for this adjective". "vivre → je" never said which
+  // tense, and "relatif → adverbe" read as a word to translate. In italics, like
+  // the tap hint, so it reads as the app talking rather than part of the card.
+  // Grammar cards are only ever shown French side.
   const instruction = card && card.shownDir === "fr" ? cardInstructionFor(card) : null;
 
   const answerLang = (c) =>
@@ -4366,7 +4509,7 @@ const S = {
   // Sentence case needs a little more size and a lot less tracking than the
   // 9px micro-caps it replaces.
   cardBadge: { position:"absolute", top:23, right:70, padding:"4px 10px", borderRadius:999, border:`1px solid ${T.color.outline || "rgba(3,22,50,0.18)"}`, fontSize:10.5, fontWeight:600, letterSpacing:"0.01em", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, background:"transparent", pointerEvents:"none", maxWidth:"48%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
-  cardInstruction: { fontSize:"clamp(12px, 4.6cqh, 15px)", textAlign:"center", fontWeight:600, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, lineHeight:1.35, maxWidth:"34em", margin:"0 auto 14px", padding:"0 12px" },
+  cardInstruction: { fontSize:"clamp(12px, 4.6cqh, 15px)", textAlign:"center", fontWeight:500, fontStyle:"italic", color:T.color.onSurfaceVariant, fontFamily:T.font.sans, lineHeight:1.35, maxWidth:"34em", margin:"0 auto 14px", padding:"0 12px" },
   cardText: { fontSize:"clamp(19px, 10.7cqh, 40px)", textAlign:"center", fontWeight:700, color:T.color.primary, lineHeight:1.15, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.025em" },
   cardTextB: { fontSize:"clamp(16px, 8.3cqh, 31px)", textAlign:"center", fontWeight:600, color:T.color.primary, lineHeight:1.25, padding:"0 12px", fontFamily:T.font.serif, letterSpacing:"-0.015em" },
   dateH: { position:"absolute", bottom:12, right:18, fontSize:10, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, opacity:0.7 },

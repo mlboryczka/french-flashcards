@@ -5,6 +5,7 @@ import FlashcardApp from "./FlashcardApp";
 import { clearDeckCache } from "./useUserDeck";
 import { clearProgressCache } from "./useProgress";
 import { clearTutorThread } from "./lib/tutorThreads";
+import { clearStudyPlace } from "./lib/studyPlace";
 
 // How long to wait for getSession() before giving up on it.
 //
@@ -117,6 +118,7 @@ export default function App() {
     clearDeckCache(session?.user?.id);
     clearProgressCache(session?.user?.id);
     clearTutorThread(session?.user?.id);
+    clearStudyPlace(session?.user?.id);
     await supabase.auth.signOut();
   };
 

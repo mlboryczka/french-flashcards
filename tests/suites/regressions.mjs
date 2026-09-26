@@ -1,7 +1,7 @@
 // Bugs found by driving the app, each with the check that would have caught
 // it. Written from the requirement — what the user should see — not from the
 // shape of the fix.
-import { openApp, checker, finish, settled, servedDeck, firstBlockItems, sessionCounter } from "../harness.mjs";
+import { openApp, checker, finish, settled, servedDeck, firstBlockItems, sessionCounter, cardBox } from "../harness.mjs";
 
 const ck = checker();
 
@@ -175,6 +175,83 @@ const ck = checker();
   ck("the fixture tells the two apart", staleBlock !== expected, `${staleBlock} vs ${expected}`);
   ck("once the deck arrives, the block is the one the deck deals",
      counter?.index === 1 && counter?.total === expected, `card ${counter?.index} of ${counter?.total}, the deck deals ${expected}`);
+  await browser.close();
+}
+
+// ── A reload, an update, or going to another set and back keeps your place ──
+//
+// The set lived only in the open page: reloading — which is also how an update
+// arrives — or going from a lesson to All and back dealt a new one from card 1,
+// and the retries lined up in it were dropped (2026-09-25, the owner's adverb
+// lesson). Each set is now kept in the browser for the day.
+{
+  const { browser, page } = await openApp();
+  const tap = () => page.evaluate(() => {
+    const el = [...document.querySelectorAll("div")].find((d) => getComputedStyle(d).transformStyle === "preserve-3d");
+    el?.click();
+  });
+  const grade = async (label) => {
+    await tap();
+    await page.waitForSelector(`button:has-text("${label}")`, { timeout: 5000 });
+    await page.click(`button:has-text("${label}")`);
+    await page.waitForTimeout(250);
+  };
+  const where = async () => ({ at: (await sessionCounter(page))?.index, of: (await sessionCounter(page))?.total, card: (await cardBox(page))?.front });
+  const reload = async () => {
+    await page.reload({ waitUntil: "commit" });
+    await page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
+    await page.waitForTimeout(1200);
+  };
+
+  await grade("Got It");
+  await grade("Again");
+  await grade("Got It");
+  const before = await where();
+  await reload();
+  const after = await where();
+  ck("after a reload, the same card of the same set", after.at === before.at && after.of === before.of && after.card === before.card,
+     `${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+  ck("the count carries on rather than going back to 1", after.at === 4, `card ${after.at}`);
+
+  // A card whose answer has been seen comes back showing it.
+  await tap();
+  await page.waitForSelector('button:has-text("Got It")', { timeout: 5000 });
+  await reload();
+  ck("a card whose answer was seen comes back showing it", !!(await page.$('button:has-text("Got It")')));
+  await page.click('button:has-text("Got It")');
+  await page.waitForTimeout(250);
+  const inAll = await where();
+
+  // Another set and back: the whole deck keeps its place while Grammar has its own.
+  await page.click('button:text-is("Grammar")');
+  await page.waitForTimeout(800);
+  const grammar = await where();
+  ck("another set starts at its own card 1", grammar.at === 1, JSON.stringify(grammar));
+  await grade("Got It");
+  // Read back rather than assumed: a one-card set is now at its checkpoint.
+  const leftGrammar = { ...(await where()), checkpoint: !!(await page.$("[data-checkpoint]")) };
+  await page.click('button:text-is("All")');
+  await page.waitForTimeout(800);
+  const backInAll = await where();
+  ck("coming back to the whole deck carries on where it was", backInAll.at === inAll.at && backInAll.card === inAll.card,
+     `${JSON.stringify(inAll)} → ${JSON.stringify(backInAll)}`);
+  await page.click('button:text-is("Grammar")');
+  await page.waitForTimeout(800);
+  const backInGrammar = { ...(await where()), checkpoint: !!(await page.$("[data-checkpoint]")) };
+  ck("and so does the other set, checkpoint and all", JSON.stringify(backInGrammar) === JSON.stringify(leftGrammar),
+     `${JSON.stringify(leftGrammar)} → ${JSON.stringify(backInGrammar)}`);
+  await page.click('button:text-is("All")');
+  await page.waitForTimeout(500);
+
+  // A set kept from yesterday is not carried on: a new day starts a new set.
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith("study-place:"));
+    const place = JSON.parse(localStorage.getItem(key));
+    for (const set of Object.values(place.sets)) set.day = "2000-01-01";
+    localStorage.setItem(key, JSON.stringify(place));
+  });
+  await reload();
+  ck("a set from an earlier day is not carried on", (await where()).at === 1, JSON.stringify(await where()));
   await browser.close();
 }
 

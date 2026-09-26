@@ -127,8 +127,12 @@ ck("with the card back", (await cardBox(page)) !== null);
 
 console.log("\n  the keyboard reaches the card only when the card is what you're looking at");
 // Previous card left the block live again, so finish it, then reload: the
-// mock serves the fixture's original state, which is a fresh block.
+// mock serves the fixture's original state, which is a fresh block. A reload
+// comes back to the set you were in — here, its checkpoint — so the kept place
+// is cleared first, once its last save has been written.
 await workTheQueue();
+await page.waitForTimeout(700);
+await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith("study-place:")) localStorage.removeItem(k); });
 await page.reload();
 await page.waitForTimeout(2000);
 
