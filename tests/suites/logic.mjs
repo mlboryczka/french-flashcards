@@ -568,6 +568,46 @@ console.log("\n  archive — out of circulation, recoverable");
   }
 }
 
+// ── Cahier parser: one card per front ──────────────────────────────────────
+// The deck holds one card per front, and a save holding two is refused whole.
+// On 2026-09-25 "pas aussi … que" ("not as … as"), taught in three classes,
+// became three identical cards — a gloss made only of small words scored 0%
+// alike even against itself — and the upload lost the 499 cards saved
+// alongside them while reporting success. Self-contained, like the block above.
+{
+  const { dedupeWithPolysemy } = await import("../../api/parse-cahier.js");
+  const V = (front, back, date) => ({ front, back, category: "V", dates: [date] });
+  const fronts = (r) => r.deduped.map((c) => c.front);
+  const unique = (r) => new Set(fronts(r).map((f) => f.toLowerCase())).size === r.deduped.length;
+
+  console.log("\n  cahier parser — one card per front");
+  const same = dedupeWithPolysemy([
+    V("pas aussi … que", "not as … as", "2026-02-11"),
+    V("pas aussi … que", "not as … as", "2026-03-02"),
+    V("pas aussi … que", "not as … as", "2026-03-20"),
+  ]);
+  ck("a word taught in three classes, glossed only in small words, is one card with all three dates",
+     same.deduped.length === 1 && same.deduped[0].front === "pas aussi … que" &&
+       same.deduped[0].dates.length === 3 && same.splits === 0,
+     JSON.stringify(same));
+
+  const little = dedupeWithPolysemy([V("alors", "so", "2026-01-05"), V("alors", "then", "2026-02-05")]);
+  ck("two small-word glosses of one little word are one card, not two senses",
+     little.deduped.length === 1 && little.splits === 0, JSON.stringify(little));
+
+  const senses = dedupeWithPolysemy([V("si", "if", "2026-01-05"), V("si", "yes, contradicting a negative question", "2026-02-05")]);
+  ck("a small-word gloss against a real one is still two senses, on two different fronts",
+     senses.deduped.length === 2 && senses.splits === 1 && unique(senses), JSON.stringify(fronts(senses)));
+
+  const sameLabel = dedupeWithPolysemy([
+    V("mener", "to run a business or an organisation", "2026-01-05"),
+    V("mener", "to run a race across the whole park", "2026-02-05"),
+  ]);
+  ck("two senses whose labels come out the same are one card, never two with one front",
+     sameLabel.deduped.length === 1 && unique(sameLabel) && sameLabel.deduped[0].dates.length === 2,
+     JSON.stringify(sameLabel));
+}
+
 const n = ck.fails();
 console.log(n ? `\n  FAILED: ${n}` : "\n  all checks passed");
 process.exit(n ? 1 : 0);

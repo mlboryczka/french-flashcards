@@ -285,18 +285,35 @@ async function handleCommit(req, res, adminClient, userId) {
     batch_id: batchId,
   }));
 
+  // A save is all or nothing: one card Postgres won't take and it refuses the
+  // whole statement. A refused save is tried again in smaller pieces, down to
+  // single cards, so only the cards that really can't be saved are left out.
+  // Those are counted and named in the reply: they used to be hidden behind
+  // "ok", and a student was told 573 cards had arrived when 1,073 should have.
+  // Only a refusal about the cards themselves (codes 21, 22, 23) is worth
+  // splitting; anything else — the database unreachable — fails the lot.
   let inserted = 0;
-  for (let i = 0; i < rows.length; i += 500) {
-    const chunk = rows.slice(i, i + 500);
+  const failed = [];
+  const saveRows = async (chunk) => {
     const { error: insErr, count } = await adminClient
       .from("user_cards")
       .upsert(chunk, { onConflict: "user_id,front", count: "exact" });
-    if (insErr) {
-      console.error("upsert failed on chunk starting at", i, insErr);
-      errors.push({ step: "upsert", error: insErr.message });
-      continue;
+    if (!insErr) {
+      inserted += count || chunk.length;
+      return;
     }
-    inserted += count || chunk.length;
+    const aboutTheCards = /^2[123]/.test(String(insErr.code || ""));
+    if (chunk.length > 1 && aboutTheCards) {
+      const size = chunk.length > 50 ? 50 : 1;
+      for (let i = 0; i < chunk.length; i += size) await saveRows(chunk.slice(i, i + size));
+      return;
+    }
+    console.error("upsert refused", chunk.length, "card(s):", insErr);
+    for (const r of chunk) failed.push({ front: r.front, error: insErr.message });
+  };
+  for (let i = 0; i < rows.length; i += 500) await saveRows(rows.slice(i, i + 500));
+  if (failed.length) {
+    errors.push({ step: "upsert", error: `${failed.length} card(s) not saved: ${failed[0].error}` });
   }
 
   // Replace: the cards the upload doesn't have. Only once the upload's own
@@ -376,8 +393,15 @@ async function handleCommit(req, res, adminClient, userId) {
   );
 
   return res.status(200).json({
-    ok: true,
+    // Not ok only when nothing at all was saved, so the dialog shows an
+    // error; a partial save reports what's missing through cardsFailed.
+    ok: !(inserted === 0 && failed.length > 0),
+    error: inserted === 0 && failed.length > 0
+      ? `None of the ${failed.length} cards could be saved: ${failed[0].error}`
+      : undefined,
     cardsInserted: inserted,
+    cardsFailed: failed.length,
+    failedFronts: failed.slice(0, 10).map((f) => f.front),
     uniqueCards: deduped.length,
     datesCovered: allDates.length,
     dateRange: allDates.length
@@ -832,17 +856,38 @@ export function dedupeWithPolysemy(cards) {
     if (clusters.length === 1) {
       deduped.push(mergeCluster(clusters[0]));
     } else {
-      splits += clusters.length - 1;
-      for (const cluster of clusters) {
+      const senses = clusters.map((cluster) => {
         const merged = mergeCluster(cluster);
-        const disambiguator = shortDisambiguator(merged.back);
-        merged.front = `${merged.front} (${disambiguator})`;
-        deduped.push(merged);
-      }
+        merged.front = `${merged.front} (${shortDisambiguator(merged.back)})`;
+        return merged;
+      });
+      // Two senses can come out with the same label — two long glosses that
+      // share their first three words — and that is one card, not two.
+      const distinct = mergeSameFront(senses);
+      splits += distinct.length - 1;
+      deduped.push(...distinct);
     }
   }
 
-  return { deduped, splits };
+  // No two cards may leave here with the same front. The deck allows one card
+  // per front, and a save holding two is refused whole: every card in it is
+  // lost, not just the repeat. On 2026-09-25 one word taught in three classes
+  // took 499 other cards down with it.
+  return { deduped: mergeSameFront(deduped), splits };
+}
+
+// Cards whose fronts match once case, accents and spacing are set aside,
+// merged into one: the longest back, every date.
+function mergeSameFront(cards) {
+  const byFront = new Map();
+  for (const card of cards) {
+    const key = normalizeKey(card.front);
+    if (!byFront.has(key)) byFront.set(key, []);
+    byFront.get(key).push(card);
+  }
+  return [...byFront.values()].map((group) =>
+    group.length === 1 ? group[0] : { ...mergeCluster(group), front: group[0].front }
+  );
 }
 
 function mergeCluster(cluster) {
@@ -883,7 +928,18 @@ function clusterByBackSimilarity(group) {
 function backSimilarity(a, b) {
   const sa = contentWords(a);
   const sb = contentWords(b);
-  if (sa.size === 0 || sb.size === 0) return 0;
+  // Both glosses are only small words — "not as … as", "it is", "so": the
+  // translation of a little word, not two senses of it. This used to score 0,
+  // even for a gloss against itself, so a word taught in three classes became
+  // three cards with one front.
+  if (sa.size === 0 && sb.size === 0) return 1;
+  // Only one side is small words ("pas": "not" against "step"): compare every
+  // word, small ones included.
+  if (sa.size === 0 || sb.size === 0) return jaccard(allWords(a), allWords(b));
+  return jaccard(sa, sb);
+}
+
+function jaccard(sa, sb) {
   let intersection = 0;
   for (const w of sa) if (sb.has(w)) intersection++;
   const union = sa.size + sb.size - intersection;
@@ -901,13 +957,18 @@ const STOP_WORDS = new Set([
   "from", "as", "about", "into", "out", "up", "down",
 ]);
 
+function allWords(text) {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^\w\s']/g, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+  );
+}
+
 function contentWords(text) {
-  const words = text
-    .toLowerCase()
-    .replace(/[^\w\s']/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
-  return new Set(words);
+  return new Set([...allWords(text)].filter((w) => w.length >= 2 && !STOP_WORDS.has(w)));
 }
 
 function shortDisambiguator(back) {

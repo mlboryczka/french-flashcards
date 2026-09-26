@@ -273,6 +273,14 @@ function uploadDoneText({ cardsInserted = 0, datesCovered = 0 }) {
   return `Your cahier is linked.\n\n${cardsInserted} cards from ${datesCovered} ${datesCovered === 1 ? "class" : "classes"} you hadn't studied yet. They join your deck as new cards, so they arrive once your reviews are done.\n\nFrom now on, each class Laura adds becomes cards on its own.`;
 }
 
+// Cards an upload couldn't save. Said plainly: the upload once reported
+// success with 500 of its cards missing.
+function uploadFailedText({ cardsFailed = 0, failedFronts = [] } = {}) {
+  if (!cardsFailed) return "";
+  const example = failedFronts[0] ? ` (for example "${failedFronts[0]}")` : "";
+  return `\n\n${cardsFailed} ${cardsFailed === 1 ? "card" : "cards"} couldn't be saved${example}. Uploading the same cahier again retries them, and keeps your progress.`;
+}
+
 function cahierArrivalText({ dates = [], cards = 0 } = {}) {
   const asDay = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "long" });
   const when = dates.length === 0 ? "Your cahier"
@@ -2028,7 +2036,8 @@ export default function FlashcardApp({ user, onSignOut }) {
             alert(
               `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
               (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
-              (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
+              (result.polysemySplits ? `${result.polysemySplits} polysemy splits.\n` : "") +
+              uploadFailedText(result)
             );
           }}
         />
@@ -2320,7 +2329,8 @@ export default function FlashcardApp({ user, onSignOut }) {
             (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
             (result.polysemySplits ? `${result.polysemySplits} polysemy splits.\n` : "") +
             (result.keptOutOfStudy ? `\n${result.keptOutOfStudy} cards you'd studied weren't in this upload: they're out of study, with their progress kept.` : "") +
-            (result.removed ? `\n${result.removed} cards you'd never studied weren't in this upload and were removed.` : "")
+            (result.removed ? `\n${result.removed} cards you'd never studied weren't in this upload and were removed.` : "") +
+            uploadFailedText(result)
           );
         }}
       />
