@@ -4,9 +4,11 @@
 // "devoir → imparfait (je)", "relatif → adverbe". Read quickly, "relatif"
 // looks like a word to translate, and "vivre → je" never says which tense it
 // wants. So every grammar card that asks for French gets one line above the
-// prompt saying exactly what to write — the tense and the person by name, and
-// the pronoun the answer starts with, because the answer includes it and
-// "vis" alone is marked wrong against "je vis".
+// prompt saying exactly what to write — the tense by name, and the pronoun
+// the answer starts with, because the answer includes it and "vis" alone is
+// marked wrong against "je vis". Kept short: it used to name the person too
+// ("Conjugate in the present tense, first person singular, with je"), which
+// the pronoun already says, and ran onto two lines, more on a phone.
 //
 // Two sources, in this order:
 //   1. The drill's own shape, for conjugation drills from any source (the
@@ -46,25 +48,25 @@ const PERSONS = {
 };
 
 const TENSES = {
-  "présent": "the present tense",
-  "present": "the present tense",
-  "imparfait": "the imperfect",
-  "futur": "the future tense",
-  "futur simple": "the future tense",
-  "passé composé": "the passé composé",
-  "plus-que-parfait": "the pluperfect (plus-que-parfait)",
-  "conditionnel": "the present conditional",
-  "conditionnel présent": "the present conditional",
-  "conditionnel passé": "the past conditional",
-  "subj": "the present subjunctive",
-  "subjonctif": "the present subjunctive",
-  "subjonctif présent": "the present subjunctive",
-  "impératif": "imperative",
-  "futur antérieur": "the future perfect (futur antérieur)",
-  "futur proche": "the near future (futur proche)",
-  "passé simple": "the passé simple",
-  "passé récent": "the recent past (venir de)",
-  "subjonctif passé": "the past subjunctive",
+  "présent": "Present tense",
+  "present": "Present tense",
+  "imparfait": "Imperfect",
+  "futur": "Future tense",
+  "futur simple": "Future tense",
+  "passé composé": "Passé composé",
+  "plus-que-parfait": "Pluperfect (plus-que-parfait)",
+  "conditionnel": "Present conditional",
+  "conditionnel présent": "Present conditional",
+  "conditionnel passé": "Past conditional",
+  "subj": "Present subjunctive",
+  "subjonctif": "Present subjunctive",
+  "subjonctif présent": "Present subjunctive",
+  "impératif": "Imperative",
+  "futur antérieur": "Future perfect (futur antérieur)",
+  "futur proche": "Near future (futur proche)",
+  "passé simple": "Passé simple",
+  "passé récent": "Recent past (venir de)",
+  "subjonctif passé": "Past subjunctive",
 };
 
 const PARTICIPLE = /^(?:pp|p\.p\.|participe passé|participe)$/i;
@@ -112,16 +114,16 @@ export const isConjugationDrill = (front) => parseDrill(front) !== null;
 export function drillInstruction(front) {
   const d = parseDrill(front);
   if (!d) return null;
-  if (d.tense === "participle") return "Give the past participle";
-  const [who, pronoun] = PERSONS[d.person];
-  // The imperative has no subject pronoun, so the person is named, not typed.
-  if (d.tense === "impératif") return `Give the imperative, ${who} (the ${pronoun} form)`;
+  if (d.tense === "participle") return "Past participle";
+  const pronoun = PERSONS[d.person][1];
+  // The imperative has no subject pronoun, so the form is named, not typed.
+  if (d.tense === "impératif") return `Imperative, ${pronoun} form`;
   // A subjunctive is written with its que: a cahier table expands to
   // "aller (subjonctif) → je" with "que j'aille" as the answer.
   if (isSubjunctive(d.tense) && !pronoun.startsWith("qu")) {
-    return `Conjugate in ${TENSES[d.tense]}, ${who}, with ${queForm(pronoun)}`;
+    return `${TENSES[d.tense]}, with ${queForm(pronoun)}`;
   }
-  return `Conjugate in ${TENSES[d.tense]}, ${who}, with ${pronoun}`;
+  return `${TENSES[d.tense]}, with ${pronoun}`;
 }
 
 const isSubjunctive = (tense) => /^subj/.test(tense || "");

@@ -9,26 +9,26 @@ import { checker } from "../check.mjs";
 const ck = checker();
 const CAT = { V: "vocab", E: "expr", G: "gram", P: "pron" };
 
-console.log("\n  drillInstruction — the tense and the person, by name");
+console.log("\n  drillInstruction — the tense by name, and the pronoun, on one short line");
 for (const [front, want] of [
   // "vivre → je" never said which tense; a drill with none named is the present.
-  ["vivre → je", "Conjugate in the present tense, first person singular, with je"],
-  ["vivre → il/elle", "Conjugate in the present tense, third person singular, with il or elle"],
-  ["vivre → ils/elles", "Conjugate in the present tense, third person plural, with ils or elles"],
-  ["aller (subj) → que je", "Conjugate in the present subjunctive, first person singular, with que je"],
-  ["aller (subj) → qu'ils", "Conjugate in the present subjunctive, third person plural, with qu'ils"],
-  ["devoir → imparfait (je)", "Conjugate in the imperfect, first person singular, with je"],
-  ["devoir → conditionnel passé (je)", "Conjugate in the past conditional, first person singular, with je"],
-  ["venir → imparfait (ils)", "Conjugate in the imperfect, third person plural, with ils"],
-  ["devoir → pp", "Give the past participle"],
+  ["vivre → je", "Present tense, with je"],
+  ["vivre → il/elle", "Present tense, with il or elle"],
+  ["vivre → ils/elles", "Present tense, with ils or elles"],
+  ["aller (subj) → que je", "Present subjunctive, with que je"],
+  ["aller (subj) → qu'ils", "Present subjunctive, with qu'ils"],
+  ["devoir → imparfait (je)", "Imperfect, with je"],
+  ["devoir → conditionnel passé (je)", "Past conditional, with je"],
+  ["venir → imparfait (ils)", "Imperfect, with ils"],
+  ["devoir → pp", "Past participle"],
   // The cahier parser's shapes.
-  ["vivre (présent) → nous", "Conjugate in the present tense, first person plural, with nous"],
+  ["vivre (présent) → nous", "Present tense, with nous"],
   // A table expands to "(subjonctif) → je" with "que j'aille" as the answer.
-  ["aller (subjonctif) → ils/elles", "Conjugate in the present subjunctive, third person plural, with qu'ils or qu'elles"],
-  ["aller (subjonctif) → je", "Conjugate in the present subjunctive, first person singular, with que je"],
-  ["réélire → participe passé", "Give the past participle"],
-  // The imperative has no pronoun to type, so the person is named instead.
-  ["finir (impératif) → tu", "Give the imperative, second person singular (the tu form)"],
+  ["aller (subjonctif) → ils/elles", "Present subjunctive, with qu'ils or qu'elles"],
+  ["aller (subjonctif) → je", "Present subjunctive, with que je"],
+  ["réélire → participe passé", "Past participle"],
+  // The imperative has no pronoun to type, so the form is named instead.
+  ["finir (impératif) → tu", "Imperative, tu form"],
   // Not drills: these get their line from a lesson section, or none.
   ["relatif → adverbe", null],
   ["Tu me dis → à l'impératif", null],
@@ -87,7 +87,7 @@ for (const lesson of LESSONS) {
 // differ, or the line gives the answer away.
 const adverbes = LESSONS.find((l) => l.id === "adverbes");
 ck("adverbes: the two gap sections have the same line", adverbes?.instructions?.invariable === adverbes?.instructions?.meaning);
-ck("a deck drill gets its line with no lesson", cardInstructionFor({ f: "vendre → nous", b: "nous vendons", cat: "gram" })?.includes("first person plural"));
+ck("a deck drill gets its line with no lesson", cardInstructionFor({ f: "vendre → nous", b: "nous vendons", cat: "gram" }) === "Present tense, with nous");
 ck("a vocab card gets no line", cardInstructionFor({ f: "la moitié", b: "half", cat: "vocab" }) === null);
 
 console.log("\n  a reworded lesson card keeps its place, keyed as the sync keys it");

@@ -474,9 +474,10 @@ with the owner, and `scripts/sort-grammar-cards.mjs` sorts existing decks.
 (`cardInstructionFor` in `src/data/lessons/index.js`, `data-card-instruction`).
 `vivre → je` never said which tense, and `relatif → adverbe` read as a word to
 translate. A conjugation drill's line comes from its own shape
-(`src/lib/cardInstruction.js`): tense and person by name, and the pronoun the
-answer starts with, because the answer includes it — "Conjugate in the present
-tense, first person singular, with je"; a drill naming no tense is the present.
+(`src/lib/cardInstruction.js`): the tense by name and the pronoun the answer
+starts with, because the answer includes it — "Present tense, with je", kept to
+one short line; a drill naming no tense is the present. The line is in italics,
+like the tap hint, so it reads as the app talking rather than part of the card.
 Any other lesson card takes its section's line from `LESSON.instructions`. Word
 and phrase cards get none: they are translations, and the input already says
 which language. Here "grammar" is the stored category (`gram` or `pron`), not
@@ -2608,6 +2609,36 @@ relinking; `updateLink` (a plain update) for everything after. `sync` in
 stand-in now refuses an upsert missing a NOT NULL column (`REQUIRED`), and
 the suite checks that a run records when it looked, both on the run that
 links and on one that finds nothing new.
+
+### 2026-09-26 — the instruction line: italics, and one short line
+
+**Asked for.** Every instruction in italics, and whether the line above the
+prompt was the best place and way to show one. Five options went to the
+owner: italics where it was; italics cut to one line; a fixed line along the
+top of the card; just the verb big, with the tense and pronoun in a small line
+under it; the line under the prompt as a caption. They chose the second.
+
+**Built.** The line stays directly above the prompt, now italic and medium
+weight instead of semibold, like the tap hint at the foot of the card, so it
+reads as the app talking rather than part of the card. (Manrope has no italic;
+the browser slants it, as it already did for the hint.) A conjugation drill's
+line drops what the card already says: "Conjugate in the present subjunctive,
+third person plural, with qu'ils or qu'elles", two lines on a wide screen, is
+now "Present subjunctive, with qu'ils or qu'elles" — the pronoun names the
+person. The imperative reads "Imperative, tu form" and the participle "Past
+participle". Lesson section lines kept their wording. Measured in Manrope at a
+phone card's width, every drill line fits on one line except the longest kind
+(the future perfect with "ils or elles"), which takes two.
+
+**Not chosen, and why.** Under the prompt: the student reads the big text
+first and starts answering, and the line exists because the prompt alone was
+misread. Along the top: further from the word, easier to miss, and on a phone
+it shares the top with the lesson badge. Just the verb: the biggest change,
+and drills would stop looking like every other card.
+
+**Shipped in two parts.** The italics went out in 375fd1f, because another
+session committed `FlashcardApp.jsx` whole while this change was in it; the
+wording followed in its own commit.
 
 ## Open items
 

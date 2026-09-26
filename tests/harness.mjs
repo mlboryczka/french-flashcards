@@ -193,7 +193,7 @@ export function cardBox(page) {
       top: Math.round(r.top), bottom: Math.round(r.bottom),
       width: Math.round(r.width), height: Math.round(r.height),
       centreX: Math.round(r.left + r.width / 2),
-      // The prompt, not the instruction line above it ("Conjugate in …").
+      // The prompt, not the instruction line above it ("Present tense, with je").
       front: (() => {
         const face = el.children[0];
         if (!face) return "";
