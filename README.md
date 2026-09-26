@@ -21,11 +21,12 @@ Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.verce
 - **FSRS scheduling.** Per-card memory strength rather than a fixed ladder, so
   intervals keep growing and a miss shortens the gap instead of wiping it. A
   word can be asked either way round (FR→EN, EN→FR or Mixed), and each way has
-  its own schedule.
+  its own schedule. Each student's FSRS settings are fitted to their own
+  answers once there are enough (`api/fsrs-fit.js`), and "How much to
+  remember" in the profile menu sets their target.
 - **Session building.** `src/lib/sessionQueue.js` deals blocks of 50: cards
   missed last time, then reviews due today (most overdue first), then new
-  cards — but only once the due cards run out — plus two spot-checks of
-  well-known cards. Then it shuffles. Blocked practice feels easier during a
+  cards — but only once the due cards run out. Then it shuffles. Blocked practice feels easier during a
   session and tests worse afterwards.
 - **Card quality.** Three mechanisms for three ways a card goes bad: an English
   gloss leaking onto the French side; one card teaching two unrelated words
@@ -59,10 +60,10 @@ Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.verce
 ## Layout
 
 ```
-api/           12 serverless functions: notebook parsing and the linked
+api/           13 serverless functions: notebook parsing and the linked
                cahier's sync, tutor chat, sense splitting, answer
-               adjudication, admin and upload plumbing. cahier-daily.js is
-               the daily cron. api/_lib is import-only — the underscore
+               adjudication, fitting a student's FSRS settings, admin and
+               upload plumbing. cahier-daily.js is the daily cron. api/_lib is import-only — the underscore
                hides it from Vercel's function discovery
 src/           React app
 src/lib/       scheduling, session building, card classification, text
@@ -80,7 +81,7 @@ scripts/       maintenance runners against the live database: dry-run by
 scripts/data/  grammar-sort-decisions.json, the owner's card-by-card sort
                of the original deck's grammar cards, read by
                sort-grammar-cards.mjs
-tests/         23 suites: 14 drive the real app in a browser, 9 need none
+tests/         25 suites: 15 drive the real app in a browser, 10 need none
 french flashcards context.md
                the project's working notes: how it is, why, and what's open
 ```
@@ -229,7 +230,7 @@ The old ladder had three problems: intervals stopped growing at 21 days, so a
 word known cold for a year still came back every three weeks; a correct answer
 earned the same credit whether it was on time or a month late; and a single
 miss reset a card to day one. FSRS tracks per-card memory strength instead, so
-intervals keep growing (3d, 14d, 57d, 196d, ...), a late-but-correct answer
+intervals keep growing (4d, 15d, 49d, 136d, ...), a late-but-correct answer
 earns a longer gap than an on-time one, and a miss cuts the interval
 proportionally rather than wiping it.
 
@@ -241,6 +242,55 @@ producing it are different skills. Grammar cards are asked one way only.
 **FSRS gets one answer per card, per direction, per day: the first.** A retry
 later in the block, or the same card in a second block that day, is not
 counted again. Every answer is still kept, in `card_reviews`.
+
+**A day runs from 4am to 4am, in the student's own time**
+(`src/lib/studyDay.js`), as Anki's does: a session that runs past midnight is
+one day's work. FSRS counts the days between answers the same way. ts-fsrs on
+its own counts them by UTC date, which turns at 8pm in New York, so a word
+answered at 9pm and again the next morning was "0 days apart" and the right
+answer earned nothing; the app hands it times whose UTC date is the student's
+day (`toFsrsTime` in `src/lib/spacedRepetition.js`).
+
+**Right or wrong, and nothing else.** Answers are graded binary — you typed it
+right or you didn't (or, flipping cards instead of typing, you pressed Got It
+or Again) — and mapped onto FSRS's `Again` and `Good`. Nothing is guessed from
+typing speed or typos. FSRS was built for four buttons, so two things are
+adjusted for two:
+
+- **The gap after either answer comes from the card's own estimate** — the
+  day its chance of being remembered falls to the target. ts-fsrs keeps four
+  buttons' gaps in order (Good at least a day past Hard, Hard past Again), so
+  every right answer used to wait at least three days, however shaky.
+- **The starting settings were measured on right/wrong answers**
+  (`STARTING_WEIGHTS` in `src/lib/fsrsSettings.js`): per-user fits of the FSRS
+  team's open review data with Hard and Easy counted as right. ts-fsrs's own
+  defaults were measured on people pressing four buttons.
+
+**Each student's own settings** (`migrations/migration_012_fsrs_settings.sql`,
+`api/fsrs-fit.js`, `src/useFsrsSettings.js`). Once a day the app asks the
+server whether there is anything to do:
+
+- Once a student has given about 1,000 answers, their FSRS settings are fitted
+  from them with the official optimizer (`@open-spaced-repetition/binding`),
+  and again each month once there are 500 more. A fit is used only if it
+  predicts the student's newest answers — which it wasn't fitted on — better
+  than the settings in use. On the FSRS team's open data a personal fit beat
+  the starting settings for 78% of users at 1,000 answers; at 250 it was a
+  coin flip.
+- Whenever the settings in use change, every card's memory estimate is worked
+  out again from its own answers. Due dates don't move, nothing else is
+  written, and a card answered meanwhile is left alone.
+
+**The target** — how sure to be of remembering a card when it comes back — is
+the student's choice, under **How much to remember** in the profile menu:
+Automatic (the default: 90%, easing two points at a time towards 85% while
+due cards are left undone on most of a week's study days, and back up once
+they're keeping up), Lighter load (85%), Standard (90%) or Remember more
+(95%). It trades daily review count against how much you remember.
+
+There are no spot-checks. Two well-known cards used to ride along in every
+block whatever their date; in a six-month simulation they were right 97% of
+the time and cost about 3% of study time.
 
 **Setup.** Run these two in the Supabase SQL Editor, in order:
 
@@ -262,22 +312,9 @@ in place, so the change can be reversed.
 > migration got wrong, and it's the same assumption that made the new-card cap
 > silently never apply in the pre-FSRS scheduler.
 
-**The one dial worth touching** is `requestRetention` in
-`src/lib/spacedRepetition.js` — the probability you want of recalling a card at
-the moment it comes up. It trades daily review count against how much you
-remember:
-
-| Setting | Effect |
-| --- | --- |
-| `0.95` | Remember more, noticeably more reviews per day |
-| `0.90` | Default. The usual recommendation |
-| `0.85` | Meaningfully fewer reviews, slightly more forgetting |
-| `0.80` | Use if the daily load has become unsustainable |
-
-Answers are graded binary — you typed it right or you didn't (or, flipping
-cards instead of typing, you pressed Got It or Again) — and mapped onto FSRS's
-`Again` and `Good` ratings. The `Hard` and `Easy` ratings are for apps where
-you rate your own recall on a scale; here the grade is right or wrong.
+Run `migrations/migration_012_fsrs_settings.sql` for students' own settings.
+Without it the app uses the starting settings and a 90% target, and the menu
+says so.
 
 ## Updating the cards
 

@@ -17,6 +17,8 @@ import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
 import ApiKeyModal from "./ApiKeyModal";
+import FsrsSettingsModal from "./FsrsSettingsModal";
+import { useFsrsSettings } from "./useFsrsSettings";
 import { keyHeaders, hasKey } from "./lib/anthropicKey";
 
 const SIDEBAR_WIDTH = 256;
@@ -528,6 +530,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   // "Connect your Claude account". Everything that calls Claude bills the
   // caller's own Anthropic key now, so there has to be somewhere to put one.
   const [showKeyModal, setShowKeyModal] = useState(false);
+  // "How much to remember", and the student's own FSRS settings behind it:
+  // applied to the scheduler, checked once a day (useFsrsSettings).
+  const [showFsrsSettings, setShowFsrsSettings] = useState(false);
+  const fsrs = useFsrsSettings(user, { cards: userCards, freshSeq: deckFreshSeq, dir, onEstimatesChanged: reloadDeck });
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const profileRef = useRef(null);
 
@@ -2382,6 +2388,13 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     {hasKey(user?.id) ? "Claude account ✓" : "Connect Claude account"}
                   </button>
+                  <button
+                    data-fsrs-settings-toggle
+                    style={S.profileMenuItem}
+                    onClick={() => { setShowFsrsSettings(true); setShowProfileMenu(false); }}
+                  >
+                    How much to remember
+                  </button>
                   {isAdmin && (<>
                     <button
                       style={S.profileMenuItem}
@@ -2454,6 +2467,11 @@ export default function FlashcardApp({ user, onSignOut }) {
         open={showKeyModal}
         onClose={() => setShowKeyModal(false)}
         user={user}
+      />
+      <FsrsSettingsModal
+        open={showFsrsSettings}
+        onClose={() => setShowFsrsSettings(false)}
+        settings={fsrs}
       />
       <CahierUpload
         open={showUpload}

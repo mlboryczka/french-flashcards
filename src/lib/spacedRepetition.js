@@ -13,6 +13,7 @@
 
 import { fsrs, State, Rating } from "ts-fsrs";
 import { DAY_STARTS_AT_HOUR } from "./studyDay.js";
+import { STARTING_WEIGHTS, usableWeights } from "./fsrsSettings.js";
 
 export { State, Rating };
 
@@ -20,8 +21,9 @@ export { State, Rating };
 //
 //   requestRetention — the probability you want of recalling a card at the
 //     moment it comes up. This is *the* dial: it trades daily review count
-//     against how much you remember. 0.9 is the FSRS default and the right
-//     starting point; drop to 0.85 if the daily load feels too heavy.
+//     against how much you remember. 0.9 is the FSRS default and the starting
+//     point; each student can change it, or leave it on automatic, which
+//     eases it down to 0.85 while they're behind (lib/fsrsSettings.js).
 //
 //   enableShortTerm — OFF deliberately. With it on, FSRS inserts minute-scale
 //     learning steps (see a new card again in 10 minutes), which suits an app
@@ -43,12 +45,28 @@ export const FSRS_CONFIG = Object.freeze({
   enableShortTerm: false,
 });
 
-export const scheduler = fsrs({
-  request_retention: FSRS_CONFIG.requestRetention,
-  maximum_interval: FSRS_CONFIG.maximumInterval,
-  enable_fuzz: FSRS_CONFIG.enableFuzz,
-  enable_short_term: FSRS_CONFIG.enableShortTerm,
-});
+// A scheduler for one set of settings: the 21 weights (the student's own
+// once fitted, the starting ones until then) and the target.
+export function makeScheduler({ weights, retention } = {}) {
+  return fsrs({
+    w: [...(usableWeights(weights) || STARTING_WEIGHTS)],
+    request_retention: Number.isFinite(retention) ? retention : FSRS_CONFIG.requestRetention,
+    maximum_interval: FSRS_CONFIG.maximumInterval,
+    enable_fuzz: FSRS_CONFIG.enableFuzz,
+    enable_short_term: FSRS_CONFIG.enableShortTerm,
+  });
+}
+
+// The scheduler in use: the signed-in student's settings once the app has
+// loaded them (applySettings), the starting ones before. Everything that
+// schedules an answer or estimates what is remembered reads this binding, so
+// setting it is the whole of switching a student over.
+export let scheduler = makeScheduler();
+
+export function applySettings({ weights, retention } = {}) {
+  scheduler = makeScheduler({ weights, retention });
+  return scheduler;
+}
 
 // When a wrong-answer card is re-queued in the same session, insert it this
 // many positions after the current index.
@@ -124,10 +142,35 @@ export function fromFsrsCard(fsrsCard, got) {
 const HOUR_MS = 3600000;
 const DAY_MS = 24 * HOUR_MS;
 
-export function toFsrsTime(ms) {
+// `timeZone` (an IANA name) is for the server, which runs in UTC and works out
+// a student's days from their answers; the app leaves it out and uses the
+// browser's own clock.
+export function toFsrsTime(ms, timeZone) {
+  const p = timeZone ? zonedParts(ms, timeZone) : localParts(ms);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second, p.ms) - DAY_STARTS_AT_HOUR * HOUR_MS;
+}
+
+function localParts(ms) {
   const d = new Date(ms);
-  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(),
-    d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()) - DAY_STARTS_AT_HOUR * HOUR_MS;
+  return {
+    year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(),
+    hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds(), ms: d.getMilliseconds(),
+  };
+}
+
+const zoneFormats = new Map();
+function zonedParts(ms, timeZone) {
+  let f = zoneFormats.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone, hourCycle: "h23",
+      year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+    });
+    zoneFormats.set(timeZone, f);
+  }
+  const p = {};
+  for (const { type, value } of f.formatToParts(new Date(ms))) p[type] = Number(value);
+  return { year: p.year, month: p.month, day: p.day, hour: p.hour, minute: p.minute, second: p.second, ms: ((ms % 1000) + 1000) % 1000 };
 }
 
 export function fromFsrsTime(ms) {
