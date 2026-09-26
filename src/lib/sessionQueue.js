@@ -25,8 +25,13 @@
 //                   who learned a lot yesterday gets review-heavy blocks
 //                   until those are done. That is the whole of the new-card
 //                   limit — no daily number, no forecast.
-//   4. Spot-checks  two well-known cards, ignoring due date — cheap
-//                   insurance against FSRS being over-confident.
+//
+// There are no spot-checks. Two well-known cards used to ride along in every
+// block, ignoring their due date, as insurance against FSRS being
+// over-confident. In the six-month simulation (2026-09-25) they were answered
+// right 97% of the time and took about 3% of study time; without them a
+// student knew about 3% more for the same time. FSRS's own schedule is the
+// check: a card it misjudges comes back and is missed.
 //
 // "Due today" means due any time before the end of the student's own day, so
 // the day's work doesn't grow while they study.
@@ -50,24 +55,16 @@
 // item is first shown; FSRS schedules nothing until it has been answered.
 //
 // Each entry is { ...card, shownDir: "fr" | "en", flippable, _bucket: "lapse" |
-// "review" | "new" | "spot" }. FlashcardApp uses _bucket only for the counter;
+// "review" | "new" }. FlashcardApp uses _bucket only for the counter;
 // scoring is driven entirely by FSRS state in applyAnswer().
 
-import {
-  scheduler,
-  toFsrsCard,
-  fromFsrsCard,
-  State,
-  Rating,
-  SPOT_CHECK_MIN_STABILITY_DAYS,
-} from "./spacedRepetition.js";
+import { State, scheduleAnswer } from "./spacedRepetition.js";
 import { endOfLocalDay, localISODate, localISODateDaysAgo, reviewedToday } from "./studyDay.js";
 import { lessonIdOf } from "./lessonSource.js";
 import { sideOf, sideColumns, directionsOf, isTwoWay, otherDirection, itemKey } from "./directions.js";
 
 const DEFAULTS = Object.freeze({
   target: 50,
-  spotCheckSlots: 2,
   // A class within this many days is "recent": what the student is being
   // taught right now, so its words come before the older pile.
   recentDays: 14,
@@ -88,10 +85,6 @@ function dueMs(card) {
   if (!card.next_due_at) return 0;
   const t = new Date(card.next_due_at).getTime();
   return Number.isFinite(t) ? t : 0;
-}
-
-function isWellKnown(card) {
-  return (card.stability ?? 0) >= SPOT_CHECK_MIN_STABILITY_DAYS;
 }
 
 // The candidates' items under a direction setting ("fr" | "en" | "mix").
@@ -198,7 +191,7 @@ export function orderNewCards(fresh, {
 // changes mid-block: the entries staying in it. None of them is dealt again,
 // and a card whose new item is among them gets no second new item.
 export function buildSession(cards, opts = {}) {
-  const { target, spotCheckSlots, recentDays } = { ...DEFAULTS, ...opts };
+  const { target, recentDays } = { ...DEFAULTS, ...opts };
   const now = opts.now ?? Date.now();
   const rng = opts.rng ?? Math.random;
   const direction = opts.direction ?? "mix";
@@ -211,7 +204,6 @@ export function buildSession(cards, opts = {}) {
   const lapses = [];
   const reviews = [];
   const fresh = [];
-  const wellKnown = [];
 
   for (const card of cards) {
     const flippable = isTwoWay(card);
@@ -233,28 +225,22 @@ export function buildSession(cards, opts = {}) {
           state === State.Relearning ||
           state === State.Learning;
         (missedLastTime ? lapses : reviews).push({ item, due: dueMs(side) });
-      } else if (isWellKnown(side) && !reviewedToday(side.last_review, new Date(now))) {
-        // Not due, but known well enough that we can afford to sample it. Not
-        // one already answered today: FSRS would not record the answer.
-        wellKnown.push(item);
       }
     }
   }
 
   // Most overdue first, so the oldest reviews survive the cut.
   reviews.sort((a, b) => a.due - b.due);
-  shuffleInPlace(wellKnown, rng);
 
   const due = [
     ...lapses.map(({ item }) => ({ ...item, _bucket: "lapse" })),
     ...reviews.map(({ item }) => ({ ...item, _bucket: "review" })),
   ];
-  const spotSlots = Math.min(spotCheckSlots, wellKnown.length);
-  const dueTaken = due.slice(0, Math.max(0, target - spotSlots));
+  const dueTaken = due.slice(0, Math.max(0, target));
 
   // New cards only in the room the due cards left — and never both of one
   // card's first meetings in the same block.
-  const newSlots = Math.max(0, target - spotSlots - dueTaken.length);
+  const newSlots = Math.max(0, target - dueTaken.length);
   const newTaken = [];
   if (newSlots > 0) {
     const ordered = orderNewCards(fresh, {
@@ -272,14 +258,7 @@ export function buildSession(cards, opts = {}) {
     }
   }
 
-  // Spot-checks ride along with real work. With nothing due and nothing new
-  // the student is caught up, and a block of two random known cards would
-  // only be noise.
-  const spots = dueTaken.length + newTaken.length > 0
-    ? wellKnown.slice(0, spotSlots).map((c) => ({ ...c, _bucket: "spot" }))
-    : [];
-
-  const tagged = [...dueTaken, ...newTaken, ...spots];
+  const tagged = [...dueTaken, ...newTaken];
 
   // Interleave: selection above was by priority, presentation is mixed.
   shuffleInPlace(tagged, rng);
@@ -297,6 +276,7 @@ export function buildSession(cards, opts = {}) {
 // What a block is made of, for the counter. Retries are the block's own cards
 // again, not more of them.
 export function countBuckets(entries) {
+  // `spot` stays, always 0: there are no spot-checks, but the counter reads it.
   const counts = { lapse: 0, review: 0, new: 0, spot: 0 };
   for (const c of entries) if (!c._retry && c._bucket in counts) counts[c._bucket]++;
   return counts;
@@ -351,11 +331,5 @@ export function placeRetry(deck, idx, card, offset = 20) {
 // callers can use the same object for the DB update and the optimistic
 // in-memory patch.
 export function applyAnswer(card, got, nowMs = Date.now(), dir = card?.shownDir ?? "fr") {
-  const now = new Date(nowMs);
-  const { card: next } = scheduler.next(
-    toFsrsCard(sideOf(card, dir)),
-    now,
-    got ? Rating.Good : Rating.Again
-  );
-  return sideColumns(fromFsrsCard(next, got), dir);
+  return sideColumns(scheduleAnswer(sideOf(card, dir), got, nowMs), dir);
 }

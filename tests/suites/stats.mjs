@@ -9,8 +9,11 @@ import { lessonCardKey } from "../../src/lib/lessonSource.js";
 const ck = checker();
 const DAY = 86400000;
 const now = Date.now();
+// The student's day, which runs from 4am to 4am (lib/studyDay.js): 1am
+// belongs to the day before.
 const localDay = (t) => {
   const d = new Date(t);
+  if (d.getHours() < 4) d.setDate(d.getDate() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 const daysAgo = (n) => { const d = new Date(now); d.setDate(d.getDate() - n); return localDay(d); };
@@ -57,7 +60,12 @@ for (let i = 0; i < 12; i++) {
 }
 
 // Review work: 4 cards left over from earlier days, 2 that came due today.
-const startOfToday = (() => { const d = new Date(now); d.setHours(0, 0, 1, 0); return d.getTime(); })();
+const startOfToday = (() => {
+  const d = new Date(now);
+  if (d.getHours() < 4) d.setDate(d.getDate() - 1);
+  d.setHours(4, 0, 1, 0);
+  return d.getTime();
+})();
 for (let i = 0; i < 6; i++) {
   rows.push({
     id: id++, front: `révision ${i}`, back: `review ${i}`, category: "V", dates: [daysAgo(60)],

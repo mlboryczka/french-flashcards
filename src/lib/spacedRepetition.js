@@ -12,6 +12,7 @@
 // writes, and for how existing Leitner boxes were seeded into FSRS state.
 
 import { fsrs, State, Rating } from "ts-fsrs";
+import { DAY_STARTS_AT_HOUR } from "./studyDay.js";
 
 export { State, Rating };
 
@@ -57,15 +58,6 @@ export const scheduler = fsrs({
 // nothing. Karpicke & Roediger (2007) found that what makes a retrieval
 // stick is having to work for it. 20 puts real cards in between.
 export const RE_QUEUE_OFFSET = 20;
-
-// A card counts as "well known" for spot-check purposes once FSRS thinks
-// you'd still recall it well over two months from now.
-//
-// This used to be called MASTERED_STABILITY_DAYS, and the Stats page showed
-// cards past it as "mastered" — a Leitner-era word re-attached to a threshold
-// chosen for a different question (which cards are safe to skip). It is only a
-// scheduling parameter now; progress is seen / about remembered.
-export const SPOT_CHECK_MIN_STABILITY_DAYS = 60;
 
 // ── Conversion between the DB row shape and ts-fsrs's Card ─────────────
 //
@@ -118,4 +110,54 @@ export function fromFsrsCard(fsrsCard, got) {
       ? new Date(fsrsCard.last_review).toISOString()
       : null,
   };
+}
+
+// ── Days, as the student lives them ────────────────────────────────────
+//
+// ts-fsrs counts the days between two answers by their UTC dates: midnight in
+// London, which is 8pm in New York (7pm in winter). A word answered at 9pm and
+// again the next morning was "0 days apart", so a right answer earned nothing;
+// in the simulated student test (2026-09-25) half of all reviews were counted
+// a day long or a day short. So ts-fsrs is handed times re-expressed so that
+// their UTC date IS the student's day (4am to 4am, lib/studyDay.js), and what
+// it hands back is turned into real times again.
+const HOUR_MS = 3600000;
+const DAY_MS = 24 * HOUR_MS;
+
+export function toFsrsTime(ms) {
+  const d = new Date(ms);
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(),
+    d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()) - DAY_STARTS_AT_HOUR * HOUR_MS;
+}
+
+export function fromFsrsTime(ms) {
+  const d = new Date(ms + DAY_STARTS_AT_HOUR * HOUR_MS);
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(),
+    d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()).getTime();
+}
+
+// One answer, scheduled: one direction's state (plain field names) in, the
+// same shape out.
+//
+// The answer is right or wrong — Good or Again — and nothing else. FSRS was
+// built for four buttons, and ts-fsrs keeps their gaps in order: Good at
+// least a day past Hard, Hard at least a day past Again. With Again at one
+// day, every right answer waited at least three, however shaky; in the test,
+// 601 of 922 right answers got exactly three days. This app has no Hard, so
+// the gap after either answer comes from the card's own new estimate: the day
+// its chance of being remembered falls to the target. The fuzz is the one
+// ts-fsrs drew for this answer, so the gap is still spread a little.
+export function scheduleAnswer(side, got, nowMs = Date.now(), sched = scheduler) {
+  const card = toFsrsCard(side);
+  if (card.last_review) card.last_review = new Date(toFsrsTime(card.last_review.getTime()));
+  card.due = new Date(toFsrsTime(card.due.getTime()));
+  const now = toFsrsTime(nowMs);
+  const { card: next } = sched.next(card, new Date(now), got ? Rating.Good : Rating.Again);
+  const days = sched.next_interval(next.stability, next.elapsed_days ?? 0);
+  return fromFsrsCard({
+    ...next,
+    scheduled_days: days,
+    due: new Date(fromFsrsTime(now + days * DAY_MS)),
+    last_review: new Date(nowMs),
+  }, got);
 }

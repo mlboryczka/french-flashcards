@@ -1,4 +1,4 @@
-// Which calendar day a review counts towards.
+// Which day a review counts towards.
 //
 // This is the user's own day, not UTC. It used to be
 // `new Date().toISOString().slice(0, 10)`, which rolls over at midnight in
@@ -11,12 +11,30 @@
 //     Wednesday. The Tuesday-shaped hole resets the streak to zero on two
 //     consecutive days of studying.
 //
+// And the day starts at 4am, not midnight, as Anki's does. A session that
+// runs past midnight, or one late at night and another just after it, is one
+// day's work. With midnight as the line, cards answered at 10:30pm were
+// counted again at 12:30am, two hours later, as the next day's review (the
+// simulated student test, 2026-09-25).
+//
 // Kept here rather than in the component so it can be tested against a fixed
 // timezone, which is the only way to catch this class of bug.
 
+export const DAY_STARTS_AT_HOUR = 4;
+
+// `d` moved into the day it belongs to: before 4am is the day before. The
+// clock time is kept; only the date moves.
+function inStudyDay(d) {
+  const t = new Date(d);
+  if (t.getHours() < DAY_STARTS_AT_HOUR) t.setDate(t.getDate() - 1);
+  return t;
+}
+
+const pad = (n) => String(n).padStart(2, "0");
+const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
 export function localISODate(d = new Date()) {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return isoOf(inStudyDay(d));
 }
 
 // Whether a card has already had its review for the day.
@@ -45,27 +63,29 @@ export function reviewedToday(lastReview, now = new Date()) {
   return localISODate(t) === localISODate(now);
 }
 
-// The last millisecond of the student's day. A card due any time before this
-// is due TODAY: the day's work is known in the morning, rather than growing
-// through the afternoon as cards cross their exact due time.
+// The last millisecond of the student's day: 3:59:59.999 the next morning. A
+// card due any time before this is due TODAY: the day's work is known in the
+// morning, rather than growing through the afternoon as cards cross their
+// exact due time.
 export function endOfLocalDay(now = new Date()) {
-  const d = new Date(now);
-  d.setHours(23, 59, 59, 999);
-  return d.getTime();
+  const d = inStudyDay(now);
+  d.setDate(d.getDate() + 1);
+  d.setHours(DAY_STARTS_AT_HOUR, 0, 0, 0);
+  return d.getTime() - 1;
 }
 
-// The first millisecond of the student's day. Before this, a due card is one
-// left over from an earlier day, not today's work.
+// The first millisecond of the student's day: 4am. Before this, a due card is
+// one left over from an earlier day, not today's work.
 export function startOfLocalDay(now = new Date()) {
-  const d = new Date(now);
-  d.setHours(0, 0, 0, 0);
+  const d = inStudyDay(now);
+  d.setHours(DAY_STARTS_AT_HOUR, 0, 0, 0);
   return d.getTime();
 }
 
-// The student's local date `days` before `now`, as YYYY-MM-DD — the same
-// shape class dates are stored in, so the two compare as strings.
+// The student's date `days` before `now`, as YYYY-MM-DD — the same shape
+// class dates are stored in, so the two compare as strings.
 export function localISODateDaysAgo(days, now = new Date()) {
-  const d = new Date(now);
+  const d = inStudyDay(now);
   d.setDate(d.getDate() - days);
-  return localISODate(d);
+  return isoOf(d);
 }

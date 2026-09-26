@@ -59,13 +59,17 @@ console.log("\n  a block is at most 50 cards");
 }
 
 // ── Due means due any time today ────────────────────────────────────────
+// The student's day runs from 4am to 4am (lib/studyDay.js), so 1am tonight
+// is still today and 5am is tomorrow.
 console.log("\n  due means due any time today, on the student's clock");
 {
   const tonight = reviewCard(11 * 3600000); // 9pm today in New York
-  const tomorrow = reviewCard(15 * 3600000); // 1am tomorrow
-  const { queue } = build([tonight, tomorrow]);
+  const afterMidnight = reviewCard(15 * 3600000); // 1am, still today's day
+  const tomorrow = reviewCard(19 * 3600000); // 5am tomorrow
+  const { queue } = build([tonight, afterMidnight, tomorrow]);
   ck("a card due at 9pm is in a 10am block", ids(queue).has(tonight.id));
-  ck("a card due at 1am tomorrow is not", !ids(queue).has(tomorrow.id));
+  ck("so is one due at 1am tonight: the day ends at 4am", ids(queue).has(afterMidnight.id));
+  ck("a card due at 5am tomorrow is not", !ids(queue).has(tomorrow.id));
 }
 
 // ── Due before new ──────────────────────────────────────────────────────
@@ -98,17 +102,18 @@ console.log("\n  due cards first, new cards only once they run out");
   ck("the most overdue review makes the cut", got.has(overdue.id));
 }
 
-// ── Spot checks ─────────────────────────────────────────────────────────
-console.log("\n  spot checks ride along with real work");
+// ── No spot checks ─────────────────────────────────────────────────────
+// Two well-known cards used to ride along in every block, whatever their
+// date. In the six-month simulation (2026-09-25) they were right 97% of the
+// time and cost about 3% of study time for nothing; they were dropped.
+console.log("\n  a card that isn't due is never dealt, however well known");
 {
   const known = many(10, () => knownCard());
-  const { counts } = build([...many(10, () => reviewCard(-DAY)), ...known]);
-  ck("two well-known cards join a block", counts.spot === 2, JSON.stringify(counts));
+  const { queue, counts } = build([...many(10, () => reviewCard(-DAY)), ...known]);
+  ck("well-known cards not yet due stay out of the block", !known.some((c) => ids(queue).has(c.id)), JSON.stringify(counts));
+  ck("and the block is only the due work", queue.length === 10 && counts.spot === 0, JSON.stringify(counts));
   const caughtUp = build(known);
-  ck("with nothing due and nothing new, there is no block of spot checks alone", caughtUp.queue.length === 0, `${caughtUp.queue.length}`);
-  const answeredToday = knownCard({ last_review: new Date(NOW - 3600000).toISOString() });
-  const { queue } = build([...many(10, () => reviewCard(-DAY)), answeredToday]);
-  ck("a known card already answered today is not spot-checked again", !ids(queue).has(answeredToday.id));
+  ck("with nothing due and nothing new, there is no block", caughtUp.queue.length === 0, `${caughtUp.queue.length}`);
 }
 
 // ── The order new cards come in, from notes ─────────────────────────────
@@ -294,9 +299,8 @@ console.log("\n  one answer a day, per way round");
   const knownBoth = word({ ...DUE, stability: 90, next_due_at: new Date(NOW + 40 * DAY).toISOString(), last_review: new Date(NOW - 3600000).toISOString() },
     { ...DUE, stability: 90, next_due_at: new Date(NOW + 40 * DAY).toISOString() });
   const { queue } = build([...many(10, () => word(DUE)), knownBoth], { direction: "mix" });
-  const spots = queue.filter((e) => e._bucket === "spot" && e.row_id === knownBoth.row_id).map((e) => e.shownDir);
-  ck("answered today in French: may be spot-checked in English, never again in French",
-     !spots.includes("fr"), spots.join(",") || "not spot-checked");
+  ck("a word answered today and not due either way is not dealt either way",
+     !queue.some((e) => e.row_id === knownBoth.row_id), queue.filter((e) => e.row_id === knownBoth.row_id).map((e) => e.shownDir).join(","));
 }
 
 console.log("\n  re-dealing the rest of a block keeps what is already in it");
@@ -338,6 +342,27 @@ console.log("\n  an answer is recorded to the way round it was shown, and only t
   const g = applyAnswer({ ...rule(DUE) }, true, NOW);
   ck("a grammar card, shown as written, writes the French-side columns",
      Object.keys(g).every((k) => SIDE_FIELDS.includes(k)));
+}
+
+// ── The gap after an answer ─────────────────────────────────────────────
+// Right or wrong, the card comes back on the day its chance of being
+// remembered falls to the target (90%). ts-fsrs keeps four buttons' gaps in
+// order — Good at least a day past Hard, two past Again — so every right
+// answer used to wait at least three days, however shaky the card. Short gaps
+// have no fuzz, so the day is exact to within rounding.
+console.log("\n  the gap after an answer comes from the card's own estimate");
+{
+  const shaky = word({ ...DUE, stability: 0.3, difficulty: 8, reps: 4, lapses: 2,
+    last_review: new Date(NOW - DAY).toISOString(), next_due_at: new Date(NOW).toISOString() });
+  const right = applyAnswer({ ...shaky, shownDir: "fr" }, true, NOW);
+  const gap = Math.round((new Date(right.next_due_at) - NOW) / DAY);
+  ck("a shaky card answered right can come back within two days, not three", gap >= 1 && gap <= 2, `${gap} days`);
+  const recallOn = (days) => Math.pow(1 + (Math.pow(0.9, -1 / 0.1542) - 1) * days / right.stability, -0.1542);
+  ck("the day it comes back is the day its chance of being remembered reaches 90%",
+     recallOn(gap - 1) >= 0.9 && recallOn(gap + 1) <= 0.9,
+     `stability ${right.stability.toFixed(2)}: day ${gap - 1} ${recallOn(gap - 1).toFixed(3)}, day ${gap + 1} ${recallOn(gap + 1).toFixed(3)}`);
+  const wrong = applyAnswer({ ...shaky, shownDir: "fr" }, false, NOW);
+  ck("a miss comes back the next day", Math.round((new Date(wrong.next_due_at) - NOW) / DAY) === 1, wrong.next_due_at);
 }
 
 // ── Retries stay inside the block ───────────────────────────────────────
