@@ -6,6 +6,7 @@ import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "../../sr
 import { findRelatedCards, recentMisses, relevantMisses, buildTutorContext, cardPrompt } from "../../src/lib/deckContext.js";
 import { buildRequestMessages, normalizeCards } from "../../api/chat.js";
 import { reconcileLessons } from "../../src/lib/lessonSync.js";
+import { planReplace } from "../../src/lib/replaceDeck.js";
 import { lessonSource, lessonCardKey } from "../../src/lib/lessonSource.js";
 import { isArchived, archivedSource } from "../../src/lib/archive.js";
 import { LESSONS } from "../../src/data/lessons/index.js";
@@ -388,6 +389,32 @@ console.log("\n  lessons — every released card still matches its lesson");
     ck(`${lesson.id}: every card is on the release list (node scripts/release-lesson-cards.mjs)`, unlisted.length === 0,
        unlisted.map(([f]) => f).join(" | "));
   }
+}
+
+// "Replace my existing deck" deleted the whole deck before adding the upload,
+// and every answer with it: one tick wiped a student's history. The deck
+// still becomes the upload, but nothing answered is ever deleted.
+console.log("\n  replacing the deck never deletes a card the student has answered");
+{
+  const row = (id, front, extra = {}) => ({ id, front, source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0, ...extra });
+  const existing = [
+    row(1, "une colline"),                                         // in the upload
+    row(2, "le vélo", { fsrs_state: 2 }),                          // answered, in the upload
+    row(3, "chercher", { en_fsrs_state: 2 }),                      // answered one way, not in the upload
+    row(4, "ouvrir"),                                              // never answered, not in the upload
+    row(5, "parler → tu", { source: lessonSource("imperatif", "k"), fsrs_state: 2 }),
+    row(6, "fermer", { source: "lesson:adverbes" }),
+    row(7, "occupé", { source: "archived:cahier-upload", fsrs_state: 2 }),
+    row(8, "grimper", { source: "tutor-chat" }),
+  ];
+  const plan = planReplace(existing, ["une colline", "le vélo", "un mot nouveau"]);
+  ck("a card the upload also has is left for the upload to update", !plan.remove.includes(1) && !plan.archive.some((r) => r.id === 1) && !plan.archive.some((r) => r.id === 2));
+  ck("an answered card the upload doesn't have is kept, out of study", plan.archive.map((r) => r.id).join(",") === "3", plan.archive.map((r) => r.id).join(","));
+  ck("a never-answered card the upload doesn't have is removed", plan.remove.join(",") === "4,8", plan.remove.join(","));
+  ck("lesson cards and cards already archived are left alone", ![5, 6, 7].some((id) => plan.remove.includes(id) || plan.archive.some((r) => r.id === id)));
+  const afterReset = planReplace(existing, ["une colline"], new Set([4]));
+  ck("a card reset to never answered but with answers on record is kept, not deleted with them",
+     afterReset.archive.some((r) => r.id === 4) && !afterReset.remove.includes(4), `remove ${afterReset.remove.join(",")}`);
 }
 
 // A lesson may reword a card. The reworded card must keep its row — and its

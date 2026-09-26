@@ -8,7 +8,8 @@
 //   {
 //     mode: "text" | "url",
 //     content: "<raw text>" | "<google doc url>",
-//     replace: true | false     // if true, deletes existing user_cards first
+//     replace: true | false     // if true, the deck becomes the upload — but
+//                               // nothing studied is lost: see src/lib/replaceDeck.js
 //   }
 //
 // Quality features layered on top of raw extraction:
@@ -55,6 +56,8 @@ import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 // rule. If the parser judged cards by different rules from the app, a card it
 // let through could still be one the app treats as a rule.
 import { isConjugationDrill } from "../src/lib/cardInstruction.js";
+import { planReplace } from "../src/lib/replaceDeck.js";
+import { archivedSource } from "../src/lib/archive.js";
 import { isGrammarCard } from "../src/lib/cardTypes.js";
 export const config = {
   api: {
@@ -265,17 +268,9 @@ async function handleCommit(req, res, adminClient, userId) {
   // we now have the full set of cards in a single function call)
   const { deduped, splits } = dedupeWithPolysemy(answerable);
 
-  // Step 3: write to Supabase
-  if (replace) {
-    const { error: delErr } = await adminClient
-      .from("user_cards")
-      .delete()
-      .eq("user_id", userId);
-    if (delErr) {
-      console.error("delete failed:", delErr);
-      return res.status(500).json({ error: "Failed to clear existing deck" });
-    }
-  }
+  // Step 3: write to Supabase. A replace used to delete the whole deck here,
+  // first, and every answer with it. It now happens after the upload's cards
+  // are in, and keeps everything the student has answered; see below.
 
   // batch_id is null for legacy clients that don't pass it. Postgres accepts
   // the nullable column, and `user_cards` left-joins against `upload_batches`
@@ -304,10 +299,80 @@ async function handleCommit(req, res, adminClient, userId) {
     inserted += count || chunk.length;
   }
 
+  // Replace: the cards the upload doesn't have. Only once the upload's own
+  // cards are all in — a replace that failed half way used to leave a deck
+  // emptied and half refilled. See src/lib/replaceDeck.js.
+  let removed = 0;
+  let keptOutOfStudy = 0;
+  if (replace && errors.length === 0) {
+    try {
+      const existing = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await adminClient
+          .from("user_cards")
+          .select("id, front, source, fsrs_state, en_fsrs_state")
+          .eq("user_id", userId)
+          .order("id", { ascending: true })
+          .range(from, from + 999);
+        if (error) throw error;
+        existing.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      const fronts = rows.map((r) => r.front);
+      // A card put back to never answered by "Reset all progress" still has
+      // its answers on record; it is kept too, not deleted with them.
+      const candidates = planReplace(existing, fronts).remove;
+      const withHistory = new Set();
+      for (let i = 0; i < candidates.length; i += 200) {
+        const { data, error } = await adminClient
+          .from("card_reviews")
+          .select("card_id")
+          .eq("user_id", userId)
+          .in("card_id", candidates.slice(i, i + 200));
+        if (error) throw error;
+        for (const r of data || []) withHistory.add(r.card_id);
+      }
+      const plan = planReplace(existing, fronts, withHistory);
+      for (let i = 0; i < plan.remove.length; i += 200) {
+        // Never answered, checked again by the database itself: a card
+        // answered on another device meanwhile is not deleted.
+        const { error, count } = await adminClient
+          .from("user_cards")
+          .delete({ count: "exact" })
+          .in("id", plan.remove.slice(i, i + 200))
+          .eq("user_id", userId)
+          .eq("fsrs_state", 0)
+          .eq("en_fsrs_state", 0);
+        if (error) throw error;
+        removed += count || 0;
+      }
+      const bySource = new Map();
+      for (const row of plan.archive) {
+        const to = archivedSource(row.source);
+        if (!bySource.has(to)) bySource.set(to, []);
+        bySource.get(to).push(row.id);
+      }
+      for (const [source, ids] of bySource) {
+        for (let i = 0; i < ids.length; i += 200) {
+          const { error } = await adminClient
+            .from("user_cards")
+            .update({ source })
+            .in("id", ids.slice(i, i + 200))
+            .eq("user_id", userId);
+          if (error) throw error;
+        }
+      }
+      keptOutOfStudy = plan.archive.length;
+    } catch (e) {
+      console.error("replace clean-up failed:", e);
+      errors.push({ step: "replace", error: e.message || String(e) });
+    }
+  }
+
   const allDates = [...new Set(deduped.flatMap((c) => c.dates))].sort();
 
   console.log(
-    `[parse-cahier] commit: raw=${rawCards.length} slashSplit=${splitCards.length} expanded=${expanded.length} notAnswerable=${expanded.length - answerable.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} errors=${errors.length}`
+    `[parse-cahier] commit: raw=${rawCards.length} slashSplit=${splitCards.length} expanded=${expanded.length} notAnswerable=${expanded.length - answerable.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} replaced: removed=${removed} keptOutOfStudy=${keptOutOfStudy} errors=${errors.length}`
   );
 
   return res.status(200).json({
@@ -320,6 +385,10 @@ async function handleCommit(req, res, adminClient, userId) {
       : null,
     conjugationDrillsGenerated: drillsGenerated,
     polysemySplits: splits,
+    // A replace: never-answered cards the upload didn't have, deleted; and
+    // answered ones taken out of study with their history kept.
+    removed,
+    keptOutOfStudy,
     errors: errors.slice(0, 10),
   });
 }

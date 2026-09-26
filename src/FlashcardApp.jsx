@@ -2318,7 +2318,9 @@ export default function FlashcardApp({ user, onSignOut }) {
           alert(
             `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
             (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
-            (result.polysemySplits ? `${result.polysemySplits} polysemy splits.` : "")
+            (result.polysemySplits ? `${result.polysemySplits} polysemy splits.\n` : "") +
+            (result.keptOutOfStudy ? `\n${result.keptOutOfStudy} cards you'd studied weren't in this upload: they're out of study, with their progress kept.` : "") +
+            (result.removed ? `\n${result.removed} cards you'd never studied weren't in this upload and were removed.` : "")
           );
         }}
       />

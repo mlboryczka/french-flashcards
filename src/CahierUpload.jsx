@@ -540,7 +540,7 @@ fonder / créer une entreprise
               onChange={(e) => setReplace(e.target.checked)}
               disabled={status === "uploading"}
             />
-            <span>Replace my existing deck (otherwise merge into it)</span>
+            <span>Replace my existing deck (otherwise merge into it). Cards you've already studied keep their progress.</span>
           </label>
         )}
 
