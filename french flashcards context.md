@@ -86,6 +86,37 @@ waiting. An entry that needs no change (the card was right) is resolved too,
 with the note saying why. Resolving never deletes; the owner clears resolved
 rows when they choose to.
 
+**No change may cost a student their progress** (the owner, 2026-09-25, in
+capitals). Progress is each card's schedule both ways round, the record of
+every answer (`card_reviews`), the streak, and where the student is in the set
+they are working through. Before any change — code, a lesson edit, a data
+script — check it cannot delete or rewrite any of those; if it could, say so
+and wait for a yes. What has cost progress before: deleting a card, which
+deletes its answers with it (the foreign key cascades) and which the lesson
+sync and the upload's "Replace my existing deck" both did until 2026-09-25/26;
+a script rewriting schedules (the 2026-09-14 seed reset, agreed); and a
+reload, which is how every update arrives, throwing away the set on screen
+until 2026-09-26. Take a card out of study by archiving it
+(`src/lib/archive.js`), never by deleting anything answered.
+
+**Other sessions edit this working copy at the same time.** On 2026-09-25/26
+three did: one fixed tracking, one changed the scheduler's day, one built FSRS
+settings, each leaving unfinished edits in shared files — `FlashcardApp.jsx`
+among them — for long stretches. So:
+
+- Check `git status` and `git diff` before editing, and commit only your own
+  hunks. When a file carries someone else's unfinished edits, commit your
+  tested version of it without them: stage the file's blob
+  (`git update-index --cacheinfo 100644,$(git hash-object -w <file>),<path>`)
+  and leave the working copy as it is.
+- When someone else's half-finished change breaks the app (it did: a missing
+  export in `studyDay.js` stopped the page loading), test against a clean copy
+  instead — `git archive HEAD | tar -x -C <dir>`, your files copied in,
+  `node_modules` symlinked, Vite on its own port.
+- Another session's simulation can load the machine down (load average above
+  20 on 2026-09-26), and a check that waits a fixed time can fail for that
+  alone. Rerun such a suite on its own before believing a timing failure.
+
 `npm test` before every push. It is 23 suites, and closer to twenty minutes
 than a few — most of them drive a real browser at several window sizes. Start
 it early rather than last, and don't edit `src/` while it runs: the suites
@@ -162,13 +193,18 @@ decisions and it matters:
 1. **Lapses** — missed last time, due today
 2. **Reviews** — due today, most overdue first
 3. **New** — **only once the due cards run out**, in the order below
-4. **Spot-checks** — two well-known cards (stability ≥ 60d), ignoring due
-   date; insurance against FSRS being over-confident. Only alongside real
-   work, never a card already answered today. That threshold is the whole of
-   what "mastered" means — see **Progress, and the "mastered" relic**
+4. ~~**Spot-checks**~~ — two well-known cards (stability ≥ 60d) used to ride
+   along with every block, ignoring due date. Removed on 2026-09-26 by another
+   session (`104c6fd`), from its six-month simulated student: right 97% of the
+   time for about 3% of study time, and without them the student knew about 3%
+   more for the same time
 
 **Due today** is due any time before the end of the student's local day
-(`endOfLocalDay`), so the day's work doesn't grow while they study.
+(`endOfLocalDay`), so the day's work doesn't grow while they study. Since
+2026-09-26 (`104c6fd`) the student's day runs from 4am to 4am
+(`DAY_STARTS_AT_HOUR` in `studyDay.js`), as Anki's does: a session running
+past midnight used to count as two days. Today, due today, the streak, one
+answer a day and the kept set all follow it.
 
 **There is no new-card limit other than rule 3.** A student behind on reviews
 gets review-only blocks until caught up; one who learns a lot of new cards in
@@ -234,11 +270,16 @@ Supabase fire-and-forget, and `patch()` in `useUserDeck` applies each write to
 the local deck too. A refetch straight after the last answer can return that
 card's old state, deal it again as due, and record a second review. The
 `session` suite's 113-card backlog proves it: three blocks, 113 writes.
+Since 2026-09-25 Continue then asks whether an answer has been given elsewhere
+since the deck was fetched, and if so the deck is read again and the block
+dealt again from it — see *The deck a block is dealt from*.
 
 **A full rebuild starts at card 1.** It used to keep the card on screen by
 jumping to wherever that card landed in the shuffled block — entering a lesson
 could start the student at card 35 of 50, skip 34 cards and end the block
-after 16 answers. The card on screen now moves to the front instead.
+after 16 answers. The card on screen now moves to the front instead. A set
+brought back — after a reload, or returning from another lesson — starts where
+it was; see *Where the student is*.
 
 `applyAnswer(card, got, now, dir)` records to the shown direction only, and returns
 that direction's columns — the same object is the database update and the
@@ -263,6 +304,93 @@ card missed then right on the retry went from due in 3 days to 4, and lost the
 counted as forgotten twice, difficulty near its maximum; a new card missed then
 right went from due tomorrow to 3 days. `lapses` stored before this fix still
 carries those double counts, and with no review log it cannot be corrected.
+
+### The deck a block is dealt from
+
+A block is dealt from the deck in memory, and that deck can be out of date. On
+opening the app it is the copy saved in the browser (`deck-cache:`), which is
+written only when a fetch lands, never after an answer, so it can be days old
+(it opts out above 2.5MB, which the owner's deck passed on 2026-09-25); and a
+page left open knows nothing of answers given on another device. Until
+2026-09-25 a block dealt from it stood: when the up-to-date deck arrived a
+second later, the deck-build effect only patched each card's fields in place.
+On 2026-09-23 a block dealt from a copy saved on 17–18 September asked the
+owner 22 cards that weren't due (some not until 9 October) and left out 54
+that were, 15 of them missed last time.
+
+Now, in `FlashcardApp`'s deck-build effect (`dealtSeqRef`, `dealtDayRef`):
+
+- **When a fetch lands after the block was dealt** (`freshSeq` from
+  `useUserDeck`), a block not yet started — nothing answered, no answer seen —
+  is dealt again from scratch. One under way keeps every card shown, answered
+  or lined up for a retry, and the cards not yet reached are dealt again
+  (`redealRest`: `buildSession` with `inBlock`).
+- **When the student's day turns**, a new set is dealt, whatever state the last
+  one was in: its answers are saved, and a set spread over two days makes its
+  checkpoint meaningless (the owner's choice, 2026-09-26). Before, a block
+  dealt one evening and worked the next morning held the evening's due cards:
+  on 2026-09-24 the five cards missed the day before, which come first, weren't
+  in it.
+- **Coming back to the tab** (`visibilitychange`, `focus`) **and Continue** run
+  `checkElsewhere`: the ids of `card_reviews` rows answered since ten minutes
+  before the deck was fetched (the margin is for a device whose clock runs
+  slow). Any id the page didn't write itself — it keeps the ids it wrote, and
+  the ones a check has already acted on — means another device or tab
+  answered: the deck is read again, and the rule above deals again. One small
+  query rather than the whole deck, at most every 15 seconds.
+- **A fetch never undoes an answer the page has given.** Answers are saved in
+  the background, and a fetch that read a row before its save landed brought
+  the card back due, to be asked and counted twice. `useUserDeck` keeps the
+  columns each answer wrote, for an hour, and lays them back over a fetch
+  wherever the fetch's `last_review` for that way round is older
+  (`withLocalAnswers` in `directions.js`). An answer given since on another
+  device is later still, and wins. Reset all progress clears them.
+- **The lesson sync waits for the fetched deck** rather than the saved copy, in
+  which a card answered since would look never answered (see *Lessons*).
+
+Guarded by `regressions` (a saved copy that says every card is new and a late
+deck that says most are due: the block ends up the one the deck deals) and
+`serving` (`withLocalAnswers`).
+
+### Where the student is: the set on screen, kept
+
+Until 2026-09-26 the set being worked through existed only in the open page.
+Reloading — which is also how an update arrives — Chrome reloading a
+background tab, or moving between a lesson and All, or Grammar / Vocab /
+Phrases, dealt a new set from card 1: the count restarted, the running score
+went, and a missed card lined up to come back later in the set was dropped.
+The owner lost five such retries going from the adverb lesson to All after 11
+cards, and the counter's "Card 2 of 50" read as if those answers had not been
+saved. They had.
+
+`src/lib/studyPlace.js` keeps each set in the browser (`study-place:<user>`),
+under its filters (`typeFilter|lessonFilter`), as it changes: its entries by
+card and way round (never the card's fields, which are read from the deck
+again), the position, the retries, the answers given in it (so Previous card
+can still correct one), the running score, the checkpoint if it was finished,
+the progress snapshot the checkpoint compares against, and whether the answer
+on screen had been seen — a card whose answer was seen comes back showing it,
+so it can't be graded as if seen afresh. The lesson, type and direction the
+student was in are kept too, and the app opens there.
+
+- **Moving between sets** keeps the one being left and brings back the one
+  arrived at, if it was dealt today. Its cards not yet reached are checked
+  against the deck as it now is, unless nothing has changed since it was left.
+- **Kept for the day it was dealt** (the student's day); the next day starts a
+  new set. **Per browser**: a phone and a laptop each keep their own place, the
+  owner's choice for now — carrying it across devices would have two devices
+  fighting over one set. Cleared on sign-out and by Reset all progress.
+- **Saved 400ms after a change**, and at once on `pagehide` or when the page
+  is hidden, so a reload never loses the last card and a flip never waits on
+  storage (saving on every change cost ~40ms a flip in the dev build).
+- **The deck-build effect doesn't deal twice before its deck lands**
+  (`scheduledRef`). React's strict mode runs the effect twice on mount, and the
+  second run dealt a fresh set over one just brought back.
+
+Guarded by `regressions`: reload mid-set (same card, same count), reload with
+the answer showing (it comes back showing), another set and back (both carry
+on, a finished one at its checkpoint), and a set from an earlier day (not
+carried on).
 
 ### Flipping and typing
 
@@ -350,6 +478,15 @@ The same scheduler runs both directions of a card, each from its own state;
 `toFsrsCard` and `fromFsrsCard` take and give one direction under the plain
 field names.
 
+Since 2026-09-26 (`104c6fd`, another session) FSRS counts the days between
+answers in the student's own days. `ts-fsrs` counts them by UTC date, which
+turns at 8pm in New York, so a word answered at 9pm and again the next
+morning was "0 days apart" and the right answer earned nothing; it is now
+handed times whose UTC date is the student's day, and its due dates are turned
+back into real times. And a right answer's gap comes from the card's own
+estimate: with no Hard button, the three-day floor `ts-fsrs` keeps between
+Again and Good made every right answer wait at least three days.
+
 ---
 
 ## The linked cahier
@@ -376,7 +513,15 @@ deck up to date from this doc"). After that:
 - **A word taught again keeps the card the student has.** Only the class date
   is added, which is what orders new cards. Front and back are left alone,
   hand-edits included — the one place this differs from an upload, which
-  deliberately rewrites them.
+  deliberately rewrites them. Since 2026-09-25 that includes the word written
+  another way — "gratuit (adj)" when the deck has "gratuit", "un cas" when it
+  has "le cas". `src/lib/sameCard.js` counts French as the same when it
+  differs only in capitals, spacing, final punctuation, a hyphen, an article
+  of the same gender, a feminine or plural marker or a grammar label such as
+  "(adj)", and the English shares a word. Accents and every other bracket are
+  kept, so "la poste" and "le poste", "planter" and "planter (fam)", "fin" and
+  "fin (adj)" stay separate cards. The date goes on the card in study, not an
+  archived one. The owner's first sync had added 18 such copies.
 - **Nothing is ever deleted.**
 
 **When it runs.** When the app opens, at most hourly per browser
@@ -561,7 +706,7 @@ The parser prompt also forbids producing these in the first place.
 
 | Route | Does |
 |---|---|
-| `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, dropping cards nobody could answer (`keepAnswerable`), polysemy-aware dedupe. Its pieces are exported for `cahier-parse.js` and `cahier-sync.js` rather than copied |
+| `parse-cahier.js` | Notebook text → cards. The big one: section slicing, homework stripping, slash-pair splitting, conjugation expansion, dropping cards nobody could answer (`keepAnswerable`), polysemy-aware dedupe. Its pieces are exported for `cahier-parse.js` and `cahier-sync.js` rather than copied. With "Replace my existing deck" ticked, the upload's cards go in first; then a card the upload doesn't have is deleted only if it was never answered and has no answers on record, and archived otherwise (`planReplace`, `src/lib/replaceDeck.js`). Until 2026-09-26 it deleted the whole deck first, every answer with it |
 | `cahier-sync.js` | The linked cahier: reads the student's Google Doc and parses only the classes the deck hasn't got. Runs on the server's `ANTHROPIC_API_KEY`, not the student's. See *The linked cahier* |
 | `cahier-daily.js` | The Vercel cron (13:00 UTC, `vercel.json`) that runs `cahier-sync` for every linked doc, up to 40 a run, least recently checked first. Refuses any caller without `CRON_SECRET` |
 | `chat.js` | Tutor chat. Streams (SSE), Sonnet 5 at effort `low`, sent a slice of the deck as context, including the card on screen and **whether its answer has been shown** — until it has, the tutor gives hints, never the answer. Proposes cards via a `propose_flashcards` tool; **never writes** — the client does the RLS-protected insert |
@@ -643,6 +788,8 @@ from a terminal against production, read `.env.local` themselves, and
 | `resolve-disputes.mjs` | Works the backlog of "my answer should have been accepted" claims left in `feedback_submissions` |
 | `resolve-feedback.mjs` | Lists open `beta_feedback`, and marks entries resolved (`--note`, `--apply`) once they are fixed. Needs `migration_009` |
 | `sort-grammar-cards.mjs` | The one-off clear-out of rule and pronunciation cards from every deck (2026-09-24): keeps conjugation drills, turns the rest into ordinary cards where real French sits underneath, archives what is only a rule or a sound. The owner's hand-made sort of the original 117 (`scripts/data/grammar-sort-decisions.json`) decides every card it covers; Claude decides the rest, checked, and anything that fails the check is left undecided. The dry run writes the proposal to `backups/`; `--apply <proposal>` applies exactly that file, after a full backup. Lesson cards are never touched |
+| `merge-duplicates.mjs` | Merges cards judged to be one card written two ways, in one deck: `<verdicts.json> <email> [--apply]`. The judging comes first, card by card — look-alikes such as "la poste" / "le poste" are different cards, and no string rule tells them apart. Keeps the answered card (else the one from most classes with the fuller answer), gives it every class date and archives the rest; a verdict can name the keeper, a fuller answer, or a cleaner front (never on an answered card). Backs up first. Run on the owner's deck 2026-09-25/26 |
+| `release-lesson-cards.mjs` | Adds new lesson cards to `tests/released-lesson-cards.json`, the record of every lesson card that has gone out to decks; never removes one. Run after adding cards to a lesson — `logic` fails until you do |
 | `reset-fsrs-seed.mjs` | Puts cards still carrying `migration_007`'s guessed state — due at exactly the instant it ran, never answered since — back to not yet seen. `--apply` backs every row up to `backups/` (gitignored) first. Run for all decks on 2026-09-14; a dry run now finds none |
 
 Two things worth knowing about them:
@@ -1092,6 +1239,9 @@ suite exists to enforce, both learned from checks that lied:
   the feedback panel and didn't close it made the next section's click on the
   card read as an outside-click dismissal, which reflowed the page — and looked
   exactly like the card moving 12px on a flip.
+- **A reload keeps the set on screen** (since 2026-09-26). A check that wants
+  a fresh block after a reload clears `study-place:` first, once the last save
+  has been written (400ms after the last change).
 - **`settled(page)` waits for `getAnimations()` to go idle.** Polling until a
   value "stops changing" is not enough: the panel easing crawls at the end, so
   three consecutive samples can read identical while the element is still 12px
@@ -1134,11 +1284,24 @@ The shape of it:
   studiable, and every one of its note tabs rendering; a second visit writing
   nothing at all; and an existing deck keeping its own cards and their FSRS
   state, including a card whose front a lesson also ships.
-- **Synced on load, once per mount.** A student finds every lesson in their
-  deck without pressing anything. The lesson is the authority, so the sync also
-  *retires* cards it no longer contains: that is how the eight abandoned "state
-  the rule" cards were removed from decks that had already added them. Only
-  writes when the deck and the lesson actually differ.
+- **Synced on load, once per mount**, against the deck as fetched — never the
+  browser's saved copy, in which a card answered since would look unanswered.
+  A student finds every lesson in their deck without pressing anything. The
+  lesson is the authority, so the sync also *retires* cards it no longer
+  contains: that is how the eight abandoned "state the rule" cards were removed
+  from decks that had already added them. **Since 2026-09-25 a retired card
+  the student has answered is archived, not deleted** — deleting a card
+  deletes its answers — and comes back with its history if the lesson brings
+  it back with the same front. Only a card never answered is deleted, and the
+  delete itself asks the database to skip one answered since. Only writes when
+  the deck and the lesson actually differ.
+- **Every lesson card ever released is on a list**
+  (`tests/released-lesson-cards.json`), and `logic` fails if one stops
+  matching its lesson — reworded without its first wording kept as the fifth
+  element, or dropped — unless it was moved to `retired` on purpose. A
+  rewording without its first wording would retire every deck's copy and deal
+  the new wording as never seen. Adding cards means running
+  `node scripts/release-lesson-cards.mjs`, or the same check fails.
 - **`lessonFilter` narrows the candidate pool** exactly as `typeFilter` does, so
   a lesson still schedules through FSRS rather than becoming a separate mode.
 - **Notes live on the lesson** (`LESSON.notes`) and render in `LessonPanel`, a
@@ -1230,6 +1393,15 @@ ways, and where they disagree, this paragraph wins:
   day it was two figures shown to students, "you'd understand" and "you could
   say"; the owner rejected both the split and the words ("say" read as
   speaking). Don't show students the directions.
+- **Since 2026-09-25 a card whose last answer was wrong counts for nothing**
+  until it is answered right again, and the time since the last answer is
+  measured exactly. `retrievability` used `ts-fsrs`'s `get_retrievability`,
+  which rounds the elapsed time down to whole days: for 24 hours after any
+  answer every card read 100%, missed ones included, and then dropped at once.
+  After the owner's adverb lesson (6 right, 5 wrong) it read "about 11 of 81
+  remembered", and every checkpoint reported about one more remembered per card
+  answered. It now calls `scheduler.forgetting_curve` with fractional days.
+  Only the figures read it; scheduling is unchanged.
 - **The lesson top bar reads "about 43 of 108 remembered"**, with the "about"
   the wording rules below insist on.
 - **The Stats page** (`data-stats-all`, `data-stats-areas`,
@@ -1308,7 +1480,8 @@ time since the last review, so it changes continuously with nothing written.
 `ts-fsrs` exposes it and it works on this app's card shape unchanged:
 `scheduler.get_retrievability(toFsrsCard(card), now, false)`. Measured on
 synthetic rows, it behaves as documented — stability 60 last seen 60 days ago
-returns exactly 90.0%.
+returns exactly 90.0%. (It counts elapsed time in whole days, rounded down;
+the app now calls `forgetting_curve` with exact time instead — see *Progress*.)
 
 **Summed across a set of cards, retrievability is the expected number you
 currently know.** "You know about 43 of the 108 impératif cards right now" —
@@ -2610,6 +2783,125 @@ stand-in now refuses an upsert missing a NOT NULL column (`REQUIRED`), and
 the suite checks that a run records when it looked, both on the run that
 links and on one that finds nothing new.
 
+### 2026-09-25 — "is my progress being tracked?": three days of answers, audited
+
+**What the owner saw.** Eleven cards into the adverb lesson they went to All,
+answered one card, and the counter read "Card 2 of 50". It looked as if the
+lesson answers hadn't been recorded, and raised the wider question of whether
+cards were being served as designed at all.
+
+**How it was checked.** Read-only, with the service key: every `card_reviews`
+row since the log began (2026-09-14), every `user_cards` row, `card_progress`
+and `user_review_dates`, compared answer by answer. For each block, the deck
+was rebuilt as it stood at a series of moments from the log (each card-way's
+due date going in is the `due_after` of its previous counted answer), to find
+the moment whose due cards match what the block actually dealt.
+
+**Tracking was fine.** All 112 answers of the three days were recorded (50, 50
+and 12), and every card-way answered since 2026-09-14 — 122 of them — carried
+exactly the schedule its latest answer gave it. Today (12, 6 right first time)
+and the streak (3) were right, and the legacy `card_progress` tally matched the
+log on 78 of 80 cards. "Card 2 of 50" was the position in a new set: moving
+from a lesson to All dealt one.
+
+**Serving was not.**
+
+- *23 September:* the block matched the deck exactly as it stood between the
+  end of the 17 September session and the start of the late 18 September one,
+  and matched the real deck of 23 September nowhere near: 22 of its 41 reviews
+  weren't due (24 September to 9 October), and 54 due cards, 15 of them missed
+  last time, were left out. The deck was about 2.25MB then, under the saved
+  copy's 2.5MB cap, so the page opened on a copy saved at a load five days
+  earlier and dealt from it; the up-to-date deck only patched the cards in
+  place. FSRS counted the early answers, which it allows for — the cost was
+  effort and a day's delay, and 41 of the 54 came up the next day.
+- *24 September:* every card was due, but the block had been dealt the evening
+  before, at Continue, under the evening's "due today", so the five cards
+  missed on 23 September (due the 24th) weren't in it.
+- *25 September:* right — 29 due (18 missed last time, 11 reviews), all dealt,
+  then 21 new from the three latest classes. Inside the lesson, the lesson's
+  first 50 cards in teaching order, shuffled: the first was a "bon ou bien"
+  from section 6. The owner's call: keep shuffling.
+
+**The "remembered" figure was wrong** for a day after any answer (see
+*Progress*): "about 11 of 81" after 6 right and 5 wrong.
+
+**Two ways progress could be lost to an update:** the set on screen, lost to
+every reload (fixed the next day), and a lesson card reworded without its first
+wording, or dropped, which the sync deleted with its answers.
+
+**Fixed the same day**, each pushed on its own:
+
+- `f99a92a` — a block dealt again when the deck arrives or the day turns, the
+  check for answers given elsewhere, and local answers laid over fetches (see
+  *The deck a block is dealt from*).
+- `ff54976` — "remembered": exact time, and a missed card counts for nothing.
+- `b0e704b` — the lesson sync archives answered cards instead of deleting them
+  and waits for the fetched deck; the release list.
+- `bc6c7da` — the cahier link adds a date to a word the deck has in another
+  spelling, instead of a copy (`sameCard.js`).
+- `f118868` — the owner's duplicates merged, below.
+
+**The duplicates.** The cahier link's first run added 525 cards on 25
+September, from classes back to 2025, 18 of them copies of cards already in
+the deck; the April and September uploads had left many more. A broad matcher
+(articles, brackets and punctuation ignored) found 214 groups, and an agent
+judged each card by card from the fronts and backs: look-alikes like "la poste"
+/ "le poste" and the deliberate splits "planter (fam)", "la mousse (plante)"
+are different cards, while the parser's own gloss-tagged twins ("garder (to
+keep, to)") mostly aren't. 196 sets were merged, plus four twins the matcher
+missed over nested brackets (rentable, une gamme, puissant, pousser) and three
+pairs it never grouped (ennuyeux, déménager, fatigant): 199 sets, 220 copies
+archived. The answered card always stayed; one set had two answered ("c'est
+pour ça que …" kept, "c'est pour ça que" archived, its answers on record).
+Gender slips kept the right side ("une virgule", "un rapport de pouvoir", "le
+canapé"), "chacun" stayed over "un chacun", and "pire" took "worse, worst" for
+its mislabelled "worse (adverb)". Backups in `backups/merge-duplicates-*.json`.
+
+**The standing rule.** The owner: an update must never reset a student's
+progress — now in *Working protocol*.
+
+### 2026-09-26 — nothing a student does, and no update, costs them progress
+
+**The eight left undecided**, judged at the owner's request. Merged: "le
+pouvoir", with both senses in its answer (political and relational power are
+both "power"); "un frais" into "les frais"; the three "impuissant" cards;
+"améliorer" into "(s')améliorer"; the two "une voie" and the two "un tuyau" —
+each pair showed the same prompt and accepted only its own answer, so "a
+lane" on the rail card was marked wrong; and "un métisse" into "métis,
+métisse". "l'état", from the class on subsidies, stayed apart from "un état"
+and was corrected to "l'État", the government. Nine more copies archived,
+4,219 cards in study. `merge-duplicates.mjs` gained cleaner fronts (unanswered
+cards only) and one-card corrections for this (`28f3fb7`).
+
+**"Replace my existing deck" wiped everything** (`3bab226`). Ticking it
+deleted every card before inserting the upload, with no confirmation, and
+every answer went with the cards. Now the upload's cards go in first; a card
+the upload doesn't have is then deleted only if it was never answered and has
+no answers on record (a card put back to new by a reset keeps its history),
+checked again by the database; an answered one is archived with its history
+and comes back if a later upload has the word; lesson and archived cards are
+left alone (`planReplace`, `src/lib/replaceDeck.js`). The box says so, and the
+message after an upload counts both.
+
+**The set on screen is kept** (`375fd1f`) — see *Where the student is*. The
+owner's defaults: a new day starts a new set, and each device keeps its own
+place. Found while building it: React's strict mode dealt a second set over
+the one just brought back, and saving on every change slowed each flip, so
+saves wait 400ms and flush when the page is hidden.
+
+**Checked afterwards:** every studied card-way (130 by then) still carried
+exactly the schedule its latest answer gave it.
+
+**In parallel, another session** changed the scheduler (`104c6fd`: the day
+runs 4am to 4am, FSRS counts days in it, no three-day minimum, no
+spot-checks) and added each student's own FSRS settings, fitted from their
+answers, behind "How much to remember" (`191a721`, `b979257`) — not described
+in this document's reference sections yet. Its unfinished edits sat in shared
+files, including `FlashcardApp.jsx`, for long stretches; this session's
+changes were tested on a clean copy of `main` and committed without them — see
+*Working protocol*.
+
 ### 2026-09-26 — the instruction line: italics, and one short line
 
 **Asked for.** Every instruction in italics, and whether the line above the
@@ -2657,6 +2949,26 @@ wording followed in its own commit.
   accents are ignored for everyone. The adverb lesson keeps only three such
   cards for that reason.
 
+- **Deleting a card deletes its answers.** `card_reviews.card_id` cascades, so
+  "Delete card" in the edit modal takes the card's whole history with it.
+  Nothing automatic deletes an answered card any more — the lesson sync and the
+  upload's replace archive instead — but a person still can. An "Archive"
+  button (see *Archiving has no UI*) would be the safer default.
+- **The lesson sync deletes a dropped card that a reset put back to new**, even
+  with answers on record from before the reset. The upload's replace checks
+  `card_reviews` for that; the sync doesn't.
+- **An upload without "Replace" rewrites existing cards' answers and class
+  dates** with the upload's (an upsert on the front), so a hand-edited answer
+  is lost on re-upload. Schedules are untouched; the cahier link doesn't do
+  this.
+- **"Today" on the Stats page counts each card once a day**, so second tries in
+  a set don't add to it: on 2026-09-24 the owner gave 50 answers and it counted
+  41. Correct, but it can read as answers gone missing.
+- **Not yet seen on the live app:** a block dealt again when the deck arrives,
+  the check for answers given elsewhere, the kept set, and the safe replace —
+  each tested against the mock and a clean copy of `main` only. Worth checking
+  signed in: reload mid-set and land on the same card; go from a lesson to All
+  and back; answer on the phone, then come back to the laptop tab.
 - **Two-way scheduling has not been checked on the live app.** Tested against
   the mock and a read-only snapshot of the owner's deck (2026-09-14 History).
   Reset all progress has since been used live and left every card new both
@@ -2705,11 +3017,14 @@ wording followed in its own commit.
   log with the card and thumbnail side by side. What is still untested is a
   note with a screenshot and no text, which the panel now allows: it arrives
   with an empty `message`, and the entry makes the message its headline.
-- **The deck has many near-duplicate cards**, from the same notebook line
-  parsed more than once: `rentable` three times, `chiant` three times,
-  `décrire` and `élire` each with a gloss-tagged twin. The feedback pass
-  removed the fourteen it tripped over; nothing finds the rest. Archiving
-  (`src/lib/archive.js`) is the safe way to take them out once found.
+- **Other decks still have near-duplicate cards.** The owner's was merged on
+  2026-09-25/26 (229 copies out of study; see History). Every other deck still
+  has the ones its uploads made — the same notebook line parsed more than
+  once, or a gloss-tagged twin from the parser's polysemy split. Finding them
+  takes judgement card by card; `scripts/merge-duplicates.mjs` applies a judged
+  list, and the cahier link no longer adds new ones. Two pairs in the owner's
+  deck were judged different meanings and left: "seul (alone)" / "seul (only;
+  sole)", and "il y a" / "il y a (ago)".
 - **`FeedbackAdminView` is never rendered.** It holds the answer-dispute
   review and the user feedback list, and nothing in the app mounts it; the
   profile menu's "View feedback" opens `FeedbackReviewModal` instead. It was
