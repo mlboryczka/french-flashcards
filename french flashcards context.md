@@ -245,6 +245,12 @@ block never grows, the counter is one running "Card N of 50", and a retry says
 "· retry" beside it. No retry when the miss is one of the last two cards, or
 when every card still to come is a retry: the card is due again tomorrow, first
 in that day's block. A retry is practice; FSRS already has the day's answer.
+A miss changed to right with Previous card takes its retry back out
+(`withdrawRetry`), and the card that retry pushed out goes back in at the end:
+the retry carries it as `_displaced`, kept in the saved set as `x`. A set kept
+from before 2026-09-27 has no such record, so its retries stay. The counter's
+"relearning · review · new" is counted from the block as it now is, so it
+drops as retries push cards out; it was counted once, when the block was dealt.
 
 This replaced appending retries after the block. With blocks of 50, every miss
 after card 30 landed past the end, so on 2026-09-14 the owner's block with 21
@@ -415,7 +421,13 @@ answer per card per day rule:
   answers — a comma is part of one. Everywhere, œ may be typed oe, a phone's ’
   is an apostrophe and … is punctuation. Checked, so it is the stronger evidence. Tapping the card with an
   answer typed checks it; Escape clears the box and gives nothing up. An
-  accepted "my answer should be accepted" dispute is recorded as right.
+  accepted "my answer should be accepted" dispute is recorded as right, and
+  its banner turns green ("✓ Accepted — you wrote: …"). Moving on before the
+  check comes back — Continue, Enter, Previous card — keeps the first mark,
+  wrong (the owner's rule, 2026-09-27): the late result changes nothing on
+  screen (`disputeRef`), though the server has saved the answer for next time.
+  An acceptance is kept with the set on screen, so a reload before Continue
+  keeps it.
 - **Flipping.** The student turns the card and grades themselves. Got It and
   Again are offered only once the answer has been seen — before that the one
   button is Show answer, and the grading keys turn the card instead — with
@@ -429,7 +441,8 @@ the suites were written against it.
 **Previous card corrects a grade.** Going back and grading a card differently
 replaces that day's answer, recomputed from the card's state before it
 (`blockAnswersRef`, cleared per block). The block's answer count doesn't move.
-Retries are never corrections.
+Retries are never corrections. A miss corrected to right takes its retry back
+out (above).
 
 **A failed save is shown and retried** (`save`): "1 answer not saved yet
 — retrying" beside the counter, backoff from 3s to 60s, a newer write under
@@ -1415,9 +1428,11 @@ ways, and where they disagree, this paragraph wins:
 - **The lesson top bar reads "about 43 of 108 remembered"**, with the "about"
   the wording rules below insist on.
 - **The Stats page** (`data-stats-all`, `data-stats-areas`,
-  `data-stats-coming-up`) has: Today and Right first time today, counted off
-  each card's `last_review` — exact, because FSRS gets one answer per card per
-  day; the streak; one three-band bar for the whole deck; *Your progress*, a
+  `data-stats-coming-up`) has: Today, every answer given today, retries
+  included — the day's `card_reviews` ids, plus answers given on the page whose
+  records are still being saved, the same count as the end-of-set screen;
+  Right first time today, counted off each card's `last_review` — exact,
+  because FSRS gets one answer per card per day; the streak; one three-band bar for the whole deck; *Your progress*, a
   row per lesson, then **Last two weeks of class** and **Older classes** — each
   with its dates beneath ("Classes since 31 August", "May 2025 to 30 August",
   from `areaDates`), because the line between them moves daily and a card changes
@@ -3111,6 +3126,43 @@ owner's data before shipping, for the same reason; its first real run is in
 the owner's browser. The browser test is rescued but not yet one command (see
 Open items).
 
+### 2026-09-27 — "My answer should be accepted", Previous card and retries: tested, six fixes
+
+**Asked for.** The owner asked how an answer is recorded when it is marked
+wrong and "My answer should be accepted" then accepts it, and what happens when
+a card is redone or gone back to; then to make sure the stats reflect what
+happens in the app; then, of the fixes proposed, "do them all".
+
+**Found**, driving the app against the mock with a stand-in for the check and
+judging by the writes:
+
+- Right already: an acceptance before Continue is saved as right first time,
+  scheduled exactly like a typed right answer, with no retry; "Accept anyway"
+  the same. Previous card rewrites the day's answer and its record in place,
+  recomputed from the card as it was; the same answer again saves nothing. A
+  retry never touches the schedule and is kept as practice. Right first time
+  today was exact.
+- Wrong: Continue, Enter or Previous card while the check was still running
+  saved the card as wrong, which the owner confirmed is right, but the result
+  then landed on whichever card was on screen, where a wrong answer showed
+  "Accepted" and was saved as right. A reload between "Accepted" and Continue
+  lost the acceptance and saved a miss. A miss changed to right with Previous
+  card kept its retry, so "retries to come" never went down. Stats "Today" left
+  retries out (6 against the end-of-set screen's 8). The counter's relearning /
+  review / new was counted once, when the set was dealt. The red ✗ banner
+  stayed red after an acceptance, and the owner read it as still wrong.
+
+**Fixed** (2263aae), as described above: the check's result needs a ticket
+that moving on drops; the acceptance is kept on the saved face; `withdrawRetry`;
+the counter counts the block as it now is; Stats "Today" from `card_reviews`;
+the green banner, with the line under it now "This answer will be accepted from
+now on." Tests: five new `answering` cases, `serving` for `withdrawRetry` and a
+kept set's retry, and `stats` expecting retries in today's answers. The
+status-check session ran its suites and the fast simulation on a clean copy of
+2263aae, and they all pass.
+
+**Not done.** Not yet seen on the live app, signed in.
+
 ## Open items
 
 - **Run `migration_013`** in the Supabase SQL editor. Until then answers are
@@ -3154,9 +3206,6 @@ Open items).
   dates** with the upload's (an upsert on the front), so a hand-edited answer
   is lost on re-upload. Schedules are untouched; the cahier link doesn't do
   this.
-- **"Today" on the Stats page counts each card once a day**, so second tries in
-  a set don't add to it: on 2026-09-24 the owner gave 50 answers and it counted
-  41. Correct, but it can read as answers gone missing.
 - **Not yet seen on the live app:** a block dealt again when the deck arrives,
   the check for answers given elsewhere, the kept set, and the safe replace —
   each tested against the mock and a clean copy of `main` only. Worth checking
