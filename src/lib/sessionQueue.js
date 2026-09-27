@@ -303,7 +303,8 @@ export function countBuckets(entries) {
 // tomorrow and goes to the front of that day's first block.
 //
 // `deck` is the block, `idx` the position of the card just missed. Returns a
-// new array of the same length, or the same array if there is no room.
+// new array of the same length, or the same array if there is no room. The
+// retry carries the card it pushed out (`_displaced`), for withdrawRetry.
 export function placeRetry(deck, idx, card, offset = 20) {
   let displace = -1;
   for (let j = deck.length - 1; j > idx; j--) {
@@ -313,10 +314,28 @@ export function placeRetry(deck, idx, card, offset = 20) {
   // back is massed practice, and proves nothing.
   if (displace === -1 || deck.length - 1 - idx < 2) return deck;
   const next = [...deck];
-  next.splice(displace, 1);
+  const [pushedOut] = next.splice(displace, 1);
   const insertAt = Math.min(idx + 1 + offset, next.length);
-  next.splice(insertAt, 0, { ...card, _retry: true, _bucket: "lapse" });
+  next.splice(insertAt, 0, { ...card, _retry: true, _bucket: "lapse", _displaced: pushedOut });
   return next;
+}
+
+// A miss changed to right with Previous card takes its retry back out. It used
+// to stay: the card came back later in the block although its answer was now
+// right, and "retries to come" never went down (2026-09-27). The card the
+// retry pushed out goes back in, at the end, so the block keeps its length.
+// With nothing to put back — a block kept from before retries recorded it, or
+// that card already back in the block — the retry stays, as it always did,
+// rather than the block coming up a card short.
+//
+// `key` is the itemKey of the card at `idx`; only a retry still to come is
+// taken out. Returns a new array, or the same array if nothing changes.
+export function withdrawRetry(deck, idx, key) {
+  const at = deck.findIndex((c, j) => j > idx && c._retry && itemKey(c) === key);
+  if (at === -1) return deck;
+  const back = deck[at]._displaced;
+  if (!back || deck.some((c) => !c._retry && itemKey(c) === itemKey(back))) return deck;
+  return [...deck.filter((_, j) => j !== at), back];
 }
 
 // Compute the new scheduling state for a card after an answer.

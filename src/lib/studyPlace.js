@@ -71,11 +71,15 @@ export function clearStudyPlace(userId) {
 
 // A set, as it is kept.
 //   entries  each card and way round: row id, direction, what it was dealt as,
-//            and whether it is a retry (with the retry's own id)
+//            and whether it is a retry (with the retry's own id, and the card
+//            it pushed out of the set, which goes back in if the miss is
+//            changed to right)
 //   idx      the entry on screen
-//   face     whether that card's answer has been seen, and what was typed: a
-//            card whose answer was seen comes back showing it, so it can't be
-//            graded as if seen for the first time
+//   face     whether that card's answer has been seen, what was typed, and
+//            whether "My answer should be accepted" accepted it: a card whose
+//            answer was seen comes back showing it, so it can't be graded as
+//            if seen for the first time, and an accepted answer comes back
+//            accepted — a reload before Continue used to save it as wrong
 export function packSet({ deck, idx, stats, done, answers, blockStart, face, day, dir, seq }) {
   return {
     day,
@@ -92,6 +96,9 @@ export function packSet({ deck, idx, stats, done, answers, blockStart, face, day
       d: c.shownDir || "fr",
       b: c._bucket || null,
       ...(c._retry ? { t: 1, i: c._rid || null } : null),
+      ...(c._retry && c._displaced
+        ? { x: { r: c._displaced.row_id, d: c._displaced.shownDir || "fr", b: c._displaced._bucket || null } }
+        : null),
     })),
   };
 }
@@ -101,20 +108,24 @@ export function packSet({ deck, idx, stats, done, answers, blockStart, face, day
 // and the position moves with it.
 export function unpackEntries(saved, cards) {
   const byRow = new Map((cards || []).map((c) => [c.row_id, c]));
+  const asEntry = (e) => {
+    const card = byRow.get(e?.r);
+    if (!card || (e.d === "en" && !isTwoWay(card))) return null;
+    return { ...card, shownDir: e.d, flippable: isTwoWay(card), _bucket: e.b || undefined };
+  };
   const entries = [];
   let idx = saved?.idx ?? 0;
   (saved?.entries || []).forEach((e, i) => {
-    const card = byRow.get(e.r);
-    if (!card || (e.d === "en" && !isTwoWay(card))) {
+    const entry = asEntry(e);
+    if (!entry) {
       if (i < (saved.idx ?? 0)) idx--;
       return;
     }
+    const pushedOut = e.t && e.x ? asEntry(e.x) : null;
     entries.push({
-      ...card,
-      shownDir: e.d,
-      flippable: isTwoWay(card),
-      _bucket: e.b || undefined,
+      ...entry,
       ...(e.t ? { _retry: true, _rid: e.i || undefined } : null),
+      ...(pushedOut ? { _displaced: pushedOut } : null),
     });
   });
   return { entries, idx: Math.max(0, Math.min(idx, entries.length - 1)) };

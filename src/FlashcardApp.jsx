@@ -5,6 +5,7 @@ import { LESSONS, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } fr
 import { reconcileLessons } from "./lib/lessonSync";
 import { archivedSource } from "./lib/archive";
 import { readPlace, writePlace, dropSets, packSet, unpackEntries } from "./lib/studyPlace";
+import { withdrawRetry } from "./lib/sessionQueue";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./lib/cardText";
@@ -329,7 +330,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [cahier.arrived, reloadDeck]);
   const loaded = progressLoaded && deckLoaded;
   const [deck, setDeck] = useState([]);
-  const [sessionCounts, setSessionCounts] = useState({ lapse: 0, review: 0, new: 0, spot: 0 });
+  // How the set is made up, counted from the set as it now is. It was counted
+  // once, when the set was dealt, and never again, though each retry pushes a
+  // card out of the set: with 6 retries, "15 new" might mean 9 (2026-09-27).
+  const sessionCounts = useMemo(() => countBuckets(deck), [deck]);
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const skipFlipAnim = useRef(false); // temporarily disables the card flip transition
@@ -628,6 +632,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [feedbackState, setFeedbackState] = useState(null); // null | 'submitting' | 'submitted' | 'error'
   const [feedbackErrMsg, setFeedbackErrMsg] = useState("");
   const [feedbackVerdict, setFeedbackVerdict] = useState(null); // {verdict, reasoning}
+  // The "My answer should be accepted" check in progress for the card on
+  // screen, as a ticket its result must still hold when it arrives. Moving on
+  // — Continue, Enter, Previous card — drops the ticket: the answer was saved
+  // as the first mark gave it, wrong, and stays so (the owner's rule,
+  // 2026-09-27). The result used to land on whichever card was on screen when
+  // it came back, and accepted a wrong answer there.
+  const disputeRef = useRef(null);
   const autoAdvanceTimer = useRef(null);
   const isAdmin = !!(user?.email && user.email.toLowerCase() === ADMIN_EMAIL);
   // "Status" in the profile menu (admin only): whether the cards are being
@@ -768,7 +779,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (prevSig !== null && deckSig === prevSig && deck.length > 0) {
         placeRef.current.sets[prevSig] = packSet({
           deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
-          face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "" },
+          face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "", accepted: disputeAccepted },
           day: dealtDayRef.current, dir: dirRef.current, seq: dealtSeqRef.current,
         });
       }
@@ -788,7 +799,6 @@ export default function FlashcardApp({ user, onSignOut }) {
         scheduledRef.current = stamp;
         setDeck(next);
         setDeckSig(filterSig);
-        setSessionCounts(countBuckets(next));
         setIdx(at);
         setSessionDone(!!saved.done);
         setStats(saved.stats || { seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
@@ -800,6 +810,10 @@ export default function FlashcardApp({ user, onSignOut }) {
         setFlipped(seen);
         setTypeResult(seen ? face.typeResult ?? null : null);
         setTypedAnswer(seen ? face.typed || "" : "");
+        // And accepted, if "My answer should be accepted" had accepted it.
+        disputeRef.current = null;
+        setFeedbackState(seen && face.accepted ? "accepted" : null);
+        setFeedbackVerdict(null);
         requestAnimationFrame(() => { skipFlipAnim.current = false; });
         return;
       }
@@ -840,13 +854,12 @@ export default function FlashcardApp({ user, onSignOut }) {
           // A card edited into grammar is asked only as written: its English-
           // side entry would record to a state the card no longer uses.
           if (!u || (c.shownDir === "en" && !isTwoWay(u))) return null;
-          return { ...u, shownDir: c.shownDir, flippable: isTwoWay(u), _bucket: c._bucket, _retry: c._retry, _rid: c._rid };
+          return { ...u, shownDir: c.shownDir, flippable: isTwoWay(u), _bucket: c._bucket, _retry: c._retry, _rid: c._rid, _displaced: c._displaced };
         })
         .filter(Boolean);
       let next = patched;
       if (outOfDate) {
         next = redealRest(patched, Math.min(idx, patched.length - 1));
-        setSessionCounts(countBuckets(next));
         dealtSeqRef.current = deckFreshSeq;
       }
       setDeck(next);
@@ -887,14 +900,17 @@ export default function FlashcardApp({ user, onSignOut }) {
       ? cards.findIndex(c => itemKey(c) === preservedKey)
       : -1;
     if (preservedIdx > 0) cards.unshift(cards.splice(preservedIdx, 1)[0]);
-    else if (preservedIdx < 0) { setFlipped(false); setTypedAnswer(""); }
+    else if (preservedIdx < 0) {
+      setFlipped(false); setTypedAnswer("");
+      // A check on the card that was on screen is not about this one.
+      disputeRef.current = null; setFeedbackState(null); setFeedbackVerdict(null);
+    }
     blockAnswersRef.current = new Map();
     dealtSeqRef.current = deckFreshSeq;
     dealtDayRef.current = today;
     scheduledRef.current = stamp;
     setDeck(cards);
     setDeckSig(filterSig);
-    setSessionCounts(counts);
     setIdx(0);
     // A rebuilt queue is unworked, whatever the last one's state was.
     setSessionDone(false);
@@ -909,6 +925,28 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Ids this page has written are known, as are ones a check has already
   // acted on.
   const knownReviewIdsRef = useRef(new Set());
+  // Today's answers for the Stats page: every one, retries included. The
+  // count was read off the cards, one per card and way round, so it left out
+  // retries and said 6 where the end-of-set screen said 8 (2026-09-27). The
+  // records are read when the page opens; answers given here are added from
+  // answersHereRef, so one whose record is still being saved counts too.
+  const answersHereRef = useRef(new Map()); // review id -> answered at (ms)
+  const [todayAnswers, setTodayAnswers] = useState(null); // { from, ids }
+  useEffect(() => {
+    if (mode !== "stats" || !user?.id) return;
+    let live = true;
+    const from = startOfLocalDay(new Date());
+    supabase
+      .from("card_reviews")
+      .select("id")
+      .eq("user_id", user.id)
+      .gte("answered_at", new Date(from).toISOString())
+      .limit(5000)
+      .then(({ data, error }) => {
+        if (live && !error && Array.isArray(data)) setTodayAnswers({ from, ids: data.map((r) => r.id) });
+      });
+    return () => { live = false; };
+  }, [mode, user?.id]);
   const lastElsewhereCheckRef = useRef(0);
   const checkElsewhere = useCallback(async () => {
     if (!user?.id || !deckFetchedAt) return;
@@ -1030,7 +1068,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user?.id || !deckSig || deckSig !== filterSigRef.current || deck.length === 0) return;
     const set = packSet({
       deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
-      face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "" },
+      face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "", accepted: disputeAccepted },
       day: dealtDayRef.current, dir, seq: dealtSeqRef.current,
     });
     placeRef.current.sets[deckSig] = set;
@@ -1039,7 +1077,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     clearTimeout(placeTimerRef.current);
     placeTimerRef.current = setTimeout(flushPlace, 400);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, deckSig, deck, idx, stats, sessionDone, answerSeen, typeResult, dir, lessonFilter, typeFilter]);
+  }, [user?.id, deckSig, deck, idx, stats, sessionDone, answerSeen, typeResult, disputeAccepted, dir, lessonFilter, typeFilter]);
   useEffect(() => {
     const onHide = () => { if (document.visibilityState === "hidden") flushPlace(); };
     window.addEventListener("pagehide", flushPlace);
@@ -1086,7 +1124,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     let f = 0;
     const next = [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
     setDeck(next);
-    setSessionCounts(countBuckets(next));
     if (next.length <= idx) {
       // Nothing left to ask this way round: the block ends where it is.
       setIdx(Math.max(0, next.length - 1));
@@ -1395,6 +1432,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     const before = isCorrection ? earlier.before : recordsReview ? sideColumns(sideOf(card, cardDir), cardDir) : null;
     const reviewId = isCorrection ? earlier.reviewId : newReviewId();
     knownReviewIdsRef.current.add(reviewId);
+    // Every answer given on this page, retries included, for the Stats page's
+    // count of today's answers while its record is still on its way to the
+    // database. A correction is the same answer, so it isn't added.
+    if (!isCorrection && card.row_id != null) answersHereRef.current.set(reviewId, answeredAt);
     blockAnswersRef.current.set(slotKey, { before, got, reviewId });
     if (sr) {
       setDeck(prev => prev.map(c =>
@@ -1465,13 +1506,18 @@ export default function FlashcardApp({ user, onSignOut }) {
           : placeRetry(prev, idx, { ...card, ...(sr || {}), _rid: Math.random().toString(36).slice(2) }, RE_QUEUE_OFFSET)
       );
     }
+    // A miss changed to right: its retry is taken back out, and the card that
+    // retry pushed out of the block goes back in. See withdrawRetry.
+    if (got && isCorrection && earlier.got === false) {
+      setDeck(prev => withdrawRetry(prev, idx, itemKey(card)));
+    }
 
     // Skip the un-flip animation — snap instantly to the next card's front
     skipFlipAnim.current = true;
     setFlipped(false);
     setTypeResult(null);
     setTypedAnswer("");
-    setFeedbackState(null); setFeedbackVerdict(null);
+    disputeRef.current = null; setFeedbackState(null); setFeedbackVerdict(null);
     // Cap at last index. The block's length never changes (a retry replaces
     // an unseen card), so the last card stays put, and `sessionDone` below is
     // what turns that into a visible end — the clamp alone can't, since idx
@@ -1539,7 +1585,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setIdx(i => Math.max(0, i-1));
     setTypedAnswer("");
     setTypeResult(null);
-    setFeedbackState(null); setFeedbackVerdict(null);
+    disputeRef.current = null; setFeedbackState(null); setFeedbackVerdict(null);
     requestAnimationFrame(() => { skipFlipAnim.current = false; });
   };
 
@@ -1550,14 +1596,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Without this, "New Session" would re-show the cards you just finished
     // (patched but still in old order) until the next filter change.
     setDeck([]);
-    setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
     currentCardIdRef.current = null;
     setFlipped(false);
     setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
     setSessionDone(false);
     setTypedAnswer("");
     setTypeResult(null);
-    setFeedbackState(null); setFeedbackVerdict(null);
+    disputeRef.current = null; setFeedbackState(null); setFeedbackVerdict(null);
     // Refetch user_cards so the new session sees fresh box / next_due_at
     // values written by the previous session's answer() updates.
     reloadDeck();
@@ -1569,14 +1614,13 @@ export default function FlashcardApp({ user, onSignOut }) {
   const startNextBlock = () => {
     setIdx(0);
     setDeck([]);
-    setSessionCounts({ lapse: 0, review: 0, new: 0, spot: 0 });
     currentCardIdRef.current = null;
     setFlipped(false);
     setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
     setSessionDone(false);
     setTypedAnswer("");
     setTypeResult(null);
-    setFeedbackState(null); setFeedbackVerdict(null);
+    disputeRef.current = null; setFeedbackState(null); setFeedbackVerdict(null);
     setBlockSeq(n => n + 1);
     // Dealt from the deck in memory, which has every answer given here; if
     // any were given elsewhere meanwhile, the deck is read again and the new
@@ -1706,6 +1750,12 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const submitFeedback = async () => {
     if (!card || !typedAnswer.trim()) return;
+    // The result is for this card as it is now. If the student has moved on
+    // when it comes back, it changes nothing on screen: see disputeRef.
+    const ticket = {};
+    disputeRef.current = ticket;
+    const key = `${card.id}:${card.shownDir}`;
+    const typed = typedAnswer;
     setFeedbackState("submitting");
     setFeedbackErrMsg("");
     setFeedbackVerdict(null);
@@ -1731,23 +1781,25 @@ export default function FlashcardApp({ user, onSignOut }) {
       const responseText = await res.text();
       let data;
       try { data = JSON.parse(responseText); } catch { data = null; }
+      if (res.ok && data?.verdict === "accept") {
+        // Update local alternates so the matcher accepts it from now on. Done
+        // even if the student has moved on: the server has saved it anyway.
+        setAlternates(prev => ({
+          ...prev,
+          [key]: [...(prev[key] || []), typed],
+        }));
+      }
+      if (disputeRef.current !== ticket) return;
       if (!res.ok) {
         setFeedbackErrMsg(data?.error || `HTTP ${res.status}`);
         setFeedbackState("error");
         return;
       }
       setFeedbackVerdict(data);
-      if (data?.verdict === "accept") {
-        // Update local alternates so the matcher accepts it immediately
-        const key = `${card.id}:${card.shownDir}`;
-        setAlternates(prev => ({
-          ...prev,
-          [key]: [...(prev[key] || []), typedAnswer],
-        }));
-      }
       setFeedbackState("submitted");
     } catch (e) {
       console.error("Feedback failed:", e);
+      if (disputeRef.current !== ticket) return;
       setFeedbackErrMsg(e.message);
       setFeedbackState("error");
     }
@@ -1756,6 +1808,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Force-accept: user overrides Claude's reject/uncertain verdict
   const forceAcceptAnswer = async () => {
     if (!card || !typedAnswer.trim()) return;
+    const ticket = {};
+    disputeRef.current = ticket;
+    const key = `${card.id}:${card.shownDir}`;
+    const typed = typedAnswer;
     setFeedbackState("submitting");
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -1780,18 +1836,20 @@ export default function FlashcardApp({ user, onSignOut }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
+        if (disputeRef.current !== ticket) return;
         setFeedbackErrMsg(data?.error || `HTTP ${res.status}`);
         setFeedbackState("error");
         return;
       }
       // Update local alternates
-      const key = `${card.id}:${card.shownDir}`;
       setAlternates(prev => ({
         ...prev,
-        [key]: [...(prev[key] || []), typedAnswer],
+        [key]: [...(prev[key] || []), typed],
       }));
+      if (disputeRef.current !== ticket) return;
       setFeedbackState("accepted");
     } catch (e) {
+      if (disputeRef.current !== ticket) return;
       setFeedbackErrMsg(e.message);
       setFeedbackState("error");
     }
@@ -2077,6 +2135,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setTypedAnswer("");
     setTypeResult(null);
     setFlipped(false);
+    disputeRef.current = null;
     setFeedbackState(null);
     setFeedbackVerdict(null);
     reloadDeck();
@@ -2703,6 +2762,14 @@ export default function FlashcardApp({ user, onSignOut }) {
       answeredToday++;
       if (side.last_answer_correct === true) rightToday++;
     }
+    // That counts each card once, which is right for "right first time" but
+    // leaves retries out of "answers". Every answer is a record: those read
+    // from the database and any given here still being saved. Never fewer than
+    // the cards answered, should some records be missing.
+    const todayFrom = startOfLocalDay(new Date(now));
+    const answerIds = new Set(todayAnswers?.from === todayFrom ? todayAnswers.ids : []);
+    for (const [id, at] of answersHereRef.current) if (at >= todayFrom) answerIds.add(id);
+    const answersToday = Math.max(answerIds.size, answeredToday);
 
     // Streak: based on actual review days stored in Supabase
     // (loaded into reviewDates state on mount, appended to by answer()).
@@ -2841,8 +2908,8 @@ export default function FlashcardApp({ user, onSignOut }) {
             <div style={S.statsRow3}>
               <div style={S.metricCard}>
                 <div style={S.metricLabel}>Today</div>
-                <div style={S.metricVal}>{answeredToday.toLocaleString()}</div>
-                <div style={S.metricSub}>{answeredToday === 1 ? "answer" : "answers"}</div>
+                <div style={S.metricVal}>{answersToday.toLocaleString()}</div>
+                <div style={S.metricSub}>{answersToday === 1 ? "answer" : "answers"}</div>
               </div>
               <div style={S.metricCard}>
                 <div style={S.metricLabel}>Right first time today</div>
@@ -3347,16 +3414,23 @@ export default function FlashcardApp({ user, onSignOut }) {
               {effectiveTypeMode ? (
                 typeResult ? (
                   <div style={S.typeFeedback}>
-                    <div style={typeResult==="correct" ? S.typeCorrect : typeResult==="close" ? S.typeClose : typeResult==="revealed" ? S.typeRevealed : S.typeWrong}>
+                    <div style={disputeAccepted || typeResult==="correct" ? S.typeCorrect : typeResult==="close" ? S.typeClose : typeResult==="revealed" ? S.typeRevealed : S.typeWrong}>
                       {/* The card has already flipped to the correct answer, so
                           repeating it here wastes the line. Show what you
                           actually typed instead — that's the useful comparison.
-                          "revealed" is the exception: nothing was typed. */}
-                      {typeResult==="correct" && "✓ Correct!"}
-                      {typeResult==="close" && (typedAnswer.trim() ? `✓ Close enough — you wrote: ${typedAnswer.trim()}` : "✓ Close enough")}
-                      {typeResult==="wrongArticle" && (typedAnswer.trim() ? `✗ Wrong article — you wrote: ${typedAnswer.trim()}` : `✗ Wrong article — answer: ${back}`)}
-                      {typeResult==="wrong" && (typedAnswer.trim() ? `✗ You wrote: ${typedAnswer.trim()}` : `✗ Answer: ${back}`)}
-                      {typeResult==="revealed" && `Answer: ${back}`}
+                          "revealed" is the exception: nothing was typed.
+                          An answer "My answer should be accepted" got accepted
+                          turns green: it stayed a red ✗ and looked like a miss
+                          still, though Continue saves it as right. */}
+                      {disputeAccepted ? `✓ Accepted — you wrote: ${typedAnswer.trim()}` : (
+                        <>
+                          {typeResult==="correct" && "✓ Correct!"}
+                          {typeResult==="close" && (typedAnswer.trim() ? `✓ Close enough — you wrote: ${typedAnswer.trim()}` : "✓ Close enough")}
+                          {typeResult==="wrongArticle" && (typedAnswer.trim() ? `✗ Wrong article — you wrote: ${typedAnswer.trim()}` : `✗ Wrong article — answer: ${back}`)}
+                          {typeResult==="wrong" && (typedAnswer.trim() ? `✗ You wrote: ${typedAnswer.trim()}` : `✗ Answer: ${back}`)}
+                          {typeResult==="revealed" && `Answer: ${back}`}
+                        </>
+                      )}
                     </div>
                     {(() => {
                       const gotIt = typedRecalled;
@@ -3414,7 +3488,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                             <div style={S.feedbackRow}>
                               {feedbackState === "submitting" && <span style={S.feedbackPending}>Reviewing your answer…</span>}
                               {feedbackState === "submitted" && feedbackVerdict?.verdict === "accept" && (
-                                <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
+                                <div style={S.feedbackMsg}>This answer will be accepted from now on.</div>
                               )}
                               {feedbackState === "submitted" && (feedbackVerdict?.verdict === "reject" || feedbackVerdict?.verdict === "uncertain") && (
                                 <div style={S.feedbackMsg}>
@@ -3425,7 +3499,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                                 </div>
                               )}
                               {feedbackState === "accepted" && (
-                                <div style={S.feedbackMsg}>✓ Accepted — this answer will be remembered.</div>
+                                <div style={S.feedbackMsg}>This answer will be accepted from now on.</div>
                               )}
                               {feedbackState === "error" && <span style={S.feedbackErr}>{feedbackErrMsg || "Couldn't send — try again"}</span>}
                             </div>

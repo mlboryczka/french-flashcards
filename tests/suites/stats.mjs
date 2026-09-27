@@ -87,6 +87,13 @@ const isSeen = (r) => r.fsrs_state !== 0 || (twoWay(r) && (r.en_fsrs_state ?? 0)
 const today = localDay(now);
 const answeredToday = sides.filter((x) => x.last_review && localDay(x.last_review) === today);
 const rightToday = answeredToday.filter((x) => x.last_answer_correct === true);
+// Today's answer records: one for each card answered today, and three retries
+// on top — practice answers, which count as answers but not as first answers.
+const retriesToday = 3;
+const todaysRecords = [
+  ...answeredToday.map((_, i) => ({ id: `a${i}` })),
+  ...Array.from({ length: retriesToday }, (_, i) => ({ id: `r${i}` })),
+];
 const notes = rows.filter((r) => !r.source.startsWith("lesson:"));
 const recent = notes.filter((r) => r.dates[0] >= daysAgo(14));
 const earlier = notes.filter((r) => r.dates[0] < daysAgo(14));
@@ -99,6 +106,8 @@ const { browser, page } = await openApp({
   route: async (p) => {
     await p.route("**/rest/v1/user_cards*", async (r) => r.request().method() !== "GET" ? r.continue() :
       r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(rows) }));
+    await p.route("**/rest/v1/card_reviews*", async (r) => r.request().method() !== "GET" ? r.continue() :
+      r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(todaysRecords) }));
   },
 });
 await page.waitForTimeout(2500);
@@ -108,9 +117,12 @@ const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, "
 const within = (marker) => page.evaluate((m) => document.querySelector(m)?.innerText.replace(/\s+/g, " ") || "", marker);
 
 console.log("\n  today");
-ck("answers today, counted off each card's last review each way round",
-   /today (\d+) answers/i.test(text) && Number(/today (\d+) answers/i.exec(text)[1]) === answeredToday.length,
-   `expected ${answeredToday.length}: ${/today \S+ \S+/i.exec(text)?.[0]}`);
+// Every answer given today, retries included — the same count as the
+// end-of-set screen. It was counted off each card's last review, one per card
+// and way round, which left the retries out (2026-09-27).
+ck("answers today: every answer, retries included",
+   /today (\d+) answers/i.test(text) && Number(/today (\d+) answers/i.exec(text)[1]) === answeredToday.length + retriesToday,
+   `expected ${answeredToday.length + retriesToday}: ${/today \S+ \S+/i.exec(text)?.[0]}`);
 ck("right first time today",
    text.includes(`${rightToday.length} of ${answeredToday.length}`), `expected ${rightToday.length} of ${answeredToday.length}`);
 

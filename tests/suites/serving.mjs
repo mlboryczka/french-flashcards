@@ -9,7 +9,8 @@
 // wave through a UTC bug.
 process.env.TZ = "America/New_York";
 
-import { buildSession, orderNewCards, classDaysOf, placeRetry, applyAnswer } from "../../src/lib/sessionQueue.js";
+import { buildSession, orderNewCards, classDaysOf, placeRetry, withdrawRetry, applyAnswer } from "../../src/lib/sessionQueue.js";
+import { packSet, unpackEntries } from "../../src/lib/studyPlace.js";
 import { SIDE_FIELDS, sideOf, itemKey, withLocalAnswers } from "../../src/lib/directions.js";
 import { localISODate, localISODateDaysAgo } from "../../src/lib/studyDay.js";
 import { lessonRank } from "../../src/data/lessons/index.js";
@@ -396,6 +397,43 @@ console.log("\n  a missed card is retried inside the block, never after it");
   const allRetries = [...block(10), { id: "x", _retry: true }, { id: "y", _retry: true }];
   ck("a retry never displaces another retry",
      placeRetry(allRetries, 9, { id: "b9" }, 20) === allRetries);
+}
+
+// ── A miss changed to right takes its retry back out ──────────────────────
+// Changing a miss to right with Previous card left its retry in the block: the
+// card came back although its answer was now right, and "retries to come"
+// never went down (2026-09-27).
+console.log("\n  a miss changed to right takes its retry back out");
+{
+  const block = (n) => Array.from({ length: n }, (_, i) => ({ id: `b${i}` }));
+  const missed = placeRetry(block(50), 5, { id: "b5" }, 20);
+  const back = withdrawRetry(missed, 5, itemKey({ id: "b5" }));
+  ck("the retry is gone", !back.some((c) => c._retry), JSON.stringify(back.filter((c) => c._retry)));
+  ck("the card it pushed out is back, at the end, and the block is still 50",
+     back.length === 50 && back[49].id === "b49" && !back[49]._retry, `${back.length} long, last ${back[49]?.id}`);
+  ck("the rest of the block is as it was", back.slice(0, 49).every((c, i) => c.id === `b${i}`));
+  ck("only a retry still to come is taken out", withdrawRetry(missed, 30, itemKey({ id: "b5" })) === missed);
+  ck("another card's retry is left alone", withdrawRetry(missed, 5, itemKey({ id: "b6" })) === missed);
+  const unrecorded = missed.map((c) => (c._retry ? { ...c, _displaced: undefined } : c));
+  ck("a retry with no record of what it pushed out stays, rather than the block coming up short",
+     withdrawRetry(unrecorded, 5, itemKey({ id: "b5" })) === unrecorded);
+
+  // Kept in the browser across a reload or an update, a retry still knows
+  // what it pushed out; a set kept before retries recorded it still loads.
+  const rows = Array.from({ length: 6 }, (_, i) => ({ row_id: i + 1, front: `w${i}`, back: `x${i}`, category: "V" }));
+  const dealt = rows.map((r) => ({ ...r, shownDir: "fr", flippable: true, _bucket: "review" }));
+  const kept = JSON.parse(JSON.stringify(packSet({
+    deck: placeRetry(dealt, 0, { ...dealt[0], _rid: "r1" }, 20), idx: 1, stats: {}, done: false,
+    answers: new Map(), face: null, day: "2026-09-27", dir: "mix",
+  })));
+  const { entries } = unpackEntries(kept, rows);
+  const retry = entries.find((c) => c._retry);
+  ck("a kept set's retry comes back knowing the card it pushed out",
+     retry?._displaced?.row_id === 6 && retry._displaced.shownDir === "fr" && !retry._displaced._retry, JSON.stringify(retry?._displaced));
+  ck("so changing the miss after a reload still puts that card back",
+     withdrawRetry(entries, 0, itemKey(entries[0])).at(-1)?.row_id === 6);
+  const older = { ...kept, entries: kept.entries.map(({ x, ...e }) => e) };
+  ck("a set kept before this still loads, whole", unpackEntries(older, rows).entries.length === 6);
 }
 
 // ── A fetch never undoes an answer this page has given ─────────────────────

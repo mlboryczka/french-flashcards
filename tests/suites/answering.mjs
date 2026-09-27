@@ -12,7 +12,8 @@ const CORS = { "access-control-allow-origin": "*" };
 
 // `rows`: serve this deck instead of the mock's, and apply each successful
 // write to it, so a reload sees what was saved.
-async function open({ patchStatus, api, studyMode, rows } = {}) {
+// `apiDelay`: how long "My answer should be accepted" takes to answer.
+async function open({ patchStatus, api, apiDelay = 0, studyMode, rows } = {}) {
   const writes = [];
   const reviews = [];
   const state = { patchStatus: patchStatus ?? 200 };
@@ -45,10 +46,18 @@ async function open({ patchStatus, api, studyMode, rows } = {}) {
         return r.continue();
       });
       await p.route("**/rest/v1/card_reviews*", async (r) => {
+        // Read back as the database would: the records saved so far.
+        if (r.request().method() === "GET") {
+          const ids = [...new Set(reviews.filter((x) => x.body?.id).map((x) => x.body.id))];
+          return r.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify(ids.map((id) => ({ id }))) });
+        }
         reviews.push({ method: r.request().method(), url: r.request().url(), body: JSON.parse(r.request().postData() || "{}") });
         return r.fulfill({ status: 201, headers: CORS, body: "" });
       });
-      if (api) await p.route("**/api/review-answer", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(api) }));
+      if (api) await p.route("**/api/review-answer", async (r) => {
+        await new Promise((res) => setTimeout(res, apiDelay));
+        await r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(api) }).catch(() => {});
+      });
     },
   });
   const click = (t) => page.evaluate((x) => {
@@ -73,7 +82,17 @@ async function open({ patchStatus, api, studyMode, rows } = {}) {
     }
     return null;
   };
-  return { browser, page, writes, reviews, state, click, has, typing, wait, grades, waitForWrite };
+  // Type an answer and check it, for suites opened in typing mode.
+  const typeCheck = async (text) => {
+    await page.waitForSelector("input[placeholder^='Type ']", { timeout: 8000 });
+    await page.fill("input[placeholder^='Type ']", text);
+    await click("Check");
+    await page.waitForFunction(() => /Continue →/.test(document.body.innerText), null, { timeout: 5000 });
+    await wait(150);
+  };
+  const result = () => page.evaluate(() => (document.body.innerText.match(/^(✓|✗|Answer:).*$/m) || [""])[0]);
+  const counter = () => page.evaluate(() => (document.body.innerText.match(/CARD \d+ OF \d+[^\n]*/i) || [""])[0]);
+  return { browser, page, writes, reviews, state, click, has, typing, wait, grades, waitForWrite, typeCheck, result, counter };
 }
 
 // Which way round a write went: every key a French-side column, or every key
@@ -97,6 +116,23 @@ const twoWayDeck = () => [
     fsrs_state: 2, stability: 4, difficulty: 5, reps: 2, lapses: 0, next_due_at: new Date(Date.now() - DAY).toISOString(),
     last_review: new Date(Date.now() - 5 * DAY).toISOString(), last_answer_correct: true },
 ];
+// Words due French side up today, their English side answered two days ago
+// and not due: every card is asked the same way round, so each prompt's
+// answer is known.
+const frenchSideDeck = (n = 6) => [
+  ["une colline", "a hill"], ["la fenêtre", "the window"], ["lentement", "slowly"], ["le bruit", "the noise"],
+  ["ouvrir", "to open"], ["chercher", "to look for"], ["le chemin", "the path"], ["la moitié", "half"],
+].slice(0, n).map(([front, back], i) => ({
+  id: 201 + i, front, back, category: "V", dates: ["2026-06-01"], flagged_for_review: false, batch_id: null, source: "cahier-upload",
+  fsrs_state: 2, stability: 5, difficulty: 5, reps: 3, lapses: 0, next_due_at: new Date(Date.now() - DAY).toISOString(),
+  last_review: new Date(Date.now() - 6 * DAY).toISOString(), last_answer_correct: true,
+  en_fsrs_state: 2, en_stability: 30, en_difficulty: 5, en_reps: 3, en_lapses: 0, en_next_due_at: new Date(Date.now() + 25 * DAY).toISOString(),
+  en_last_review: new Date(Date.now() - 2 * DAY).toISOString(), en_last_answer_correct: true,
+}));
+const rowOnScreen = async (page, deck) => { const front = (await cardBox(page))?.front; return deck.find((r) => r.front === front); };
+const writesFor = (t, id) => t.writes.filter((w) => w.status === 200 && w.url.includes(`id=eq.${id}`)).map((w) => w.body.last_answer_correct);
+const recordsFor = (t, id) => t.reviews.map((r) => r.body).filter((b) => b.card_id === id);
+
 // The way round the card on screen is asked, read off its prompt.
 const shownWay = async (page, deck) => {
   const front = (await cardBox(page))?.front;
@@ -355,6 +391,120 @@ console.log("\n  a streak the database silently refuses to clear is reported, no
   await gotoStats(t.page);
   await t.click("Reset all progress"); await t.wait(1500);
   ck("the student is told the streak wasn't cleared", dialogs.some((m) => /streak couldn't be cleared/.test(m)), JSON.stringify(dialogs));
+  await t.browser.close();
+}
+
+console.log("\n  moving on while the check runs: the answer stays wrong, and no other card is touched");
+{
+  // The owner's rule (2026-09-27): moving on before the check finishes means
+  // the first mark stands. The result used to land on the next card, where a
+  // wrong answer then showed "Accepted" and was saved as right.
+  const deck = frenchSideDeck();
+  const t = await open({ rows: deck, studyMode: "type", api: { ok: true, verdict: "accept", reasoning: "Fair." }, apiDelay: 2500 });
+  const first = await rowOnScreen(t.page, deck);
+  await t.typeCheck("zzzz");
+  await t.click("My answer should be accepted"); await t.wait(200);
+  ck("the check is still running", await t.has(/Reviewing your answer/));
+  await t.page.keyboard.press("Enter"); await t.wait(500);
+  const second = await rowOnScreen(t.page, deck);
+  await t.wait(2800); // the check comes back, accepting
+  await t.typeCheck("qqqq");
+  ck("the next card's wrong answer shows as wrong, with nothing about the last one", /✗ You wrote: qqqq/.test(await t.result()) && !(await t.has(/Accepted/)),
+     `"${await t.result()}"`);
+  await t.click("Continue →"); await t.wait(500);
+  ck("the card moved on from is saved as wrong", JSON.stringify(writesFor(t, first.id)) === "[false]" && recordsFor(t, first.id).every((b) => b.correct === false),
+     JSON.stringify(writesFor(t, first.id)));
+  ck("and so is the next card's wrong answer", JSON.stringify(writesFor(t, second?.id)) === "[false]", JSON.stringify(writesFor(t, second?.id)));
+  await t.browser.close();
+}
+
+console.log("\n  Previous card while the check runs: the card gone back to is left alone");
+{
+  const deck = frenchSideDeck();
+  const t = await open({ rows: deck, studyMode: "type", api: { ok: true, verdict: "accept", reasoning: "Fair." }, apiDelay: 2500 });
+  const first = await rowOnScreen(t.page, deck);
+  await t.typeCheck("zzzz"); await t.click("Continue →"); await t.wait(500);
+  await t.typeCheck("yyyy");
+  await t.click("My answer should be accepted"); await t.wait(200);
+  await t.click("Previous card"); await t.wait(2800);
+  await t.typeCheck("xxxx");
+  ck("the wrong answer there shows as wrong", /✗ You wrote: xxxx/.test(await t.result()) && !(await t.has(/Accepted/)), `"${await t.result()}"`);
+  await t.click("Continue →"); await t.wait(500);
+  ck("and stays saved as wrong", JSON.stringify(writesFor(t, first.id)) === "[false]", JSON.stringify(writesFor(t, first.id)));
+  await t.browser.close();
+}
+
+console.log("\n  an accepted answer shows as accepted, and stays accepted through a reload");
+{
+  const deck = frenchSideDeck();
+  const t = await open({ rows: deck, studyMode: "type", api: { ok: true, verdict: "accept", reasoning: "Fair." } });
+  const row = await rowOnScreen(t.page, deck);
+  await t.typeCheck("zzzz");
+  await t.click("My answer should be accepted");
+  await t.page.waitForFunction(() => /Accepted/.test(document.body.innerText), null, { timeout: 5000 });
+  ck("the red ✗ turns into a green ✓ Accepted", /^✓ Accepted — you wrote: zzzz/.test(await t.result()), `"${await t.result()}"`);
+  await t.wait(800); // the set on screen is kept a moment after each change
+  await t.page.reload({ waitUntil: "commit" });
+  await t.page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
+  await t.wait(1500);
+  ck("after a reload, the same card still shows it was accepted",
+     (await rowOnScreen(t.page, deck))?.id === row.id && /^✓ Accepted/.test(await t.result()) && !(await t.has(/My answer should be accepted/)),
+     `"${await t.result()}"`);
+  await t.click("Continue →"); await t.wait(500);
+  ck("and Continue saves it as right", JSON.stringify(writesFor(t, row.id)) === "[true]", JSON.stringify(writesFor(t, row.id)));
+  await t.browser.close();
+}
+
+console.log("\n  a miss changed to right with Previous card takes its retry back out");
+{
+  const deck = frenchSideDeck();
+  const t = await open({ rows: deck, studyMode: "type" });
+  const row = await rowOnScreen(t.page, deck);
+  await t.typeCheck("zzzz"); await t.click("Continue →"); await t.wait(500);
+  ck("the miss lines up a retry", /1 retry to come/i.test(await t.counter()), await t.counter());
+  await t.click("Previous card"); await t.wait(500);
+  await t.typeCheck(row.back); await t.click("Continue →"); await t.wait(500);
+  ck("changed to right, the retry is gone", !/retr(y|ies) to come/i.test(await t.counter()), await t.counter());
+  const asked = [row.front];
+  for (let guard = 0; guard < 12 && !(await t.page.$("[data-checkpoint]")); guard++) {
+    const r = await rowOnScreen(t.page, deck);
+    asked.push(`${r?.front}${(await t.page.$("[data-retry]")) ? " (retry)" : ""}`);
+    await t.typeCheck(r.back); await t.click("Continue →"); await t.wait(400);
+  }
+  ck("the card doesn't come back, and the one its retry pushed out is asked instead: all 6, once each",
+     asked.length === 6 && new Set(asked).size === 6 && asked.every((a) => !a.endsWith("(retry)")), asked.join(" | "));
+  await t.browser.close();
+}
+
+console.log("\n  the counter and Stats follow what was actually answered");
+{
+  // 8 cards: two misses whose retries each push a card out of the set, so
+  // 6 cards and 2 retries are answered.
+  const deck = frenchSideDeck(8);
+  const t = await open({ rows: deck, studyMode: "type" });
+  const counters = [];
+  let r = await rowOnScreen(t.page, deck); counters.push(await t.counter());
+  await t.typeCheck(r.back); await t.click("Continue →"); await t.wait(400);
+  for (let i = 0; i < 2; i++) { counters.push(await t.counter()); await t.typeCheck("zzzz"); await t.click("Continue →"); await t.wait(400); }
+  counters.push(await t.counter());
+  let answers = 3;
+  for (let guard = 0; guard < 12 && !(await t.page.$("[data-checkpoint]")); guard++) {
+    r = await rowOnScreen(t.page, deck);
+    await t.typeCheck(r.back); await t.click("Continue →"); await t.wait(400); answers++;
+  }
+  ck("the counter's make-up drops as retries push cards out: 8 review, then 6",
+     /8 review/i.test(counters[0]) && /6 review · 2 retries to come/i.test(counters[3]), `${counters[0]} … ${counters[3]}`);
+  const summary = await t.page.evaluate(() => document.querySelector("[data-checkpoint]")?.innerText.split("\n")[0] || "");
+  ck("8 answers in the set, and the end-of-set screen says so", answers === 8 && /^8 answers/.test(summary), `${answers} given; "${summary}"`);
+  await gotoStats(t.page); await t.wait(800);
+  const today = () => t.page.evaluate(() => /Today (\d+) answers?/i.exec(document.body.innerText.replace(/\s+/g, " "))?.[1]);
+  ck("Stats counts every answer today, retries included: 8, not 6", (await today()) === "8", `${await today()}`);
+  ck("right first time is still out of the 6 cards", await t.has(/4 of 6/), "");
+  await t.page.reload({ waitUntil: "commit" });
+  await t.page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
+  await t.wait(1200);
+  await gotoStats(t.page); await t.wait(800);
+  ck("and still 8 after a reload, from the saved records", (await today()) === "8", `${await today()}`);
   await t.browser.close();
 }
 
