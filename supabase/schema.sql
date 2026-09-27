@@ -153,6 +153,9 @@ create policy "Users manage their own alternates"
 --                   last_answer_correct (French → English)
 --   migration_010 → the same eight again with an en_ prefix (English →
 --                   French), and the card_reviews table of every answer
+--   migration_012 → fsrs_settings, each student's own FSRS settings
+--   migration_013 → the settings each answer was scheduled with, and the
+--                   dealt_sets table of every set of cards dealt
 -- Run this file first, then the migrations in order.
 
 create table if not exists public.user_cards (

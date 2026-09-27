@@ -1,0 +1,26 @@
+import fs from "node:fs";
+const ok = (name, cond, extra = "") => console.log(`${cond ? "PASS" : "FAIL"}  ${name}${extra ? "  — " + extra : ""}`);
+const DB = "http://127.0.0.1:5991";
+const APP = "http://127.0.0.1:5190";
+// Session for the smoke user from the previous test (sign in again)
+await fetch(`${DB}/auth/v1/otp?redirect_to=${encodeURIComponent(APP)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "smoke@example.com" }) });
+const magic = await (await fetch(`${DB}/__magic`)).json();
+const r = await fetch(magic.at(-1).link, { redirect: "manual" });
+const at = new URLSearchParams(r.headers.get("location").split("#")[1]).get("access_token");
+const H = { "content-type": "application/json", authorization: `Bearer ${at}`, "x-anthropic-key": "sk-ant-api03-standin-smoke-0000000000000000" };
+const text = fs.readFileSync("/Users/mboryczka/Downloads/Cahier Matthew.txt", "utf8");
+let res = await fetch(`${APP}/api/parse-cahier`, { method: "POST", headers: H, body: JSON.stringify({ action: "slice", mode: "text", content: text }) });
+let j = await res.json();
+ok("slice via proxy", res.status === 200 && j.blocks?.length === 203, `${res.status} ${j.blocks?.length}`);
+const pick = j.blocks.filter((b) => ["2026-04-14", "2026-04-03", "2025-10-27"].includes(b.date));
+res = await fetch(`${APP}/api/cahier-parse`, { method: "POST", headers: H, body: JSON.stringify({ blocks: pick, batch_id: null, source: "file" }) });
+j = await res.json();
+ok("cahier-parse", res.status === 200 && j.ok && j.cards.length > 0 && j.batch_id, `${res.status} cards=${j.cards?.length} batch=${j.batch_id} errors=${JSON.stringify(j.errors)}`);
+const cards = j.cards;
+res = await fetch(`${APP}/api/parse-cahier`, { method: "POST", headers: H, body: JSON.stringify({ action: "commit", cards, replace: false, batch_id: j.batch_id }) });
+const c = await res.json();
+ok("commit", res.status === 200 && c.ok && c.cardsInserted > 0, JSON.stringify(c));
+res = await fetch(`${APP}/api/upload-batches?id=${j.batch_id}`, { method: "PATCH", headers: H, body: JSON.stringify({ cards_accepted: c.cardsInserted, cards_edited_post_parse: 0 }) });
+ok("upload-batches PATCH as non-admin is refused (expected 403)", res.status === 403, `${res.status} ${await res.text()}`);
+res = await fetch(`${APP}/api/nonexistent`, { method: "POST", headers: H, body: "{}" });
+ok("unknown api route harmless", res.status === 200);

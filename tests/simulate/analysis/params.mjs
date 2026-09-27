@@ -1,0 +1,10 @@
+import path from "node:path";
+const WORK = process.env.WORK;
+const sr = await import(path.join(WORK, "app/src/lib/spacedRepetition.js"));
+const p = sr.scheduler.parameters;
+console.log(JSON.stringify({ w: p.w, request_retention: p.request_retention, maximum_interval: p.maximum_interval, enable_fuzz: p.enable_fuzz, enable_short_term: p.enable_short_term, IM: sr.scheduler.interval_modifier }));
+const tsf = await import(path.join(WORK, "app/node_modules/ts-fsrs/dist/index.mjs"));
+const c = sr.toFsrsCard({ fsrs_state: 0 });
+const now = new Date("2026-09-25T22:05:00Z");
+const r = sr.scheduler.repeat(c, now);
+for (const g of [1, 3]) console.log("new card rating", g, "S", r[g].card.stability, "D", r[g].card.difficulty, "ivl days", (r[g].card.due - now) / 864e5);

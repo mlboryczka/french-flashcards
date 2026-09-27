@@ -1,0 +1,368 @@
+{
+  "current": {
+    "answers": 11825,
+    "answersPerStudyDay": 77,
+    "p90AnswersPerStudyDay": 144,
+    "maxAnswersDay": 200,
+    "newIntroduced": 787,
+    "dueRetention": 0.756,
+    "fsrsPredicted": 0.812,
+    "logLoss": 0.5242,
+    "spotChecks": 323,
+    "spotRight": 0.949,
+    "siblingSameDay": 740,
+    "zeroDayCounted": 492,
+    "gapShort": 2008,
+    "gapLong": 2074,
+    "reviewsWithGap": 8505,
+    "avgDueLeftEndOfDay": 60.3,
+    "day90": {
+      "itemsKnown": 463,
+      "wordsKnownBothWays": 204,
+      "itemsSeen": 515
+    },
+    "day180": {
+      "itemsKnown": 741,
+      "wordsKnownBothWays": 347,
+      "itemsSeen": 787
+    },
+    "knownPer100Answers": 6.27,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 12578,
+        "predicted": 0.753,
+        "actual": 0.663
+      },
+      "0.80-0.85": {
+        "n": 9295,
+        "predicted": 0.828,
+        "actual": 0.743
+      },
+      "0.85-0.90": {
+        "n": 26908,
+        "predicted": 0.88,
+        "actual": 0.855
+      },
+      "0.90-0.95": {
+        "n": 6575,
+        "predicted": 0.909,
+        "actual": 0.891
+      },
+      "<0.70": {
+        "n": 10023,
+        "predicted": 0.626,
+        "actual": 0.528
+      },
+      ">=0.95": {
+        "n": 74,
+        "predicted": 0.956,
+        "actual": 0.959
+      }
+    }
+  },
+  "localDays": {
+    "answers": 11825,
+    "answersPerStudyDay": 77,
+    "p90AnswersPerStudyDay": 144,
+    "maxAnswersDay": 200,
+    "newIntroduced": 789,
+    "dueRetention": 0.752,
+    "fsrsPredicted": 0.826,
+    "logLoss": 0.5392,
+    "spotChecks": 326,
+    "spotRight": 0.936,
+    "siblingSameDay": 700,
+    "zeroDayCounted": 486,
+    "gapShort": 2025,
+    "gapLong": 2070,
+    "reviewsWithGap": 8479,
+    "avgDueLeftEndOfDay": 60.2,
+    "day90": {
+      "itemsKnown": 467,
+      "wordsKnownBothWays": 204,
+      "itemsSeen": 524
+    },
+    "day180": {
+      "itemsKnown": 744,
+      "wordsKnownBothWays": 349,
+      "itemsSeen": 789
+    },
+    "knownPer100Answers": 6.29,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 13433,
+        "predicted": 0.755,
+        "actual": 0.624
+      },
+      "0.80-0.85": {
+        "n": 10597,
+        "predicted": 0.828,
+        "actual": 0.713
+      },
+      "0.85-0.90": {
+        "n": 27911,
+        "predicted": 0.88,
+        "actual": 0.848
+      },
+      "0.90-0.95": {
+        "n": 6795,
+        "predicted": 0.909,
+        "actual": 0.892
+      },
+      "<0.70": {
+        "n": 6400,
+        "predicted": 0.65,
+        "actual": 0.52
+      },
+      ">=0.95": {
+        "n": 90,
+        "predicted": 0.958,
+        "actual": 0.978
+      }
+    }
+  },
+  "noFloor": {
+    "answers": 11825,
+    "answersPerStudyDay": 77,
+    "p90AnswersPerStudyDay": 144,
+    "maxAnswersDay": 200,
+    "newIntroduced": 823,
+    "dueRetention": 0.8,
+    "fsrsPredicted": 0.839,
+    "logLoss": 0.4771,
+    "spotChecks": 341,
+    "spotRight": 0.951,
+    "siblingSameDay": 767,
+    "zeroDayCounted": 494,
+    "gapShort": 2082,
+    "gapLong": 2153,
+    "reviewsWithGap": 8746,
+    "avgDueLeftEndOfDay": 54.1,
+    "day90": {
+      "itemsKnown": 482,
+      "wordsKnownBothWays": 212,
+      "itemsSeen": 530
+    },
+    "day180": {
+      "itemsKnown": 780,
+      "wordsKnownBothWays": 368,
+      "itemsSeen": 823
+    },
+    "knownPer100Answers": 6.6,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 9622,
+        "predicted": 0.755,
+        "actual": 0.69
+      },
+      "0.80-0.85": {
+        "n": 7979,
+        "predicted": 0.829,
+        "actual": 0.765
+      },
+      "0.85-0.90": {
+        "n": 32251,
+        "predicted": 0.882,
+        "actual": 0.853
+      },
+      "0.90-0.95": {
+        "n": 10934,
+        "predicted": 0.91,
+        "actual": 0.894
+      },
+      "<0.70": {
+        "n": 6272,
+        "predicted": 0.635,
+        "actual": 0.574
+      },
+      ">=0.95": {
+        "n": 183,
+        "predicted": 0.957,
+        "actual": 0.967
+      }
+    }
+  },
+  "bothFixes": {
+    "answers": 11825,
+    "answersPerStudyDay": 77,
+    "p90AnswersPerStudyDay": 144,
+    "maxAnswersDay": 200,
+    "newIntroduced": 820,
+    "dueRetention": 0.791,
+    "fsrsPredicted": 0.846,
+    "logLoss": 0.4955,
+    "spotChecks": 331,
+    "spotRight": 0.955,
+    "siblingSameDay": 759,
+    "zeroDayCounted": 506,
+    "gapShort": 2070,
+    "gapLong": 2133,
+    "reviewsWithGap": 8688,
+    "avgDueLeftEndOfDay": 56.7,
+    "day90": {
+      "itemsKnown": 487,
+      "wordsKnownBothWays": 214,
+      "itemsSeen": 539
+    },
+    "day180": {
+      "itemsKnown": 774,
+      "wordsKnownBothWays": 363,
+      "itemsSeen": 820
+    },
+    "knownPer100Answers": 6.55,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 9127,
+        "predicted": 0.756,
+        "actual": 0.658
+      },
+      "0.80-0.85": {
+        "n": 9050,
+        "predicted": 0.829,
+        "actual": 0.735
+      },
+      "0.85-0.90": {
+        "n": 33221,
+        "predicted": 0.881,
+        "actual": 0.842
+      },
+      "0.90-0.95": {
+        "n": 10821,
+        "predicted": 0.91,
+        "actual": 0.891
+      },
+      "<0.70": {
+        "n": 4441,
+        "predicted": 0.649,
+        "actual": 0.542
+      },
+      ">=0.95": {
+        "n": 192,
+        "predicted": 0.956,
+        "actual": 0.979
+      }
+    }
+  },
+  "bothNoSpot": {
+    "answers": 11825,
+    "answersPerStudyDay": 77,
+    "p90AnswersPerStudyDay": 144,
+    "maxAnswersDay": 200,
+    "newIntroduced": 833,
+    "dueRetention": 0.787,
+    "fsrsPredicted": 0.846,
+    "logLoss": 0.5017,
+    "spotChecks": 0,
+    "spotRight": 0,
+    "siblingSameDay": 736,
+    "zeroDayCounted": 505,
+    "gapShort": 2055,
+    "gapLong": 2104,
+    "reviewsWithGap": 8602,
+    "avgDueLeftEndOfDay": 60.5,
+    "day90": {
+      "itemsKnown": 488,
+      "wordsKnownBothWays": 209,
+      "itemsSeen": 553
+    },
+    "day180": {
+      "itemsKnown": 780,
+      "wordsKnownBothWays": 364,
+      "itemsSeen": 833
+    },
+    "knownPer100Answers": 6.6,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 9396,
+        "predicted": 0.756,
+        "actual": 0.656
+      },
+      "0.80-0.85": {
+        "n": 9327,
+        "predicted": 0.83,
+        "actual": 0.732
+      },
+      "0.85-0.90": {
+        "n": 34316,
+        "predicted": 0.881,
+        "actual": 0.84
+      },
+      "0.90-0.95": {
+        "n": 10924,
+        "predicted": 0.91,
+        "actual": 0.887
+      },
+      "<0.70": {
+        "n": 4697,
+        "predicted": 0.647,
+        "actual": 0.537
+      },
+      ">=0.95": {
+        "n": 156,
+        "predicted": 0.957,
+        "actual": 0.994
+      }
+    }
+  },
+  "newCap": {
+    "answers": 11077,
+    "answersPerStudyDay": 72.2,
+    "p90AnswersPerStudyDay": 104,
+    "maxAnswersDay": 150,
+    "newIntroduced": 751,
+    "dueRetention": 0.761,
+    "fsrsPredicted": 0.831,
+    "logLoss": 0.5317,
+    "spotChecks": 324,
+    "spotRight": 0.944,
+    "siblingSameDay": 750,
+    "zeroDayCounted": 447,
+    "gapShort": 1917,
+    "gapLong": 1931,
+    "reviewsWithGap": 7984,
+    "avgDueLeftEndOfDay": 46.3,
+    "day90": {
+      "itemsKnown": 438,
+      "wordsKnownBothWays": 192,
+      "itemsSeen": 488
+    },
+    "day180": {
+      "itemsKnown": 708,
+      "wordsKnownBothWays": 333,
+      "itemsSeen": 751
+    },
+    "knownPer100Answers": 6.39,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 11655,
+        "predicted": 0.754,
+        "actual": 0.639
+      },
+      "0.80-0.85": {
+        "n": 9080,
+        "predicted": 0.828,
+        "actual": 0.723
+      },
+      "0.85-0.90": {
+        "n": 27893,
+        "predicted": 0.88,
+        "actual": 0.841
+      },
+      "0.90-0.95": {
+        "n": 7037,
+        "predicted": 0.909,
+        "actual": 0.88
+      },
+      "<0.70": {
+        "n": 5521,
+        "predicted": 0.649,
+        "actual": 0.529
+      },
+      ">=0.95": {
+        "n": 89,
+        "predicted": 0.958,
+        "actual": 0.966
+      }
+    }
+  }
+}

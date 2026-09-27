@@ -25,7 +25,13 @@ export function newReviewId() {
 // `before` and `after` are the shown direction's columns (as applyAnswer
 // returns them), or null when FSRS did not count the answer: a retry, or a
 // card already answered that way today.
-export function reviewRow({ id, userId, cardId, dir, got, before, after, at = new Date() }) {
+//
+// `settings` ({ target, weights }, from settingsInUse()) and `timeZone` are
+// what a counted answer was scheduled with (migration_013), so the status check
+// can work it out again exactly on a day the settings changed. Together with
+// the card's counts before the answer they are the row's EXTRAS: columns a
+// database without migration_013 doesn't have, left out when it refuses them.
+export function reviewRow({ id, userId, cardId, dir, got, before, after, at = new Date(), settings = null, timeZone = null }) {
   const counted = !!before && !!after;
   const b = counted ? sideOf(before, dir) : null;
   const a = counted ? sideOf(after, dir) : null;
@@ -45,5 +51,22 @@ export function reviewRow({ id, userId, cardId, dir, got, before, after, at = ne
     stability_after: a ? a.stability : null,
     difficulty_after: a ? a.difficulty : null,
     due_after: a ? a.next_due_at : null,
+    target: counted && Number.isFinite(settings?.target) ? settings.target : null,
+    weights: counted && Array.isArray(settings?.weights) ? settings.weights : null,
+    time_zone: counted && timeZone ? timeZone : null,
+    reps_before: b ? b.reps : null,
+    lapses_before: b ? b.lapses : null,
   };
 }
+
+export const REVIEW_EXTRAS = Object.freeze(["target", "weights", "time_zone", "reps_before", "lapses_before"]);
+
+export function withoutExtras(row) {
+  const out = { ...row };
+  for (const k of REVIEW_EXTRAS) delete out[k];
+  return out;
+}
+
+// PostgREST's "column not in the schema cache", or Postgres's "no such
+// column": the database hasn't had migration_013 yet.
+export const missingColumn = (error) => !!error && (error.code === "PGRST204" || error.code === "42703");

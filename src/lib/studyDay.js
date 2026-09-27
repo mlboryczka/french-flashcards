@@ -22,6 +22,17 @@
 
 export const DAY_STARTS_AT_HOUR = 4;
 
+// The browser's time zone (an IANA name such as "America/New_York"), saved
+// with each answer and each set dealt so a day can be worked out later the
+// way the app worked it out then. Null where the browser won't say.
+export function browserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
 // `d` moved into the day it belongs to: before 4am is the day before. The
 // clock time is kept; only the date moves.
 function inStudyDay(d) {

@@ -117,7 +117,7 @@ among them — for long stretches. So:
   20 on 2026-09-26), and a check that waits a fixed time can fail for that
   alone. Rerun such a suite on its own before believing a timing failure.
 
-`npm test` before every push. It is 23 suites, and closer to twenty minutes
+`npm test` before every push. It is 27 suites, and closer to twenty minutes
 than a few — most of them drive a real browser at several window sizes. Start
 it early rather than last, and don't edit `src/` while it runs: the suites
 share one Vite dev server, so a save hot-reloads the app underneath a test
@@ -855,6 +855,14 @@ can never undo 007.
   fingerprint per class already turned into cards, when it was last read, what
   it last added and why it last failed. Owner-only policies; no delete policy
   is needed beyond the student's own. See *The linked cahier*
+- `012_fsrs_settings` — `fsrs_settings`, each student's own FSRS weights and
+  target ("How much to remember"), and `apply_memory_estimates()`, which only
+  the server may call. Run by the owner on 2026-09-27
+- `013_answer_settings_and_sets` — on `card_reviews`, what each counted answer
+  was scheduled with (`target`, `weights`, `time_zone`, `reps_before`,
+  `lapses_before`); and `dealt_sets`, every set of cards dealt, owner-only
+  select and insert. Additive and re-runnable; the app works before it is run.
+  See *The status check and the simulations*
 
 **A cautionary tale worth knowing:** the first version of 006 treated the
 `dates` array as review history. It isn't — those are the *lesson* dates a word
@@ -1192,10 +1200,12 @@ of these were "fixed" against an assumption and shipped broken.
 
 ## Testing
 
-`npm test` — see `tests/README.md`. Twenty-three suites: nine needing no browser,
-the rest driving the real app in headless Chromium against a mock Supabase,
-asserting on **measured** values (geometry, computed styles, request payloads)
-rather than on intent.
+`npm test` — see `tests/README.md`. Twenty-seven suites: eleven needing no
+browser, the rest driving the real app in headless Chromium against a mock
+Supabase, asserting on **measured** values (geometry, computed styles, request
+payloads) rather than on intent. `npm run simulate` and `npm run
+simulate:compare` are apart from it — see *The status check and the
+simulations*.
 
 `reflow` is the one to reach for when a panel looks wrong: it samples geometry
 every frame through a whole open and close, at several window sizes, and fails
@@ -1560,6 +1570,119 @@ check on whether FSRS is calibrated for you. It exists per session as
 Retrievability inherited the direction problem — one number per card covering
 both FR→EN and EN→FR — until 2026-09-14, when each direction got its own state
 and "remembered" became remembered both ways (see Status above).
+
+---
+
+## The status check and the simulations
+
+Built on 2026-09-27 from the evaluation proposal, to answer three questions the
+owner set: are cards shown **the way FSRS says**, **the way the app's own
+rules say**, and **in the best way** (a student remembering the most for the
+time they spend), as far as that can be judged.
+
+**Where it shows.** "Status" in the profile menu, for the admin only
+(`VITE_ADMIN_EMAIL`, like View users). While a check fails, or the check itself
+couldn't run, a red dot sits on the avatar and a red "!" on the Status line.
+The dialog lists nine checks in three groups, each passed, failed or waiting;
+a failure names the cards and days, and "Copy details" puts the whole report
+on the clipboard to paste to Claude. It runs on the admin's own record, three
+seconds after the deck loads, when the dialog opens, and on coming back to the
+tab once the last result is an hour old. It only reads. Code:
+`src/lib/statusChecks.js` (pure: the checks), `src/useStatusCheck.js` (reads
+the record), `src/StatusModal.jsx`.
+
+**What the app records for it** (`migration_013`, which the owner runs):
+
+- Each counted answer's row in `card_reviews` also carries the `target` and
+  the 21 `weights` it was scheduled with (`settingsInUse()` in
+  `spacedRepetition.js`), the student's `time_zone`, and the card's
+  `reps_before` / `lapses_before` that way round. ts-fsrs draws a due date's
+  spread from the answer's time, the card's reps and its estimates, so with
+  these an answer can be worked out again to the day, even on a day the
+  settings changed.
+- `dealt_sets`: one row each time the app deals cards — a new set (`new`), the
+  rest of a set dealt again because the deck came fresh, the day turned or the
+  student came back to the set (`rest`), or the rest dealt again for a new
+  direction setting (`direction`). `items` are the cards dealt, each with its
+  way round, why it was dealt (lapse, review, new) and what the app believed
+  of it (due date, missed last time); `kept` the entries already in the set.
+  `src/lib/dealLog.js`; written from the three places `FlashcardApp` calls
+  `buildSession` for a set.
+
+Before `migration_013` the app keeps working exactly as before: an answer
+refused for the extra columns is saved without them, and for the rest of that
+study day they aren't sent; the set record is tried once a study day. Neither
+is ever waited on, and neither can leave an answer unsaved.
+
+**The nine checks.** Answers from `CHECKS_START` (2026-09-27) on; earlier ones
+were scheduled under the old rules and are read only as history. Every day is
+the student's own, 4am to 4am in the time zone the answer was given in.
+
+1. *Every answer was scheduled the way FSRS says.* Each counted answer is
+   scheduled again from its before-state with ts-fsrs, the student's days, and
+   the gap taken from the card's own new estimate at the target, and compared:
+   estimates to four figures, the gap to the day when the settings and counts
+   are on record, within ts-fsrs's spread otherwise. An answer from before
+   `migration_013` is worked out with today's settings if nothing has changed
+   since it, and skipped if something has.
+2. *One counted answer per card, each way, each day* — and it is the day's
+   first answer.
+3. *Every card's schedule is its last answer's result*: due date and last
+   answer time exact; the estimates either the last answer's or what the
+   card's answers give under the settings now in use, which is what
+   `api/fsrs-fit.js` writes when the settings change. Most of the deck put back
+   to new at once is reported as Reset all progress, not as a loss.
+4. *Nothing was asked before it was due* — from each answer's previous answer,
+   and from every card a set dealt as due (or as new).
+5. *Due cards before new ones, missed cards first, most overdue first* — every
+   set with new cards left no due card out; a full set took missed cards
+   before reviews and the most overdue reviews.
+6. *New cards in the agreed order* — `orderNewCards`'s rules stated again, not
+   called: inside a lesson its teaching order; otherwise recent classes
+   (newest first), then older ones (most classes first), undated, lesson
+   cards. A set fails when it took a card while one that comes first waited.
+7. *A new word met one way at a time* — never both ways as new on one day, or
+   in one set.
+8. *Every card asked came from a set, never straight back.*
+9. *FSRS's predictions match your results* — over 30 days, the predicted
+   chance of remembering at each review against what happened, overall and in
+   bands; a band is judged only with 100 answers behind it (10 points off
+   fails), the whole with 300 (5 points). Fewer than that waits.
+
+Checks 5, 6 and 8 need the set records, so they wait until `migration_013`,
+and then start the day after the first set is recorded: a day the recording
+began partway through would have answers from sets never recorded.
+
+**The simulations** (`tests/simulate/`).
+
+- `student.mjs`: a simulated student studying with the app's own modules —
+  `buildSession` deals, `applyAnswer` schedules, `reviewRow` and `dealRow`
+  write the records, the automatic target moves as `useFsrsSettings` moves it,
+  and the deck is re-read in single precision each study day as the database
+  gives it back — so its output is shaped exactly like the real tables and the
+  status check runs on it. The memory is deliberately not FSRS (from the
+  2026-09-25 test): weak, typical and strong students; two habits, a fixed
+  number of sets a day or until the day's due cards are done.
+- `npm run simulate` (`fast.mjs`): weak and typical students, 180 days, two
+  runs each, every record through the status check; about ten seconds. Fails
+  on any check of the app's behaviour. The predictions check is printed but
+  can't fail it: these students' memory is invented, unlike FSRS on purpose,
+  and they keep the starting settings where a real student is fitted at 1,000
+  answers.
+- `npm run simulate:compare` (`compare.mjs`): the four "How much to remember"
+  choices, for three students and both habits, four runs each; about a
+  minute. Results on 2026-09-27 are in that day's History entry.
+- The 2026-09-25 browser test (the real app in headless Chrome on a moved
+  clock, a stand-in Supabase, a stand-in Claude replaying `cards.js`): its
+  files were rescued from a session's temporary folder into `tests/simulate/`
+  (`servers/`, `driver/`, `analysis/`, the start and stop scripts, and the
+  six-month `longsim/` it came with). See Open items for what is left to make
+  it one command.
+
+The node suite `status` proves the checks on a simulated record — all pass —
+and that each fault they exist for makes its check fail, the stale set of
+2026-09-23 among them. `statusline` drives the Status line, its alert and
+dialog, answers saved before and after `migration_013`, and the set record.
 
 ---
 
@@ -2932,8 +3055,78 @@ and drills would stop looking like every other card.
 session committed `FlashcardApp.jsx` whole while this change was in it; the
 wording followed in its own commit.
 
+### 2026-09-27 — the status check, built from the evaluation proposal
+
+**Asked for.** The owner restated the proposal's goal: judge that cards are
+shown the way FSRS says, logically, and in the best way possible; the result
+to be a Status line in the profile menu with an alert when something needs
+checking; and "run all the fixes now". They had run `migration_012`.
+
+**Built.** Everything in *The status check and the simulations*: the nine
+checks, the Status line and dialog, the settings saved with each answer, the
+record of each set dealt (`migration_013`), the fast simulated student and the
+two simulate commands, and the 2026-09-25 browser test's files, rescued from a
+temporary folder macOS clears after a few days.
+
+**Changed from the proposal, and why.**
+
+- No morning script on the Mac. The check runs in the app for the admin: no
+  schedule, no service key on the Mac, and it can't stop running unnoticed.
+- No `bucket` column. An answer's before-state already says whether the card
+  was new, missed or due; what couldn't be seen was what the app *dealt*,
+  which `dealt_sets` records. The settings are saved with each answer instead,
+  since they now change (fit, automatic target, the student's choice) and
+  without them a change day would read as a failure.
+- The upload and linked-cahier checks left out: outside the goal.
+- One set of checks, shared by the app and the simulations.
+- The fitted-settings recalculation (`api/fsrs-fit.js`) rewrites estimates
+  without an answer, so "nothing lost" accepts either the last answer's
+  estimate or the one the card's answers give under the settings in use.
+
+**The comparison** (`npm run simulate:compare`, 180 days, four runs each;
+cards remembered per hour of study, the higher the better):
+
+| Student, habit | Automatic | 85% | 90% | 95% |
+|---|---|---|---|---|
+| weak, fixed sets | 18.2 | 18.2 | **20.6** | 20.0 |
+| typical, fixed sets | **34.4** | **34.4** | 32.8 | 28.5 |
+| strong, fixed sets | **41.0** | **41.0** | 39.1 | 32.3 |
+| weak, until due done | 19.2 | 18.9 | **20.4** | 19.2 |
+| typical, until due done | 31.3 | **32.1** | 30.9 | 25.1 |
+| strong, until due done | 37.0 | **38.2** | 35.3 | 28.1 |
+
+95% is never best, and costs typical and strong students 17–26% more time for
+each card remembered. Between Automatic, 85% and 90% it depends on the
+student, by 5–13%: stronger students do a little better lower, the weak one at
+90%. Automatic mostly sits at 85% here because these students are usually
+behind. The weak student is the least trustworthy row: FSRS's starting
+settings expect about 80% right from it and it gets about 66%, which a real
+student's fit at 1,000 answers is there to correct and the simulation doesn't
+do. Nothing was changed on the strength of this; the default stays Automatic.
+
+**Not done.** The simulated students aren't tuned to the owner's own memory:
+that needs the owner's answers read from the live database, and this session's
+permissions refused a read of production. Nor was the status check run on the
+owner's data before shipping, for the same reason; its first real run is in
+the owner's browser. The browser test is rescued but not yet one command (see
+Open items).
+
 ## Open items
 
+- **Run `migration_013`** in the Supabase SQL editor. Until then answers are
+  saved without their settings, the set records aren't kept, and the Status
+  dialog's set checks say they are waiting for the database update.
+- **The browser simulation as one command.** Its files are in
+  `tests/simulate/` as they were left on 2026-09-25: paths point at that
+  session's temporary folder, the upload reads the owner's notebook from
+  `~/Downloads`, and the stand-in database knows neither `fsrs_settings` nor
+  `migration_013`. Still to do: take paths from the environment, generate a
+  notebook from `cards.js`, add the new tables to the stand-in, run the status
+  check on its final state, and check the stand-in's schema against a real
+  Postgres built from `supabase/schema.sql` and the migrations (Postgres 16 is
+  installed on the Mac).
+- **Tune the simulated students to the owner's memory**, from the owner's own
+  answers; needs a read of the live `card_reviews`.
 - **A few rules are filed as words or phrases**, outside the sort (it only
   reads `G`/`P`): "voie passive" → "passive: être + participe passé" and
   "double pronoms (COD + COI)" → "pronoun order…" in the owner's deck. Most of

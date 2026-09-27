@@ -19,6 +19,8 @@ import { BetaFeedback } from "./BetaFeedback";
 import ApiKeyModal from "./ApiKeyModal";
 import FsrsSettingsModal from "./FsrsSettingsModal";
 import { useFsrsSettings } from "./useFsrsSettings";
+import StatusModal from "./StatusModal";
+import { useStatusCheck } from "./useStatusCheck";
 import { keyHeaders, hasKey } from "./lib/anthropicKey";
 
 const SIDEBAR_WIDTH = 256;
@@ -61,12 +63,13 @@ import {
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
-import { localISODate, reviewedToday, endOfLocalDay, startOfLocalDay } from "./lib/studyDay";
+import { localISODate, reviewedToday, endOfLocalDay, startOfLocalDay, browserTimeZone } from "./lib/studyDay";
 import { progressByArea, progressChanges, aboutRemembered, summarize, areaDates } from "./lib/progress";
-import { buildSession, applyAnswer, placeRetry, countBuckets } from "./lib/sessionQueue";
-import { RE_QUEUE_OFFSET, State } from "./lib/spacedRepetition";
+import { buildSession, applyAnswer, placeRetry, countBuckets, BLOCK_SIZE } from "./lib/sessionQueue";
+import { RE_QUEUE_OFFSET, State, settingsInUse } from "./lib/spacedRepetition";
 import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, resetColumns } from "./lib/directions";
-import { newReviewId, reviewRow } from "./lib/reviewLog";
+import { newReviewId, reviewRow, withoutExtras, missingColumn } from "./lib/reviewLog";
+import { dealRow, missingTable } from "./lib/dealLog";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -627,6 +630,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   const [feedbackVerdict, setFeedbackVerdict] = useState(null); // {verdict, reasoning}
   const autoAdvanceTimer = useRef(null);
   const isAdmin = !!(user?.email && user.email.toLowerCase() === ADMIN_EMAIL);
+  // "Status" in the profile menu (admin only): whether the cards are being
+  // shown the way FSRS and the app's rules say. See lib/statusChecks.js.
+  const [showStatus, setShowStatus] = useState(false);
+  const status = useStatusCheck(user, { enabled: isAdmin, ready: deckLoaded });
 
   // Load card alternates from Supabase on mount (and when user changes)
   useEffect(() => {
@@ -693,6 +700,22 @@ export default function FlashcardApp({ user, onSignOut }) {
     return candidates;
   }, [typeFilter, lessonFilter]);
 
+  // The record of each set dealt (lib/dealLog.js), for the status check. Never
+  // waited on and never retried: a set is studied the same whether its record
+  // saved or not. Before migration_013 there is no table to write to: after the
+  // first refusal nothing more is sent that study day, and the next day tries
+  // again, so a page left open picks it up once the update has been run.
+  const dealLogOffRef = useRef(null);
+  const recordDeal = (fields) => {
+    if (!user?.id || dealLogOffRef.current === localISODate()) return;
+    const row = dealRow({ id: newReviewId(), userId: user.id, timeZone: browserTimeZone(), ...fields });
+    supabase.from("dealt_sets").insert(row).then(({ error }) => {
+      if (!error) return;
+      if (missingTable(error) || missingColumn(error)) dealLogOffRef.current = localISODate();
+      else console.warn("Recording a dealt set failed:", error.message || error);
+    });
+  };
+
   useEffect(() => {
     if (!loaded) return;
     // Direction is not part of this: changing it re-deals the cards still to
@@ -721,16 +744,17 @@ export default function FlashcardApp({ user, onSignOut }) {
       const tail = entries.slice(at + 1);
       const kept = new Set(tail.filter((c) => c._retry || blockAnswersRef.current.has(slotKeyOf(c))));
       const room = tail.length - kept.size;
-      const fill = room > 0
+      const dealt = room > 0
         ? buildSession(candidates, {
             direction: dirRef.current,
             target: room,
-            spotCheckSlots: tail.filter((c) => !kept.has(c) && c._bucket === "spot").length,
             lessonMode: lessonFilter !== "all",
             lessonRank,
             inBlock: [...head, ...kept],
-          }).queue
-        : [];
+          })
+        : null;
+      if (dealt) recordDeal({ kind: "rest", scope: filterSig, direction: dirRef.current, slots: room, dealt, kept: [...head, ...kept] });
+      const fill = dealt ? dealt.queue : [];
       let f = 0;
       return [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
     };
@@ -838,11 +862,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     // which ways of words and phrases are dealt. Grammar and pronunciation
     // cards are rules with examples, not translations — always shown as
     // written, whatever the setting.
-    const { queue: cards, counts } = buildSession(candidates, {
+    const dealt = buildSession(candidates, {
       direction: dirRef.current,
       lessonMode: lessonFilter !== "all",
       lessonRank,
     });
+    const { queue: cards, counts } = dealt;
+    recordDeal({ kind: "new", scope: filterSig, direction: dirRef.current, slots: BLOCK_SIZE, dealt });
     blockStartRef.current = progressByArea(userCards);
 
     // A full rebuild is a NEW block — first load, a filter or direction
@@ -1046,16 +1072,17 @@ export default function FlashcardApp({ user, onSignOut }) {
     const tail = deck.slice(firstOpen);
     const kept = new Set(tail.filter((c) => asked(c) || blockAnswersRef.current.has(slotKeyOf(c))));
     const room = tail.length - kept.size;
-    const fill = room > 0
+    const dealt = room > 0
       ? buildSession(candidatesFrom(userCards), {
           direction: dir,
           target: room,
-          spotCheckSlots: 0,
           lessonMode: lessonFilter !== "all",
           lessonRank,
           inBlock: [...head, ...kept],
-        }).queue
-      : [];
+        })
+      : null;
+    if (dealt) recordDeal({ kind: "direction", scope: `${typeFilter}|${lessonFilter}`, direction: dir, slots: room, dealt, kept: [...head, ...kept] });
+    const fill = dealt ? dealt.queue : [];
     let f = 0;
     const next = [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
     setDeck(next);
@@ -1278,6 +1305,19 @@ export default function FlashcardApp({ user, onSignOut }) {
       countFailed();
     }
   };
+  // An answer's record. Before migration_013 the database has no columns for
+  // the settings it was scheduled with: the answer is saved without them
+  // rather than not at all, and after the first refusal they aren't sent again
+  // that study day.
+  const reviewExtrasOffRef = useRef(null);
+  const saveReviewRow = async (row) => {
+    if (reviewExtrasOffRef.current !== localISODate()) {
+      const res = await supabase.from("card_reviews").upsert(row, { onConflict: "id" });
+      if (!missingColumn(res.error)) return res;
+      reviewExtrasOffRef.current = localISODate();
+    }
+    return supabase.from("card_reviews").upsert(withoutExtras(row), { onConflict: "id" });
+  };
   // `send` makes a fresh request each time: a retry sends it again.
   const save = (key, answer, send) => {
     const entry = { answer, send, failed: false };
@@ -1372,8 +1412,9 @@ export default function FlashcardApp({ user, onSignOut }) {
       const row = reviewRow({
         id: reviewId, userId: user.id, cardId: card.row_id, dir: cardDir, got,
         before, after: before ? sr : null, at: answeredAt,
+        settings: before ? settingsInUse() : null, timeZone: before ? browserTimeZone() : null,
       });
-      save(`review:${reviewId}`, reviewId, () => supabase.from("card_reviews").upsert(row, { onConflict: "id" }));
+      save(`review:${reviewId}`, reviewId, () => saveReviewRow(row));
     }
     // Record today's review date for streak tracking.
     // Write to Supabase (persists across devices) and update local state so
@@ -2366,6 +2407,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 onClick={() => setShowProfileMenu(v => !v)}
               >
                 <div style={S.profileAvatar}>{user.email[0].toUpperCase()}</div>
+                {isAdmin && status.amiss && <span data-status-alert="avatar" style={S.avatarAlert} aria-label="Status needs checking" />}
               </button>
               {showProfileMenu && (
                 <div style={S.profileMenuBottom}>
@@ -2396,6 +2438,16 @@ export default function FlashcardApp({ user, onSignOut }) {
                     How much to remember
                   </button>
                   {isAdmin && (<>
+                    <button
+                      data-status-toggle
+                      style={S.profileMenuItem}
+                      onClick={() => { setShowStatus(true); setShowProfileMenu(false); status.run(); }}
+                    >
+                      <span style={S.statusLine}>
+                        Status
+                        {status.amiss && <span data-status-alert="menu" style={S.statusAlert} aria-label="needs checking">!</span>}
+                      </span>
+                    </button>
                     <button
                       style={S.profileMenuItem}
                       onClick={() => { setShowFeedbackModal(true); setShowProfileMenu(false); }}
@@ -2472,6 +2524,11 @@ export default function FlashcardApp({ user, onSignOut }) {
         open={showFsrsSettings}
         onClose={() => setShowFsrsSettings(false)}
         settings={fsrs}
+      />
+      <StatusModal
+        open={showStatus}
+        onClose={() => setShowStatus(false)}
+        status={status}
       />
       <CahierUpload
         open={showUpload}
@@ -4262,7 +4319,12 @@ const S = {
   // Legacy styles kept for reference
   sideProfile: { padding:"16px 20px 8px", position:"relative" },
   sideFeedback: { padding:"12px 20px 20px", marginTop:"auto", borderTop:"1px solid rgba(3,22,50,0.06)", display:"flex", flexDirection:"column", gap:10 },
-  profileBtn: { display:"flex", alignItems:"center", justifyContent:"center", padding:0, background:"transparent", border:"none", borderRadius:"50%", cursor:"pointer" },
+  profileBtn: { position:"relative", display:"flex", alignItems:"center", justifyContent:"center", padding:0, background:"transparent", border:"none", borderRadius:"50%", cursor:"pointer" },
+  // The status check's alert: a dot on the avatar, and a mark on the menu's
+  // Status line, while a check has failed or couldn't run.
+  avatarAlert: { position:"absolute", top:-1, right:-1, width:10, height:10, borderRadius:"50%", background:T.color.error, border:`2px solid ${T.color.surfaceLow}`, boxSizing:"border-box" },
+  statusLine: { display:"inline-flex", alignItems:"center", gap:8 },
+  statusAlert: { display:"inline-flex", alignItems:"center", justifyContent:"center", width:16, height:16, borderRadius:"50%", background:T.color.error, color:T.color.onError, fontSize:10, fontWeight:700, lineHeight:1 },
   profileAvatar: { width:32, height:32, borderRadius:"50%", background:T.color.primary, color:T.color.onPrimary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:600, fontFamily:T.font.sans, flexShrink:0 },
   profileChevron: { marginLeft:"auto", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.5 },
   profileMenu: { position:"absolute", top:"100%", left:16, right:16, background:T.color.surfaceLowest, borderRadius:T.radius.lg, boxShadow:"0 8px 32px rgba(3,22,50,0.12)", padding:"8px 0", zIndex:20, fontFamily:T.font.sans },

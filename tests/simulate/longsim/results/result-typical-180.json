@@ -1,0 +1,403 @@
+{
+  "current": {
+    "answers": 11792,
+    "answersPerStudyDay": 76.4,
+    "p90AnswersPerStudyDay": 142,
+    "maxAnswersDay": 200,
+    "newIntroduced": 1242,
+    "dueRetention": 0.856,
+    "fsrsPredicted": 0.827,
+    "logLoss": 0.3699,
+    "spotChecks": 340,
+    "spotRight": 0.981,
+    "siblingSameDay": 663,
+    "zeroDayCounted": 411,
+    "avgDueLeftEndOfDay": 41.4,
+    "day90": {
+      "itemsKnown": 754,
+      "wordsKnownBothWays": 360,
+      "itemsSeen": 783
+    },
+    "day180": {
+      "itemsKnown": 1215,
+      "wordsKnownBothWays": 600,
+      "itemsSeen": 1242
+    },
+    "knownPer100Answers": 10.31,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 8162,
+        "predicted": 0.753,
+        "actual": 0.752
+      },
+      "0.80-0.85": {
+        "n": 5215,
+        "predicted": 0.829,
+        "actual": 0.849
+      },
+      "0.85-0.90": {
+        "n": 21645,
+        "predicted": 0.884,
+        "actual": 0.932
+      },
+      "0.90-0.95": {
+        "n": 7444,
+        "predicted": 0.907,
+        "actual": 0.953
+      },
+      "<0.70": {
+        "n": 6222,
+        "predicted": 0.631,
+        "actual": 0.622
+      },
+      ">=0.95": {
+        "n": 37,
+        "predicted": 0.956,
+        "actual": 0.973
+      }
+    }
+  },
+  "localDays": {
+    "answers": 11792,
+    "answersPerStudyDay": 76.4,
+    "p90AnswersPerStudyDay": 142,
+    "maxAnswersDay": 200,
+    "newIntroduced": 1254,
+    "dueRetention": 0.851,
+    "fsrsPredicted": 0.837,
+    "logLoss": 0.3798,
+    "spotChecks": 342,
+    "spotRight": 0.98,
+    "siblingSameDay": 653,
+    "zeroDayCounted": 424,
+    "avgDueLeftEndOfDay": 43.8,
+    "day90": {
+      "itemsKnown": 760,
+      "wordsKnownBothWays": 366,
+      "itemsSeen": 790
+    },
+    "day180": {
+      "itemsKnown": 1225,
+      "wordsKnownBothWays": 603,
+      "itemsSeen": 1254
+    },
+    "knownPer100Answers": 10.39,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 8627,
+        "predicted": 0.755,
+        "actual": 0.725
+      },
+      "0.80-0.85": {
+        "n": 6124,
+        "predicted": 0.829,
+        "actual": 0.802
+      },
+      "0.85-0.90": {
+        "n": 22286,
+        "predicted": 0.883,
+        "actual": 0.929
+      },
+      "0.90-0.95": {
+        "n": 7165,
+        "predicted": 0.907,
+        "actual": 0.951
+      },
+      "<0.70": {
+        "n": 4137,
+        "predicted": 0.65,
+        "actual": 0.596
+      },
+      ">=0.95": {
+        "n": 23,
+        "predicted": 0.96,
+        "actual": 1
+      }
+    }
+  },
+  "siblings": {
+    "answers": 11792,
+    "answersPerStudyDay": 76.4,
+    "p90AnswersPerStudyDay": 142,
+    "maxAnswersDay": 200,
+    "newIntroduced": 1215,
+    "dueRetention": 0.839,
+    "fsrsPredicted": 0.831,
+    "logLoss": 0.3923,
+    "spotChecks": 338,
+    "spotRight": 0.982,
+    "siblingSameDay": 9,
+    "zeroDayCounted": 375,
+    "avgDueLeftEndOfDay": 47.6,
+    "day90": {
+      "itemsKnown": 739,
+      "wordsKnownBothWays": 349,
+      "itemsSeen": 770
+    },
+    "day180": {
+      "itemsKnown": 1189,
+      "wordsKnownBothWays": 581,
+      "itemsSeen": 1215
+    },
+    "knownPer100Answers": 10.09,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 8470,
+        "predicted": 0.753,
+        "actual": 0.713
+      },
+      "0.80-0.85": {
+        "n": 6134,
+        "predicted": 0.829,
+        "actual": 0.801
+      },
+      "0.85-0.90": {
+        "n": 21963,
+        "predicted": 0.883,
+        "actual": 0.927
+      },
+      "0.90-0.95": {
+        "n": 6590,
+        "predicted": 0.906,
+        "actual": 0.953
+      },
+      "<0.70": {
+        "n": 5089,
+        "predicted": 0.643,
+        "actual": 0.565
+      },
+      ">=0.95": {
+        "n": 27,
+        "predicted": 0.959,
+        "actual": 1
+      }
+    }
+  },
+  "newCap": {
+    "answers": 10569,
+    "answersPerStudyDay": 68.5,
+    "p90AnswersPerStudyDay": 101,
+    "maxAnswersDay": 149,
+    "newIntroduced": 1149,
+    "dueRetention": 0.857,
+    "fsrsPredicted": 0.841,
+    "logLoss": 0.3721,
+    "spotChecks": 314,
+    "spotRight": 0.982,
+    "siblingSameDay": 652,
+    "zeroDayCounted": 399,
+    "avgDueLeftEndOfDay": 29.4,
+    "day90": {
+      "itemsKnown": 672,
+      "wordsKnownBothWays": 320,
+      "itemsSeen": 698
+    },
+    "day180": {
+      "itemsKnown": 1121,
+      "wordsKnownBothWays": 554,
+      "itemsSeen": 1149
+    },
+    "knownPer100Answers": 10.6,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 7390,
+        "predicted": 0.754,
+        "actual": 0.731
+      },
+      "0.80-0.85": {
+        "n": 4775,
+        "predicted": 0.83,
+        "actual": 0.814
+      },
+      "0.85-0.90": {
+        "n": 20487,
+        "predicted": 0.883,
+        "actual": 0.921
+      },
+      "0.90-0.95": {
+        "n": 7308,
+        "predicted": 0.907,
+        "actual": 0.951
+      },
+      "<0.70": {
+        "n": 3408,
+        "predicted": 0.652,
+        "actual": 0.603
+      },
+      ">=0.95": {
+        "n": 21,
+        "predicted": 0.957,
+        "actual": 1
+      }
+    }
+  },
+  "ret85": {
+    "answers": 11792,
+    "answersPerStudyDay": 76.4,
+    "p90AnswersPerStudyDay": 142,
+    "maxAnswersDay": 200,
+    "newIntroduced": 1357,
+    "dueRetention": 0.807,
+    "fsrsPredicted": 0.802,
+    "logLoss": 0.4631,
+    "spotChecks": 310,
+    "spotRight": 0.981,
+    "siblingSameDay": 585,
+    "zeroDayCounted": 467,
+    "avgDueLeftEndOfDay": 36.3,
+    "day90": {
+      "itemsKnown": 798,
+      "wordsKnownBothWays": 373,
+      "itemsSeen": 848
+    },
+    "day180": {
+      "itemsKnown": 1305,
+      "wordsKnownBothWays": 635,
+      "itemsSeen": 1357
+    },
+    "knownPer100Answers": 11.07,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 10732,
+        "predicted": 0.757,
+        "actual": 0.728
+      },
+      "0.80-0.85": {
+        "n": 20494,
+        "predicted": 0.833,
+        "actual": 0.859
+      },
+      "0.85-0.90": {
+        "n": 9580,
+        "predicted": 0.86,
+        "actual": 0.896
+      },
+      "0.90-0.95": {
+        "n": 303,
+        "predicted": 0.917,
+        "actual": 0.931
+      },
+      "<0.70": {
+        "n": 4721,
+        "predicted": 0.649,
+        "actual": 0.58
+      }
+    }
+  },
+  "noSpot": {
+    "answers": 11792,
+    "answersPerStudyDay": 76.4,
+    "p90AnswersPerStudyDay": 142,
+    "maxAnswersDay": 200,
+    "newIntroduced": 1272,
+    "dueRetention": 0.851,
+    "fsrsPredicted": 0.838,
+    "logLoss": 0.3787,
+    "spotChecks": 0,
+    "spotRight": 0,
+    "siblingSameDay": 649,
+    "zeroDayCounted": 432,
+    "avgDueLeftEndOfDay": 44,
+    "day90": {
+      "itemsKnown": 770,
+      "wordsKnownBothWays": 366,
+      "itemsSeen": 805
+    },
+    "day180": {
+      "itemsKnown": 1241,
+      "wordsKnownBothWays": 609,
+      "itemsSeen": 1272
+    },
+    "knownPer100Answers": 10.53,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 8666,
+        "predicted": 0.754,
+        "actual": 0.728
+      },
+      "0.80-0.85": {
+        "n": 6278,
+        "predicted": 0.829,
+        "actual": 0.813
+      },
+      "0.85-0.90": {
+        "n": 23027,
+        "predicted": 0.883,
+        "actual": 0.925
+      },
+      "0.90-0.95": {
+        "n": 7756,
+        "predicted": 0.906,
+        "actual": 0.95
+      },
+      "<0.70": {
+        "n": 4252,
+        "predicted": 0.651,
+        "actual": 0.58
+      },
+      ">=0.95": {
+        "n": 42,
+        "predicted": 0.958,
+        "actual": 1
+      }
+    }
+  },
+  "all": {
+    "answers": 10664,
+    "answersPerStudyDay": 69.1,
+    "p90AnswersPerStudyDay": 102,
+    "maxAnswersDay": 147,
+    "newIntroduced": 1114,
+    "dueRetention": 0.84,
+    "fsrsPredicted": 0.832,
+    "logLoss": 0.3884,
+    "spotChecks": 312,
+    "spotRight": 0.978,
+    "siblingSameDay": 12,
+    "zeroDayCounted": 349,
+    "avgDueLeftEndOfDay": 35.7,
+    "day90": {
+      "itemsKnown": 656,
+      "wordsKnownBothWays": 309,
+      "itemsSeen": 683
+    },
+    "day180": {
+      "itemsKnown": 1087,
+      "wordsKnownBothWays": 535,
+      "itemsSeen": 1114
+    },
+    "knownPer100Answers": 10.19,
+    "calibration": {
+      "0.70-0.80": {
+        "n": 7299,
+        "predicted": 0.753,
+        "actual": 0.723
+      },
+      "0.80-0.85": {
+        "n": 4919,
+        "predicted": 0.829,
+        "actual": 0.815
+      },
+      "0.85-0.90": {
+        "n": 19953,
+        "predicted": 0.883,
+        "actual": 0.924
+      },
+      "0.90-0.95": {
+        "n": 6633,
+        "predicted": 0.906,
+        "actual": 0.949
+      },
+      "<0.70": {
+        "n": 4771,
+        "predicted": 0.642,
+        "actual": 0.545
+      },
+      ">=0.95": {
+        "n": 26,
+        "predicted": 0.959,
+        "actual": 0.962
+      }
+    }
+  }
+}

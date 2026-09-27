@@ -63,8 +63,11 @@ import { endOfLocalDay, localISODate, localISODateDaysAgo, reviewedToday } from 
 import { lessonIdOf } from "./lessonSource.js";
 import { sideOf, sideColumns, directionsOf, isTwoWay, otherDirection, itemKey } from "./directions.js";
 
+// A block — the set of cards between checkpoints — is this many answers.
+export const BLOCK_SIZE = 50;
+
 const DEFAULTS = Object.freeze({
-  target: 50,
+  target: BLOCK_SIZE,
   // A class within this many days is "recent": what the student is being
   // taught right now, so its words come before the older pile.
   recentDays: 14,

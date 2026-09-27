@@ -42,7 +42,9 @@ const SESSION = {
 // last choice. Suites were written against flip mode, so that is what they get
 // unless they ask; pass null to open as a brand-new student with no choice
 // stored.
-export async function openApp({ width = 1400, height = 900, route, studyMode = "flip" } = {}) {
+// `app`: another build of the app to open (the statusline suite runs one with
+// the test account as admin).
+export async function openApp({ width = 1400, height = 900, route, studyMode = "flip", app = APP } = {}) {
   const browser = await chromium.launch({
     executablePath: CHROME,
     args: ["--no-sandbox"],
@@ -51,7 +53,7 @@ export async function openApp({ width = 1400, height = 900, route, studyMode = "
   page.on("pageerror", (e) => console.log("  [pageerror]", e.message.slice(0, 180)));
   page.on("dialog", (d) => d.accept());
 
-  await page.goto(APP);
+  await page.goto(app);
   await page.evaluate((mode) => {
     if (mode) localStorage.setItem("study-mode", mode);
     else localStorage.removeItem("study-mode");

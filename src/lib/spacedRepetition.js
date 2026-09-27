@@ -68,6 +68,13 @@ export function applySettings({ weights, retention } = {}) {
   return scheduler;
 }
 
+// What the scheduler in use schedules with, as ts-fsrs holds it: the target
+// and the 21 weights. Saved with each counted answer (lib/reviewLog.js).
+export function settingsInUse(sched = scheduler) {
+  const p = sched.parameters;
+  return { target: p.request_retention, weights: Array.from(p.w) };
+}
+
 // When a wrong-answer card is re-queued in the same session, insert it this
 // many positions after the current index.
 //
