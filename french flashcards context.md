@@ -684,7 +684,7 @@ Nothing is written to the database without `--apply`. The scripts that rewrite c
 
 | Script | What it does |
 |---|---|
-| `status-check.mjs` | Runs the nine status checks on a student's live record, and only reads. It checks the admin unless `--email` names someone else; `--from YYYY-MM-DD` judges from an earlier day, `--tz` sets the time zone for answers saved without one, `--all` shows every detail. The owner runs it: Claude Code's auto mode blocks Claude from reading production |
+| `status-check.mjs` | Runs the nine status checks on a student's live record, and only reads. It checks the admin unless `--email` names someone else; `--from YYYY-MM-DD` judges from an earlier day, `--tz` sets the time zone for answers saved without one, `--all` shows every detail. Claude runs it on the owner's Mac under the rule in `.claude/settings.local.json`; without that rule auto mode blocks it from reading production. The owner's `.env.local` leaves both admin addresses blank, so pass `--email` |
 | `resolve-feedback.mjs` | Lists open feedback; `<ids> --note "…" --apply` marks entries resolved. Never deletes |
 | `resolve-disputes.mjs` | Settles old disputed marks in `feedback_submissions`, leaving `uncertain` ones alone: a machine that can't decide shouldn't close a complaint about its own marking |
 | `fix-multi-sense.mjs` | Splits cards that teach two words. Never applied. It doesn't skip archived or lesson cards, and it overwrites any card that already has a new card's front |
@@ -1253,7 +1253,9 @@ sets the time zone for answers saved without one, and `--all` lists every
 detail. Claude Code's auto mode blocks Claude from running it because it reads
 production, unless `.claude/settings.local.json` allows
 `Bash(node scripts/status-check.mjs *)`. The owner's Mac has had that rule
-since 2026-09-28; the file is local and not committed.
+since 2026-09-28 (owner, 2026-09-28); the file is local and not committed.
+The owner's `.env.local` leaves `ADMIN_EMAIL` and `VITE_ADMIN_EMAIL` blank, so
+there the script needs `--email` with the owner's address.
 
 **What the app records for it.** `migration_013` (run by the owner on
 2026-09-28) added two records. Each counted answer in `card_reviews` also
@@ -1566,6 +1568,12 @@ on a live record from the terminal, read-only (`f476e48`). This document was
 checked against the code section by section and rewritten shorter and plainer
 at the owner's request; History became this log, and the problems the check
 turned up are in Open items.
+
+First run on the owner's live record (2026-09-28): 38 counted answers since
+2026-09-27, all scheduled as FSRS says, one a day, each card's schedule its
+last answer's, none asked early. The set checks wait for the first recorded
+set; the predictions check needs 300 reviews (24 so far: 80% expected, 79%
+right).
 
 ---
 
