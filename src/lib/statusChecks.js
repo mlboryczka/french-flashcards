@@ -640,9 +640,11 @@ function checkPredictions(idx, ctx) {
 //   timeZone  the student's time zone, for rows that don't carry one
 //   dealsTable  false when the database hasn't the dealt_sets table yet
 //   lessonRank  the lessons' teaching order (data/lessons)
+//   from      the first study day judged (YYYY-MM-DD)
+//   examples  how many details to keep per check
 export function runStatusChecks({
   answers = [], deals = [], cards = [], settings = null, timeZone = null,
-  now = Date.now(), dealsTable = true, lessonRank = null, from = CHECKS_START,
+  now = Date.now(), dealsTable = true, lessonRank = null, from = CHECKS_START, examples = EXAMPLES,
 } = {}) {
   const idx = indexRecord({ answers, cards, deals, timeZone });
   const startDay = labelNo(from);
@@ -671,7 +673,7 @@ export function runStatusChecks({
     checkFirstMeetings(idx, ctx),
     checkDealt(idx, ctx),
     checkPredictions(idx, ctx),
-  ].map((r) => ({ ...r, details: r.details.slice(0, EXAMPLES), more: Math.max(0, r.details.length - EXAMPLES) }));
+  ].map((r) => ({ ...r, details: r.details.slice(0, examples), more: Math.max(0, r.details.length - examples) }));
   const counted = idx.rows.filter((r) => r.counted && inWindow(r)).length;
   const week = idx.rows.filter((r) => ms(r.answered_at) >= now - 7 * DAY);
   return {
