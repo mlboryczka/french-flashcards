@@ -13,7 +13,7 @@
 //     one to another and back carries on where the student was;
 //   • a set is kept for the day it was dealt; the next day starts afresh (the
 //     answers are all saved anyway);
-//   • kept per browser: a phone and a laptop each have their own place.
+//   • kept per browser: each browser has its own place.
 //
 // A set is kept by reference — each entry is a card and a way round, never the
 // card's fields — so when it comes back the cards are read from the deck as it

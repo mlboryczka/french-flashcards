@@ -91,6 +91,31 @@ res=mkRes();
 await handler({method:'POST', headers:{authorization:'Bearer nope'}, body:{splits:[{row_id:'r1',cards:[]}]}}, res);
 ck('rejected', res.code===401, `${res.code}`);
 
+// ── The corrections log (api/parse-corrections.js) ──────────────────────────
+// handlePost read `admin_user` from handler's scope, which it can't see, so
+// every correction the admin logged threw and was lost, 2026-09-08 to
+// 2026-09-29. The app ignores the log's errors, so nothing showed it.
+console.log('\n  the corrections log saves a correction');
+{
+  const logged = [];
+  globalThis.__fakeCorrections = {
+    from: (table) => ({
+      insert: (row) => { logged.push({ table, row }); return { select: () => ({ single: async () => ({ data: { id: 7 }, error: null }) }) }; },
+    }),
+  };
+  globalThis.__fakeAdminUser = { id: 'admin-1', email: 'owner@example.com' };
+  const src = readFileSync(new URL('../../api/parse-corrections.js', import.meta.url), 'utf8')
+    .replace('import { createClient } from "@supabase/supabase-js";', 'const createClient = () => globalThis.__fakeCorrections;')
+    .replace('import { requireAdmin } from "./_lib/auth.js";', 'const requireAdmin = async () => globalThis.__fakeAdminUser;');
+  const { default: corrections } = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+  const r = mkRes();
+  await corrections({ method: 'POST', headers: { authorization: 'Bearer good' }, query: {},
+    body: { category: 'front', action: 'edit', original_front: 'la moitie', corrected_front: 'la moitié' } }, r);
+  ck('saved, not an error', r.code === 200 && r.body?.ok === true, `HTTP ${r.code} ${JSON.stringify(r.body)}`);
+  ck('as the signed-in admin', logged.length === 1 && logged[0].table === 'parse_corrections' && logged[0].row.user_id === 'admin-1',
+     JSON.stringify(logged));
+}
+
 const n = ck.fails();
 console.log(n ? `\n  FAILED: ${n}` : '\n  all checks passed');
 process.exit(n ? 1 : 0);

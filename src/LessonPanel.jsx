@@ -2,8 +2,8 @@
 //
 // Same slide-over mechanics as ChatPanel — mounted/entered so it animates out
 // as well as in, a two-frame delay before the transform so the browser has a
-// start position to animate from, reflow on wide screens and an overlay with a
-// scrim on narrow ones. Those were worked out once for the tutor; this follows
+// start position to animate from, reflow in a wide window and an overlay with a
+// scrim in a narrower one. Those were worked out once for the tutor; this follows
 // them rather than inventing a third set of timings.
 //
 // What it holds is deliberately not the lesson document. You open this because

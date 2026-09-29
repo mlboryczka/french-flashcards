@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   });
 
   if (req.method === "POST") {
-    return handlePost(req, res, admin);
+    return handlePost(req, res, admin, admin_user);
   }
   if (req.method === "GET") {
     if (req.query?.aggregate === "true") {
@@ -35,7 +35,10 @@ export default async function handler(req, res) {
   return res.status(405).json({ error: "Method not allowed" });
 }
 
-async function handlePost(req, res, admin) {
+// `adminUser` is the signed-in admin, passed in: this function once read
+// `admin_user` from handler's scope, which it can't see, so every POST threw
+// and no correction was logged from 2026-09-08 to 2026-09-29.
+async function handlePost(req, res, admin, adminUser) {
   const body = req.body || {};
   const {
     category,
@@ -53,7 +56,7 @@ async function handlePost(req, res, admin) {
     return res.status(400).json({ error: "category is required" });
   }
 
-  const user_id = body.user_id || admin_user.id;
+  const user_id = body.user_id || adminUser.id;
 
   const { data, error } = await admin
     .from("parse_corrections")

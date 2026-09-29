@@ -59,7 +59,7 @@ export function BetaFeedback({
   onOpen,
   onClose,
   // The sidebar element the panel and its toast render into. FlashcardApp
-  // owns where that is; null (narrow layout) means there is nowhere to show it.
+  // owns where that is; null until the sidebar has rendered.
   dockEl,
   // Bumped by the flag on the card. Each bump switches "attach this card" on,
   // even if it had been switched off for an earlier draft.

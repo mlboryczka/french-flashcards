@@ -97,7 +97,7 @@ function normalize(s) {
     .replace(/œ/g, "oe").replace(/æ/g, "ae")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/\([^)]*\)/g, "")
-    // Curly quotes too: phones type ’, so "d’un air" and "d'un air" differ
+    // Curly quotes too: smart punctuation types ’, so "d’un air" and "d'un air" differ
     // by a character the reader can't see.
     .replace(/[.,!?;:""''«»’‘“”…]/g, "")
     .replace(/\s+/g, " ")
@@ -571,14 +571,9 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Inline card edit state
   const [editingCard, setEditingCard] = useState(null); // null | card object
 
-  // Viewport-narrow flag — used by the bento grid in the Stats view to
-  // collapse to a single column on phones. Inline-style based, so we track
-  // window width with a tiny resize listener instead of a CSS media query.
-  const [isNarrow, setIsNarrow] = useState(
-    typeof window !== "undefined" && window.innerWidth < 768
-  );
-  // The actual width too, because whether a panel can reflow the page is a
-  // question about how much room is LEFT, not about phone versus desktop.
+  // The window's width, because whether a panel can sit beside the card is a
+  // question about how much room is left. There is no phone layout: the app
+  // is for a computer's browser (the owner, 2026-09-29).
   const [winWidth, setWinWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1400
   );
@@ -591,7 +586,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        setIsNarrow(window.innerWidth < 768);
         setWinWidth(window.innerWidth);
       });
     };
@@ -601,13 +595,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, []);
-  // The feedback panel lives in the desktop sidebar, which the narrow layout
-  // doesn't have. Left "open" across that change, nothing would show it but
-  // `overlayOpen` would go on swallowing the card's keyboard shortcuts.
-  useEffect(() => {
-    if (isNarrow) setShowFeedback(false);
-  }, [isNarrow]);
-
   // Review dates for streak tracking, loaded from Supabase.
   // Set of ISO date strings (e.g. "2026-04-16") on which the user reviewed
   // at least one card. Populated on mount and appended to in answer().
@@ -1667,8 +1654,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   // on for a clicked button at the very keypress being asked about.)
   const roomToReflow = (panelWidth) =>
     winWidth - (sidebarMin ? SIDEBAR_MIN_WIDTH : SIDEBAR_WIDTH) - panelWidth >= MIN_REFLOW_CONTENT;
-  const chatReflow = showChat && !isNarrow && roomToReflow(CHAT_PANEL_WIDTH);
-  const lessonReflow = showLessonPanel && !isNarrow && roomToReflow(LESSON_PANEL_WIDTH);
+  const chatReflow = showChat && roomToReflow(CHAT_PANEL_WIDTH);
+  const lessonReflow = showLessonPanel && roomToReflow(LESSON_PANEL_WIDTH);
   const overlayOpen =
     (showChat && !chatReflow) || showFeedback || showUpload || showKeyModal ||
     (showLessonPanel && !lessonReflow) ||
@@ -2295,7 +2282,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // ── SHELL: SIDEBAR ──────────────────────────────────────────────────
   // The sidebar is the global app shell. On wide screens it's a fixed
-  // 256px-wide column; on phones it collapses to a fixed bottom nav.
+  // 256px-wide column, or a 64px rail when minimized.
   // Defined here (inside the component) so it captures all the closure
   // variables it needs without prop-drilling.
   // Icon SVGs for sidebar nav (14×14, inline, match Material Symbols style)
@@ -2318,21 +2305,16 @@ export default function FlashcardApp({ user, onSignOut }) {
     m === "study" ? mode === "study" && lessonFilter === "all" : mode === m;
 
   // Open the tutor panel and the app reflows to sit beside it rather than
-  // being covered — you can still read the card you're asking about. Below
-  // 768px there is no room to give, so the panel stays an overlay instead.
-  // Reflow only while the content column stays usable.
-  //
-  // "Not a phone" was the wrong test. A 900px window is not narrow by that
-  // rule, but 900 - 256 of sidebar - 460 of panel leaves 184px of column: the
-  // card turns portrait and crushes and the answer row runs off the edge.
-  // (The chips stacked one per line too, until they were made to scroll.) Below the floor the panel goes back to being
-  // an overlay with a scrim, which is what it already does on a phone and what
-  // it should always have done when there was nothing to reflow FOR.
+  // being covered — you can still read the card you're asking about. Reflow
+  // only while the content column stays usable: a 900px window leaves
+  // 900 - 256 of sidebar - 460 of panel = 184px of column, where the card
+  // turns portrait and crushes and the answer row runs off the edge. Below
+  // the floor the panel covers the app with a scrim instead.
   //
   // See MIN_REFLOW_CONTENT for where the floor comes from.
   // (roomToReflow, chatReflow and lessonReflow are computed further up, before
   // the keyboard handlers, which need to know whether the tutor covers the card.)
-  const shellStyle = isNarrow ? S.shellNarrow : S.shell;
+  const shellStyle = S.shell;
   // The room is made by MAIN, not by the shell. Padding the shell shrank the
   // sidebar too — its account block jumped up the page and left a gap —
   // when the sidebar is not what either panel covers. Only the content column
@@ -2350,10 +2332,10 @@ export default function FlashcardApp({ user, onSignOut }) {
   const sidebar = (
     <aside
       data-sidebar
-      data-minimized={!isNarrow && sidebarMin ? "" : undefined}
-      style={isNarrow ? S.sideBarBottom : sidebarMin ? { ...S.sideBar, ...S.sideBarMin } : S.sideBar}
+      data-minimized={sidebarMin ? "" : undefined}
+      style={sidebarMin ? { ...S.sideBar, ...S.sideBarMin } : S.sideBar}
     >
-      {!isNarrow && !sidebarMin && (
+      {!sidebarMin && (
         // Full width: in the corner of the sidebar's top padding, clear of the nav.
         <button
           data-sidebar-toggle
@@ -2367,8 +2349,8 @@ export default function FlashcardApp({ user, onSignOut }) {
         </button>
       )}
       {/* Nav items with icons */}
-      <nav style={isNarrow ? S.sideNavBottom : S.sideNav}>
-        {!isNarrow && sidebarMin && (
+      <nav style={S.sideNav}>
+        {sidebarMin && (
           // Minimized, the expand button is one more item in the rail: the
           // same button style as Cards and the rest, so it shares their centre
           // line (the 4px marker border offsets it, equally), their spacing and
@@ -2386,8 +2368,8 @@ export default function FlashcardApp({ user, onSignOut }) {
           </button>
         )}
         {navItems.map(([m, label]) => {
-          const baseStyle = isNarrow ? S.sideItemBottom : sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem;
-          const activeStyle = isNarrow ? S.sideItemBottomActive : S.sideItemActive;
+          const baseStyle = sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem;
+          const activeStyle = S.sideItemActive;
           return (
             <Fragment key={m}>
               <button
@@ -2399,18 +2381,17 @@ export default function FlashcardApp({ user, onSignOut }) {
                   if (m === "study") leaveLesson();
                   setMode(m);
                 }}
-                title={!isNarrow && sidebarMin ? label : undefined}
-                aria-label={!isNarrow && sidebarMin ? label : undefined}
+                title={sidebarMin ? label : undefined}
+                aria-label={sidebarMin ? label : undefined}
               >
                 <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
-                {!(sidebarMin && !isNarrow) && label}
+                {!sidebarMin && label}
               </button>
               {/* Lessons are the one nav item with children: each lesson sits
                   under it as a sub-item, so picking one is a single click
-                  rather than a trip through the catalogue. Only on desktop —
-                  the narrow layout's nav is a row of icons with no room to
-                  nest anything. */}
-              {m === "lessons" && !isNarrow && !sidebarMin && LESSONS.map((lesson) => {
+                  rather than a trip through the catalogue. Not on the rail,
+                  which has no room to nest anything. */}
+              {m === "lessons" && !sidebarMin && LESSONS.map((lesson) => {
                 const on = mode === "study" && lessonFilter === lesson.id;
                 return (
                   <button
@@ -2433,18 +2414,18 @@ export default function FlashcardApp({ user, onSignOut }) {
             a primary action, and nobody finds it behind an avatar. */}
         <button
           data-tutor-toggle
-          style={isNarrow ? S.sideItemBottom : sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem}
+          style={sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem}
           onClick={toggleChat}
-          title={!isNarrow && sidebarMin ? "Tutor" : undefined}
-          aria-label={!isNarrow && sidebarMin ? "Tutor" : undefined}
+          title={sidebarMin ? "Tutor" : undefined}
+          aria-label={sidebarMin ? "Tutor" : undefined}
         >
           <span style={S.sideIcon}>{NAV_ICONS.tutor}</span>
-          {!(sidebarMin && !isNarrow) && "Tutor"}
+          {!sidebarMin && "Tutor"}
         </button>
       </nav>
 
-      {/* Bottom: account, then feedback beneath it (desktop only) */}
-      {!isNarrow && user && (
+      {/* Bottom: account, then feedback beneath it */}
+      {user && (
         <>
         {/* The feedback panel's slot: the empty stretch between the nav and
             the account block. It takes the free height, pins the panel to its
@@ -4312,13 +4293,6 @@ const S = {
   // together. Anything that legitimately runs long (Stats) scrolls inside
   // main via mainInnerScroll rather than scrolling the whole page.
   shell: { display:"flex", height:"100vh", overflow:"hidden", boxSizing:"border-box", background:T.color.background },
-  // overflowX matters here and not on `shell`, which clips both axes
-  // already. The decorative blur circles in the card area are deliberately
-  // positioned outside their container (left:-60 / right:-60); on a phone
-  // that put the document 20px wider than the viewport and the whole page
-  // slid sideways. Clip horizontally only — the narrow layout scrolls
-  // vertically by design, and overflow-y stays effectively visible.
-  shellNarrow: { display:"flex", flexDirection:"column", minHeight:"100vh", background:T.color.background, overflowX:"hidden" },
   // minHeight:0 is what lets the flex children actually shrink; without it a
   // flex item refuses to go below its content size and the card pushes the
   // buttons off the bottom instead of getting smaller.
@@ -4334,7 +4308,6 @@ const S = {
   // the 64px rail; the rail is short enough never to need to scroll.
   sideBarMin: { width:SIDEBAR_MIN_WIDTH, overflowY:"visible", paddingTop:8 },
   sideBar: { width:SIDEBAR_WIDTH, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box", transition:`width ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
-  sideBarBottom: { position:"fixed", bottom:0, left:0, right:0, background:"rgba(247,243,241,0.95)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", padding:"4px 0", boxShadow:"0 -8px 32px rgba(3,22,50,0.06)", zIndex:30, display:"flex", flexDirection:"column" },
   // Not flex:1 any more — the feedback dock below takes the free height, so the
   // panel can sit in it. The nav looks the same either way.
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:"none" },
@@ -4342,12 +4315,10 @@ const S = {
   // Indented to sit under its parent nav item, and quieter than one: a lesson
   // is a place inside Lessons, not a peer of Cards and Stats.
   // Every nav style declares all FOUR border sides, even the three it does not
-  // use. The wide nav marks the active item on its right, the narrow one on
-  // its top; React diffs style objects per property, so crossing the 768px
-  // breakpoint used to leave the other layout's border behind — resize a wide
-  // window down and back and every item kept a stale top border, drawing a
-  // rule between each one. Declaring all four means switching always
-  // overwrites instead of relying on a property being absent.
+  // use, as longhands: React diffs style objects per property, so a side left
+  // undeclared keeps whatever an earlier style set there. Declaring all four
+  // means switching always overwrites instead of relying on a property being
+  // absent.
   //
   // A lesson sitting under Lessons. Its text starts at 64px, which is exactly
   // where a nav item's LABEL starts — sideItem is padded 32 and its 18px icon
@@ -4368,9 +4339,6 @@ const S = {
   // item deactivates.
   sideSubItem: { display:"block", width:"100%", padding:"7px 32px 7px 64px", border:"none", borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left", boxSizing:"border-box" },
   sideSubItemActive: { color:T.color.secondary, fontWeight:700, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
-  sideNavBottom: { display:"flex", flexDirection:"row", justifyContent:"space-around", padding:"4px 0", flex:1 },
-  sideItemBottom: { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"10px 8px", border:"none", borderRightWidth:0, borderRightStyle:"solid", borderRightColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderTopWidth:3, borderTopStyle:"solid", borderTopColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:9, fontWeight:700, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.08em" },
-  sideItemBottomActive: { color:T.color.secondary, borderTopColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
   // Minimized: the item is just its icon, centred in the rail. The right-edge
   // marker still shows which page you are on.
@@ -4752,7 +4720,6 @@ const S = {
   resetBtn: { display:"block", width:"100%", padding:"13px", border:"none", borderRadius:T.radius.md, background:"transparent", color:T.color.secondary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, marginTop:24 },
   // Legacy stats styles (kept to avoid crashes if any references remain)
   bento: { display:"grid", gridTemplateColumns:"repeat(12, minmax(0, 1fr))", gap:24, marginBottom:32 },
-  bentoNarrow: { display:"flex", flexDirection:"column", gap:18, marginBottom:32 },
   bentoCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"28px 30px", boxShadow:T.shadow.card, border:"none" },
   bentoTitle: { fontSize:20, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.01em", margin:"0 0 4px" },
   bentoSub: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:"0 0 18px" },

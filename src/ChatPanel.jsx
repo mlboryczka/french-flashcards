@@ -243,9 +243,9 @@ export default function ChatPanel({
   // per question and the server refuses without a key, so the error needs a
   // way out of itself rather than just an explanation.
   onNeedKey,
-  // Wide screens push the app aside to make room for the panel rather than
+  // A wide window pushes the app aside to make room for the panel rather than
   // covering it, so you can read the card you're asking about while you type.
-  // Narrow screens have no room to reflow, so the panel stays an overlay with
+  // A narrower window has no room to reflow, so the panel covers the app with
   // a scrim.
   reflow = false,
 }) {

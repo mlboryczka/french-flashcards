@@ -292,8 +292,8 @@ the same count and retries.
 - Going to another set and back brings the first one back, if it was dealt
   today. Its cards not yet reached are dealt again from the deck as it is now,
   unless nothing has changed.
-- A set lasts for the day it was dealt, in that browser: a phone and a laptop
-  each keep their own place, for now (owner, 2026-09-26).
+- A set lasts for the day it was dealt, in that browser: each browser keeps
+  its own place, for now (owner, 2026-09-26).
 - Signing out clears it. Reset all progress clears the sets but keeps the
   lesson, type and direction.
 - It is saved 400ms after a change, and at once when the page is hidden, so a
@@ -322,7 +322,7 @@ choice (`localStorage` `study-mode`). Tests open in flip mode unless they ask
   pronoun on an `il/elle` drill, a subjunctive with or without its que, the
   pronoun the instruction line asks for, and the lesson's current answer
   (`lessonBackFor`). Only "/" separates exact answers; a comma is part of one.
-- Anywhere, œ may be typed oe, a phone's ’ counts as an apostrophe, and … as
+- Anywhere, œ may be typed oe, a curly ’ counts as an apostrophe, and … as
   punctuation.
 
 **"My answer should be accepted"** asks Claude to look again
@@ -585,11 +585,11 @@ no screen for it.
 3. **Apply:** the original row becomes the first sense and keeps its history;
    the other senses are new cards. Malformed splits are refused.
 
-The script does its own writes, not through `api/apply-splits.js`. New senses
-get no class dates, and one whose front the deck already has overwrites that
-card (an upsert on `user_id, front`). It also reads archived and lesson cards.
-Nothing in the app calls `api/split-senses.js` or `api/apply-splits.js` any
-more.
+The script does its own writes, not through `api/apply-splits.js`. It skips
+archived and lesson cards, never overwrites a card (a sense whose front the
+deck already has isn't added, and new senses are plain inserts), gives new
+senses the original's class dates, and backs up the rows it rewrites. Nothing
+in the app calls `api/split-senses.js` or `api/apply-splits.js` any more.
 
 The sync's prompt (rule 8c in `parse-cahier.js`) and the tutor's forbid such
 cards; the upload dialog's (`cahier-parse.js`) does not.
@@ -678,16 +678,16 @@ unset, the model thought at high effort and the tutor was slow.
 They are run by hand on the owner's Mac. All but `release-lesson-cards.mjs`
 work on the live database: each reads `.env.local` itself and talks to
 Supabase and Anthropic directly, importing any prompt it shares with a route.
-Nothing is written to the database without `--apply`. The scripts that rewrite cards back the rows up to `backups/` first
-(git ignores it, because it holds other students' cards), except
-`fix-multi-sense.mjs`.
+Nothing is written to the database without `--apply`. The scripts that
+rewrite cards back the rows up to `backups/` first (git ignores it, because it
+holds other students' cards).
 
 | Script | What it does |
 |---|---|
 | `status-check.mjs` | Runs the nine status checks on a student's live record, and only reads. It checks the admin unless `--email` names someone else; `--from YYYY-MM-DD` judges from an earlier day, `--tz` sets the time zone for answers saved without one, `--all` shows every detail. Claude runs it on the owner's Mac under the rule in `.claude/settings.local.json`; without that rule auto mode blocks it from reading production. The owner's `.env.local` leaves both admin addresses blank, so pass `--email` |
 | `resolve-feedback.mjs` | Lists open feedback; `<ids> --note "…" --apply` marks entries resolved. Never deletes |
 | `resolve-disputes.mjs` | Settles old disputed marks in `feedback_submissions`, leaving `uncertain` ones alone: a machine that can't decide shouldn't close a complaint about its own marking |
-| `fix-multi-sense.mjs` | Splits cards that teach two words. Never applied. It doesn't skip archived or lesson cards, and it overwrites any card that already has a new card's front |
+| `fix-multi-sense.mjs` | Splits cards that teach two words. Never run on the live deck. Leaves archived and lesson cards alone, never overwrites a card (a sense the deck already has isn't added), gives new senses the original's class dates, and backs up before writing |
 | `sort-grammar-cards.mjs` | Sorted every live deck's rule and pronunciation cards on 2026-09-24, following the owner's hand sort (`scripts/data/grammar-sort-decisions.json`). `--apply <proposal>` applies exactly what the dry run wrote |
 | `merge-duplicates.mjs` | `<verdicts.json> <email> [--apply]`: merges cards already judged, one by one, to be the same card ("la poste" and "le poste" are not). Keeps the answered one and archives the rest. Used on the owner's deck on 2026-09-25/26 |
 | `reset-fsrs-seed.mjs` | Put the cards still holding `migration_007`'s guessed state back to not yet seen, in every deck, on 2026-09-14. A dry run since finds none |
@@ -745,8 +745,10 @@ The files:
 Styles are inline objects: `S` at the end of `src/FlashcardApp.jsx`, colours
 and fonts in `T` (`src/theme.js`). `src/styles.css` holds fonts, base styles,
 `.chip-row` and keyframes, and repeats some colours as CSS variables (keep the
-two in step). Inline styles can't use media queries, so the phone layout is
-switched in JavaScript (`isNarrow`).
+two in step).
+
+There is no mobile version: the app is for a computer's browser, and has no
+phone layout (owner, 2026-09-29).
 
 Each rule below stops a bug that really happened. The card's size, the space
 above and below it, and the panel animation work as one system: change one and
@@ -798,8 +800,8 @@ and shipped broken.
   centred, because it is pressed nearly every time; then one centred row of
   12px links, 32px apart ("My answer should be accepted", "Mark for review",
   "Ask the tutor", each only where it applies). Sharing one row keeps it inside
-  the well: 133px in a 1400px window and 162px for a "close" answer on a 390px
-  phone, measured on 2026-09-13. The dispute result that replaces the row (a
+  the well: 133px in a 1400px window, measured on 2026-09-13. The dispute
+  result that replaces the row (a
   reason plus "Accept anyway") hasn't been measured. Correct answers get a green
   banner.
 - **Card text sizes to the card, not the window.** The two faces are the
@@ -828,8 +830,8 @@ and shipped broken.
 - **They sit beside the card only if 680px of column is left**
   (`MIN_REFLOW_CONTENT`: the 600px card plus padding). `roomToReflow` uses the
   sidebar's current width, so they need a window of at least 1,396px with the
-  full sidebar, or 1,204px with the rail. Narrower, and on phones, they cover
-  the app with a scrim. Resizing across that line must switch cleanly: room
+  full sidebar, or 1,204px with the rail. In a narrower window they cover the
+  app with a scrim. Resizing across that line must switch cleanly: room
   kept and no scrim, or scrim and no room (`reflow` checks this).
 - **A panel keeps its mode, beside or covering, until it has finished
   closing** (`reflowRef`); otherwise the scrim flashes over the app during the
@@ -895,8 +897,6 @@ and shipped broken.
   was closed meanwhile, shows a toast that stays until dismissed.
 - **The flag on the card opens it about that card**, with "Attach card" ticked
   even if the draft had it unticked.
-- **It closes when the window becomes narrow**: phones have no sidebar to show
-  it, and left open it would keep `overlayOpen` on and the card's keys dead.
 
 ### The sidebar
 
@@ -914,9 +914,7 @@ and shipped broken.
   (`navActive`).
 - **Every nav item style declares all four border sides, as longhands**, never
   the `borderRight` shorthand. React updates style properties one at a time,
-  so a shorthand plus an override left a stale marker, and a side only one
-  layout uses (right on desktop, top on phones) stayed behind after crossing
-  768px (`layout` checks this).
+  so a shorthand plus an override left a stale marker (`layout` checks this).
 
 ### The toolbar and chip rows
 
@@ -931,19 +929,6 @@ and shipped broken.
   row never shifts.
 - **Inside a lesson its name is a plain title, not a pill**: a pill with an ×
   beside "Lesson notes" read as a second switch. Cards is the way out.
-
-### Phones and narrow windows
-
-- **Below 768px (`isNarrow`) the sidebar becomes a fixed bottom bar** of icons
-  (Cards, Lessons, Stats, Tutor), marked on top, with no lesson sub-items, no
-  minimize toggle and no account block, so on a phone the profile menu
-  (including Upload and Sign out) and Send feedback can't be reached. The tutor
-  and the notes always cover the app there.
-- **`shellNarrow` clips sideways only** (`overflowX: hidden`). The card area's
-  two blurred circles sit partly outside it on purpose and once made a phone's
-  page 20px too wide; phones scroll down the page by design, so don't clip that
-  way. `layout` checks nothing scrolls sideways from 360 to 1400px.
-- **`index.html` turns off pinch-zoom** (`user-scalable=no`).
 
 ---
 
@@ -980,7 +965,7 @@ Twelve need no browser:
 - `logic`: the pure rules, from card types and prompt cleaning to
   `reconcileLessons` and the released-lesson-cards list.
 - `apply-splits`: `api/apply-splits.js`: ownership, and which row keeps its
-  schedule.
+  schedule; and the corrections log saving a correction.
 - `auth`: no endpoint that spends money reaches Anthropic without a verified
   session.
 - `dates`: the student's 4am-to-4am day, and FSRS counting days the same way,
@@ -1527,7 +1512,7 @@ set the rule that no update may cost a student progress (owner, 2026-09-25).
 
 "Replace my existing deck" deleted every card and its answers without asking;
 now answered cards are archived instead (`3bab226`). The set on screen
-survives a reload (`375fd1f`); a new day starts a new set, and each device
+survives a reload (`375fd1f`); a new day starts a new set, and each browser
 keeps its own place (owner, 2026-09-26). Another session meanwhile made the
 day run 4am to 4am, dropped spot checks (`104c6fd`), and added each student's
 own FSRS settings, "How much to remember" (`191a721`).
@@ -1538,7 +1523,7 @@ Of five options, the owner chose to keep the instruction above the prompt, in
 italics, cut to one short line (owner, 2026-09-26). Under the prompt was
 rejected because the student reads the prompt first and starts answering;
 along the top of the card is further from the word and crowded by the lesson
-badge on a phone; a large verb alone would make drills look unlike every
+badge; a large verb alone would make drills look unlike every
 other card. See *Card types*.
 
 ### 2026-09-27 — The Status check and the simulated students
@@ -1575,6 +1560,16 @@ last answer's, none asked early. The set checks wait for the first recorded
 set; the predictions check needs 300 reviews (24 so far: 80% expected, 79%
 right).
 
+### 2026-09-29 — No mobile version; four fixes from the document check
+
+There is no mobile version (owner, 2026-09-29), so the phone layout went: the
+bottom bar under 768px, the zoom lock in `index.html` and the phone tests. The
+problems the document check found were fixed: corrections to parsed cards are
+logged again (broken since 2026-09-08); `fix-multi-sense.mjs` no longer
+overwrites cards or touches archived and lesson cards, and backs up first; the
+link tab says the doc is read once a day and no longer shows the Replace box;
+and `README.md` no longer calls migration 007 safe to re-run.
+
 ---
 
 ## Open items
@@ -1592,31 +1587,17 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 - **Decide on the multi-sense cleanup.** `scripts/fix-multi-sense.mjs` has
   never been run on the live deck, so cards mixing two words, like `les frais`
   ("the costs; the expenses; fresh"), remain. It needs the owner's Anthropic
-  key, a dry run read through, and a go-ahead. Fix the script first: `--apply`
-  adds each new sense with an upsert on the front, which overwrites any card
-  that already has that front (an archived one included); it also reads
-  archived and lesson cards, and makes no backup.
+  key, a dry run read through, and a go-ahead.
 - **Keep `node_modules` out of iCloud.** The project is on the Desktop, which
   iCloud syncs, and on 2026-09-24 a file sync damaged `node_modules`. Moving
   the project off the Desktop, or excluding `node_modules`, prevents a repeat.
 
 ### Bugs and loose ends
 
-- **Corrections to parsed cards aren't being logged.** In
-  `api/parse-corrections.js`, `handlePost` uses `admin_user`, which only exists
-  inside `handler`, so every save since 2026-09-08 has failed with an error the
-  app ignores. The upload hasn't learned from a correction since.
-- **On a phone, the profile menu can't be reached.** Below 768px the bottom bar
-  has no account button, so Upload, Connect Claude account, How much to
-  remember, Sign out and Send feedback aren't available on a phone.
-- **The link tab says two wrong things.** It says the doc is read "once each
-  night", but the daily check runs at 13:00 UTC; and it shows the "Replace my
-  existing deck" box, which linking ignores.
 - **The upload's prompt is behind the sync's.** `api/cahier-parse.js` lacks the
   sync prompt's rules 8b, 8c and 10b–10e (among them: no card teaching two
   words), so an upload can still make cards the sync wouldn't. Moving those
   rules into the shared `WHAT_BECOMES_A_CARD` block would fix both.
-
 - **Deleting a card deletes its answers.** `card_reviews.card_id` cascades, so
   "Delete card" in the edit modal takes the card's history with it. An
   "Archive" button beside it would be safer; today a card is archived only by
@@ -1673,8 +1654,8 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   the check returns keeps it wrong; a miss changed to right with Previous card
   loses its retry; Stats "Today" matches the end-of-set screen.
 - **The set on screen and "Replace"** (2026-09-25/26). Reload mid-set and land
-  on the same card; go from a lesson to All and back; answer on the phone,
-  then return to the laptop tab; replace the deck and keep answered cards.
+  on the same card; go from a lesson to All and back; answer in another
+  browser, then return to this tab; replace the deck and keep answered cards.
 - **Two-way study.** In Mixed, words come up both ways; under EN→FR, grammar
   cards are still asked as written.
 - **"Due today" shown apart from "older still waiting"** on the checkpoint and
@@ -1741,8 +1722,6 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
 - **Speech is browser-only.** The Azure endpoints were deleted rather than
   secured. Bringing them back means putting them behind `requireUser` and, if
   the owner shouldn't pay, a per-user credential like the Anthropic one.
-- **Mobile / PWA.** The layout works on a phone, but there is no install
-  manifest or offline support.
 - **A lesson generator.** Turning Laura's lesson PDFs into cards was scoped,
   not built. The impératif is the only lesson made from her sheets, and one
   example is too few to design from; check her template on two or three more
@@ -1752,8 +1731,7 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   them frees two slots; the multi-sense script imports its prompt from
   `split-senses.js`, so that would move into the script. (`split-senses.js`
   also still runs Opus 5 where Sonnet would do.)
-- **Stale text outside this document.** `README.md` says migration_007 is safe
-  to re-run; it isn't (see *Migrations*). `tests/README.md`'s `progress` and
+- **Stale text outside this document.** `tests/README.md`'s `progress` and
   `stats` rows describe figures that were withdrawn. The Lessons page says
   "Adding one copies its cards", but there is no add step. Several comments no
   longer match the code: in `src/FlashcardApp.jsx`, the one above `answer()`

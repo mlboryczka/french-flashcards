@@ -8,7 +8,7 @@
 // the answer starts with, because the answer includes it and "vis" alone is
 // marked wrong against "je vis". Kept short: it used to name the person too
 // ("Conjugate in the present tense, first person singular, with je"), which
-// the pronoun already says, and ran onto two lines, more on a phone.
+// the pronoun already says, and ran onto two lines.
 //
 // Two sources, in this order:
 //   1. The drill's own shape, for conjugation drills from any source (the

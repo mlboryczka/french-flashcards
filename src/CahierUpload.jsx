@@ -476,7 +476,7 @@ fonder / créer une entreprise
                 disabled={status === "uploading"}
               />
               <p style={M.linkText}>
-                The app reads the doc when you open it and once each night. Any class it hasn't
+                The app reads the doc when you open it, and once a day. Any class it hasn't
                 seen before becomes cards; classes it has already read are never touched, so
                 nothing you've studied changes.
               </p>
@@ -507,7 +507,9 @@ fonder / créer une entreprise
           )}
         </div>
 
-        {hasExisting && (
+        {/* Only for an upload: linking never replaces anything, so the box
+            would promise something the link tab doesn't do. */}
+        {hasExisting && tab !== "link" && (
           <label style={M.checkbox}>
             <input
               type="checkbox"

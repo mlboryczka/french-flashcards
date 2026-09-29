@@ -210,16 +210,13 @@ ck(
 );
 
 console.log("\n  nothing scrolls sideways, at any width");
-// The requirement is the page, not any particular element: a phone-width
-// viewport should have nothing to scroll horizontally to. The decorative blur
-// circles in the card area sit deliberately outside their container
-// (left:-60 / right:-60); the narrow shell didn't clip, so on a phone the
-// document came out 20px wider than the window and the whole page slid.
-//
-// Measured against documentElement.clientWidth rather than a remembered
-// number, and swept across the responsive breakpoint (768px) so a regression
-// on either side of it shows up.
-for (const width of [360, 390, 480, 700, 767, 800, 1100, 1400]) {
+// The requirement is the page, not any particular element: nothing to scroll
+// horizontally to. The decorative blur circles in the card area sit
+// deliberately outside their container (left:-60 / right:-60), and a shell
+// that didn't clip them made the page wider than the window. Measured against
+// documentElement.clientWidth rather than a remembered number. There is no
+// phone layout (the owner, 2026-09-29), so only computer-window widths.
+for (const width of [800, 1100, 1400]) {
   await page.setViewportSize({ width, height: 860 });
   await page.waitForTimeout(350);
   const { scrollW, clientW, culprit } = await page.evaluate(() => {
@@ -266,8 +263,8 @@ await page.evaluate(() => {
 await settled(page);
 await page.waitForTimeout(400);
 // The requirement is that opening a panel does not damage what you were
-// looking at. Reflow was gated on "not a phone", so at 900px wide it still
-// fired and left 900 - 256 of sidebar - 460 of panel = 184px of column: the
+// looking at. Reflow used to fire at 900px wide and leave
+// 900 - 256 of sidebar - 460 of panel = 184px of column: the
 // top-bar chips stacked one per line, the card turned portrait, and the answer
 // row ran off the edge. Below the floor the panel is an overlay instead.
 //
@@ -304,13 +301,12 @@ for (const width of [1600, 1400, 1200, 1000, 900, 800]) {
 await page.setViewportSize({ width: 1400, height: 900 });
 await page.waitForTimeout(300);
 
-console.log("\n  the nav keeps exactly one marker across a breakpoint");
-// The wide nav marks the active item on its right, the narrow one on its top.
-// React diffs styles per property, so crossing 768px used to leave the other
-// layout's border behind: resize down and back and every item kept a stale
-// top border, drawing a rule between each one. Asserted as "no item carries a
-// border on a side this layout does not use", which is the requirement —
-// counting only the ACTIVE item's marker would have passed the whole time.
+console.log("\n  the nav keeps exactly one marker");
+// The nav marks the active item on its right. React diffs styles per
+// property, so a side left undeclared keeps whatever an earlier style set
+// there. Asserted as "no item carries a border on a side the nav does not
+// use", which is the requirement — counting only the ACTIVE item's marker
+// would pass with stale borders everywhere else.
 const navBorders = () =>
   page.evaluate(() =>
     [...document.querySelectorAll("aside nav button")].map((b) => {
@@ -325,15 +321,8 @@ const navBorders = () =>
     })
   );
 
-await page.setViewportSize({ width: 700, height: 900 });
-await page.waitForTimeout(450);
-const narrow = await navBorders();
-ck("narrow: nothing carries a right-hand marker", narrow.every((b) => b.right === 0), narrow.map((b) => b.right).join(","));
-
-await page.setViewportSize({ width: 1400, height: 900 });
-await page.waitForTimeout(450);
 const wide = await navBorders();
-ck("back to wide: no stale top border", wide.every((b) => b.top === 0), wide.map((b) => `${b.label}:${b.top}`).join(" "));
+ck("no item has a top border", wide.every((b) => b.top === 0), wide.map((b) => `${b.label}:${b.top}`).join(" "));
 ck("and none on the bottom or left either", wide.every((b) => b.bottom === 0 && b.left === 0));
 ck("exactly one item is marked", wide.filter((b) => b.marked).length === 1, `${wide.filter((b) => b.marked).length} marked`);
 

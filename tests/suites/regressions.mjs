@@ -136,6 +136,13 @@ const ck = checker();
     return { hasBox: !!box, checkboxes: document.querySelectorAll("input[type=checkbox]").length };
   });
   ck("the doc tab has a box for the link", linkTab.hasBox, JSON.stringify(linkTab));
+  // Linking never replaces a deck, so the upload's "Replace my existing deck"
+  // box doesn't belong here: it sat on this tab and did nothing (2026-09-29).
+  ck("and no Replace box: linking replaces nothing", linkTab.checkboxes === 0, JSON.stringify(linkTab));
+  await page.click('button:text-is("Paste text")');
+  await page.waitForTimeout(200);
+  ck("while an upload still offers it",
+     await page.evaluate(() => document.querySelectorAll("input[type=checkbox]").length) === 1);
 
   await browser.close();
 }

@@ -301,8 +301,10 @@ the time and cost about 3% of study time.
 
 The split matters. Seeding lives entirely in 007 and is driven by the three
 signals that actually record a review (`card_progress.seen`, the old Leitner
-`box`, and `lapses`), so 007 is safe to re-run and re-running 006 can never
-undo it. Cards you've never answered stay in the New state and come in through
+`box`, and `lapses`), so re-running 006 can never undo it. **Never run 007
+again on a live deck.** `card_progress.seen` still goes up on every answer, so
+it would overwrite the French-side schedule of every card answered since with a
+guess and make them all due at once. Cards you've never answered stay in the New state and come in through
 the normal new-card order, once the due cards run out; cards with real history
 carry that history over rather than restarting. The old `box` column is left
 in place, so the change can be reversed.

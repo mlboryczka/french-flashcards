@@ -4,7 +4,7 @@
 // one; the nav keeps its icons and its marker; "Send feedback" becomes an icon
 // under the avatar; opening feedback widens the sidebar (the panel lives in it
 // and needs the room) and closing it puts the sidebar back; the choice is
-// remembered. Phones are untouched — their nav is the bottom bar.
+// remembered.
 import { openApp, finish, checker, settled } from "../harness.mjs";
 const ck = checker();
 
@@ -112,11 +112,6 @@ await settled(page);
   const p = await probe();
   ck("full width again", p.width === 256 && p.labels.includes("Cards"), `${p.width}px`);
 }
-
-console.log("\n  phones are untouched");
-await page.setViewportSize({ width: 390, height: 844 });
-await page.waitForTimeout(400);
-ck("no minimize button on a phone", (await page.locator("[data-sidebar-toggle]").count()) === 0);
 
 // Leave the preference as it was found, for the suites that follow.
 await page.evaluate(() => { try { localStorage.removeItem("sidebar:minimized"); } catch {} });
