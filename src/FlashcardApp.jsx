@@ -1366,6 +1366,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Whether this answer empties the queue. Read BEFORE the wrong-answer
     // splice below, which grows the deck by one and would hide the end.
     const wasLastCard = idx >= deck.length - 1;
+    // The class banner has said its piece once a card is answered. Left up, it
+    // kept 42px from the card on every card after — on a short window, the
+    // difference between a card that fits and one whose contents overlap.
+    if (cahier.arrived) cahier.dismissArrived();
     const prev = progress[card.id] || { score:0, seen:0, got:0 };
     const newProg = {
       score: Math.max(0, Math.min(5, prev.score + (got?1:-1))),
@@ -3213,7 +3217,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           </div>
         )}
 
-        <div style={S.mainInner}>
+        <div style={S.mainInner} className="study-column">
           {/* Sub-toolbar: session counter and back control */}
           <div style={S.subToolbar} className="chip-row">
             {card && (() => {
@@ -3323,11 +3327,11 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.cardWrap} onClick={onCardClick}>
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={{...S.cardFront, pointerEvents: flipped ? "none" : "auto"}}>
-                    {cardLesson && <div style={S.cardBadge}>{cardLesson.title}</div>}
-                    {instruction && <div style={S.cardInstruction} data-card-instruction>{instruction}</div>}
+                    {cardLesson && <div className="card-badge" style={S.cardBadge}>{cardLesson.title}</div>}
+                    {instruction && <div className="card-instruction" style={S.cardInstruction} data-card-instruction>{instruction}</div>}
                     <div style={S.cardText}>{front}</div>
                     {TTS_AVAILABLE && card.shownDir === "fr" && (
-                      <div style={S.cardAudio}>
+                      <div className="card-audio" style={S.cardAudio}>
                         <button
                           style={S.cardAudioBtn}
                           onClick={(e) => { e.stopPropagation(); speakCard(); }}
@@ -3346,17 +3350,17 @@ export default function FlashcardApp({ user, onSignOut }) {
                         )}
                       </div>
                     )}
-                    {!effectiveTypeMode && <div style={S.cardHint}>Tap to reveal translation</div>}
-                    {effectiveTypeMode && !typeResult && <div style={S.cardHint}>Tap to show answer</div>}
+                    {!effectiveTypeMode && <div className="card-hint" style={S.cardHint}>Tap to reveal translation</div>}
+                    {effectiveTypeMode && !typeResult && <div className="card-hint" style={S.cardHint}>Tap to show answer</div>}
                     {!effectiveTypeMode && <ShortcutsTooltip />}
                     {!showFeedback && <ReportCardButton onReport={reportCard} nextToInfo={!effectiveTypeMode} />}
                     {answerSeen && <TurnCardButton onTurn={flip} toAnswer />}
                   </div>
                   <div style={{...S.cardBack, pointerEvents: flipped ? "auto" : "none"}}>
-                    {cardLesson && <div style={S.cardBadge}>{cardLesson.title}</div>}
+                    {cardLesson && <div className="card-badge" style={S.cardBadge}>{cardLesson.title}</div>}
                     <div style={S.cardTextB}>{back}</div>
                     {TTS_AVAILABLE && card.shownDir === "en" && (
-                      <div style={S.cardAudio}>
+                      <div className="card-audio" style={S.cardAudio}>
                         <button
                           style={S.cardAudioBtn}
                           onClick={(e) => { e.stopPropagation(); speakCard(); }}
@@ -3429,8 +3433,8 @@ export default function FlashcardApp({ user, onSignOut }) {
                       const missed = typeResult === "wrong" || typeResult === "close" || typeResult === "wrongArticle";
                       return (
                         <>
-                          {/* Centred, at its own size — not stretched to the
-                              column, and not pushed to its right edge. */}
+                          {/* Beside the result, at its own size. Stacked under
+                              it, the two took 99px of the well between them. */}
                           <button style={S.continueBtn} onClick={() => answer(gotIt, "typed")}>
                             Continue →
                           </button>
@@ -3438,7 +3442,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                               row at 12px: Continue is what you press nearly
                               every time, so it comes first after the result.
                               One row for all three rather than a row each,
-                              because belowCard is a fixed 170px well and every
+                              because belowCard is a fixed 110px well and every
                               extra line would push the card off its place.
                               A dispute in progress replaces the row with its
                               status, in the same spot. */}
@@ -4308,6 +4312,9 @@ const S = {
   // flex item refuses to go below its content size and the card pushes the
   // buttons off the bottom instead of getting smaller.
   main: { flex:1, display:"flex", flexDirection:"column", minWidth:0, minHeight:0 },
+  // Scrolls only on a window too short for the study view at its smallest —
+  // the .study-column rule in styles.css. Always scrolling would clip the
+  // blur shapes at the column's edges on every window.
   mainInner: { flex:1, minHeight:0, display:"flex", flexDirection:"column", padding:"12px 40px 16px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
   // Stats is genuinely long-form, so it scrolls within main.
   mainInnerScroll: { flex:1, minHeight:0, overflowY:"auto", padding:"32px 40px 60px", maxWidth:1100, width:"100%", margin:"0 auto", boxSizing:"border-box" },
@@ -4410,7 +4417,7 @@ const S = {
   // The CARD is centred on the window, not the card-plus-well stack.
   //
   // cardArea centres its children as a group, and everything below the card —
-  // cardWrap's 20px margin and the 170px belowCard well — is part of that
+  // cardWrap's 20px margin and the 110px belowCard well — is part of that
   // group. Centring the group therefore pushes the card itself up by half of
   // whatever sits under it. With a 130px bottom padding on top of that, the
   // card measured a consistent 118px above the middle of the window at every
@@ -4422,16 +4429,26 @@ const S = {
   // too. With the value pinned at 0 it could never fire, and the motion suite
   // was pointed at it — checking a declaration rather than a movement, and
   // passing whatever the declaration said.
-  cardArea: { position:"relative", flex:1, minHeight:0, containerType:"inline-size", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center" },
+  //
+  // minHeight 300 is the view at its smallest: the card at its 170 floor, its
+  // 20px margin and the 110px well. At 0 the area could get shorter than
+  // that, and what didn't fit was cut off with no way to reach it — the
+  // container type turns overflow into paint that nothing can scroll to. At
+  // 300 the area stops there and mainInner scrolls instead.
+  cardArea: { position:"relative", flex:1, minHeight:300, containerType:"inline-size", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"safe center" },
   // Mirrors what sits below the card, less the chrome that already sits above
   // cardArea, so the card's own midpoint lands on the window's midpoint:
   //
-  //   below the card   170 (belowCard) + 20 (cardWrap marginBottom) = 190
+  //   below the card   110 (belowCard) + 20 (cardWrap marginBottom) = 130
   //   above cardArea   100 (top bar + sub-toolbar + mainInner padTop)
   //   below cardArea    16 (mainInner padBottom)
-  //   spacer = 190 + 16 - 100 = 106
+  //   spacer = 130 + 16 - 100 = 46
   //
-  // `0 8 106px` and not a fixed height: it must give its space up first when
+  // (It was 106 while the well was 170. The notes below were measured then;
+  // at 46 the spacer takes a smaller share of a squeeze, so it bottoms out
+  // later, not sooner.)
+  //
+  // `0 2 46px` and not a fixed height: it must give its space up first when
   // the window is short or a panel opens, so the card keeps its size rather
   // than crushing. That is the job the old paddingBottom toggle was doing.
   //
@@ -4454,9 +4471,9 @@ const S = {
   // has real resizing to do. Worst single frame falls from 26px to 10px.
   //
   // It only changes behaviour under pressure: with free space to spare the
-  // spacer stays 106 and cardArea's `safe center` places the card, so resting
+  // spacer stays 46 and cardArea's `safe center` places the card, so resting
   // geometry at every window height is untouched.
-  cardTopSpacer: { flex:"0 2 106px", minHeight:0, width:"100%", pointerEvents:"none" },
+  cardTopSpacer: { flex:"0 2 46px", minHeight:0, width:"100%", pointerEvents:"none" },
   blurTL: { position:"absolute", top:-60, left:-60, width:360, height:360, background:"rgba(3,22,50,0.04)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
   blurBR: { position:"absolute", bottom:60, right:-60, width:360, height:360, background:"rgba(156,66,52,0.05)", borderRadius:"50%", filter:"blur(60px)", pointerEvents:"none", zIndex:0 },
 
@@ -4550,11 +4567,13 @@ const S = {
   // the page. Letting it grow is what pushed the buttons down to the bottom
   // edge and left a gulf in the middle; cardArea now centres the card and its
   // buttons together, so spare height sits above and below the pair.
-  // Sized to the TALLEST thing that goes here — a wrong graded answer, which
-  // stacks a result banner, the "should have been accepted" link and the
-  // Continue row, and measures 170. Anything less and the card still shifts
-  // when that state appears; measured, not estimated.
-  belowCard: { width:"100%", maxWidth:600, minHeight:170, flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start" },
+  // Sized to the TALLEST common thing that goes here. That was a wrong graded
+  // answer at 170 — result banner, Continue and the links row stacked — and
+  // the 170 was taken from the card on every short window. With the result
+  // and Continue on one line the tallest is the typed-answer box plus Show
+  // answer, about 82, and a links row that wraps to two lines, about 107.
+  // Anything less and the card shifts when that state appears.
+  belowCard: { width:"100%", maxWidth:600, minHeight:110, flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start" },
   // `0 1 375px`, not `1 1 auto`. The basis is the card's own maxHeight, so the
   // wrapper is exactly as tall as the card wants to be and no taller.
   //
@@ -4826,19 +4845,20 @@ const S = {
   // Typing feedback
   // One 420px column under the card in type mode — the width of Again and Got
   // It — so the result banner and the link rows share both edges, and Continue
-  // sits centred in it. It used to be four widths stacked: card 600, banner
-  // 520, links as centred text, Continue pushed right in a 480 row.
-  typeFeedback: { width:"100%", maxWidth:420, alignSelf:"center", display:"flex", flexDirection:"column", gap:10 },
+  // sits beside the result on its first row. It used to be four widths
+  // stacked: card 600, banner 520, links as centred text, Continue pushed
+  // right in a 480 row. The links, or a dispute's status, span the row below.
+  typeFeedback: { width:"100%", maxWidth:420, alignSelf:"center", display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:10 },
   typeCorrect: { textAlign:"center", padding:"13px 14px", background:"#dcece5", color:"#1f5446", borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
   typeClose: { textAlign:"center", padding:"13px 14px", background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
   typeRevealed: { textAlign:"center", padding:"13px 14px", background:T.color.surfaceHigh, color:T.color.primary, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
   typeWrong: { textAlign:"center", padding:"13px 14px", background:T.color.errorContainer, color:T.color.onErrorContainer, borderRadius:T.radius.md, fontSize:14, fontWeight:600, fontFamily:T.font.sans },
   // Links at either end of the column, their text on its edges.
-  typeLinksRow: { display:"flex", alignItems:"center", justifyContent:"center", flexWrap:"wrap", columnGap:32, rowGap:4, minHeight:24, fontFamily:T.font.sans },
+  typeLinksRow: { gridColumn:"1 / -1", display:"flex", alignItems:"center", justifyContent:"center", flexWrap:"wrap", columnGap:32, rowGap:4, minHeight:24, fontFamily:T.font.sans },
   typeLink: { padding:"4px 0", background:"transparent", border:"none", color:T.color.secondary, fontSize:12, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, textDecoration:"underline", textUnderlineOffset:3 },
   typeLinkMuted: { color:T.color.onSurfaceVariant, fontWeight:500, opacity:0.8 },
   typeBtnRow: { display:"flex", gap:12, marginTop:8 },
-  feedbackRow: { textAlign:"center", fontFamily:T.font.sans, fontSize:12 },
+  feedbackRow: { gridColumn:"1 / -1", textAlign:"center", fontFamily:T.font.sans, fontSize:12 },
   feedbackPending: { color:T.color.onSurfaceVariant },
   feedbackOk: { color:T.color.primary, fontWeight:500 },
   feedbackAccept: { color:"#1d9e75", fontWeight:600, fontSize:12, fontFamily:T.font.sans },

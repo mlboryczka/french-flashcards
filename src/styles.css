@@ -107,6 +107,53 @@ textarea:focus-visible {
 }
 
 /* ───────────────────────────────────────────────────────────────────────
+   A short card makes room instead of overlapping
+
+   The card shrinks with the window down to 170px, but its fonts stop at
+   their floors and the lesson label and tap hint are pinned to its edges.
+   A lesson card at 170px — label, a two-line instruction, the prompt and
+   the speaker — needed about 140px of content in 114px of room, so the label
+   sat on the instruction and the speaker on the hint (1450x520 window with
+   the class banner up).
+
+   Each card face is a size container (containerType "size" inline), so
+   these ask the face how tall it is. The heights are its content box, card
+   height less 56px of padding: 214 is a 270px card, 150 a 206px card.
+   !important because the rest of each element's style is inline.
+
+   The label moves into the top padding and the speaker shrinks first; the
+   hint goes only on the shortest cards, where clicking still shows the
+   answer. Nothing outside the card moves. A panel reflow never crosses
+   these heights either: it only narrows the column, never below the width
+   at which the card's height would start to depend on it.
+   ─────────────────────────────────────────────────────────────────────── */
+@container (max-height: 213px) {
+  .card-badge { top: 6px !important; padding: 3px 9px !important; font-size: 10px !important; }
+  .card-instruction { margin-bottom: 6px !important; }
+  .card-audio { margin-top: 8px !important; gap: 10px !important; }
+  .card-audio button { width: 36px !important; height: 36px !important; font-size: 15px !important; }
+}
+@container (max-height: 149px) {
+  .card-hint { display: none !important; }
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   A window too short for the study view scrolls instead of cutting it off
+
+   The study view at its smallest is 460px tall with the class banner up:
+   top bar 60, banner 42, column padding 28, counter row 30, and 300 of card
+   area (the card at its 170 floor, its 20px margin and the 110 well). Below
+   that the answer box ran off the bottom of the window, out of reach.
+
+   Only below that height: a scrolling column clips what overflows it, and
+   the blur shapes behind the card overflow it on purpose. Sideways overflow
+   is always just those shapes, so it is hidden rather than scrollable.
+   ─────────────────────────────────────────────────────────────────────── */
+@media (max-height: 460px) {
+  .study-column { overflow-y: auto; overflow-x: hidden; }
+}
+
+/* ───────────────────────────────────────────────────────────────────────
    Keyframes (required by the pronunciation panel — do not remove)
    ─────────────────────────────────────────────────────────────────────── */
 @keyframes pulse {
