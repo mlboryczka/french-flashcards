@@ -474,7 +474,9 @@ for the same class.
 
 **What the student sees:** a notice under the top bar (`data-cahier-notice`)
 when a check the app made added cards; cards the daily job adds show only in
-the link tab. A failed link shows the server's reason, because `sync` returns
+the link tab. The notice goes when dismissed or when the first card is
+answered (`answer` calls `dismissArrived`): left up, its 42px came off the card
+on every card after. A failed link shows the server's reason, because `sync` returns
 `{ ok, error }` and the dialog reads that, not the hook's state.
 
 **The link row** (`api/cahier-sync.js`) is created only by linking, which
@@ -744,8 +746,9 @@ The files:
 
 Styles are inline objects: `S` at the end of `src/FlashcardApp.jsx`, colours
 and fonts in `T` (`src/theme.js`). `src/styles.css` holds fonts, base styles,
-`.chip-row` and keyframes, and repeats some colours as CSS variables (keep the
-two in step).
+`.chip-row`, keyframes and the two things inline styles can't do (the short-card
+rules and `.study-column`, below), and repeats some colours as CSS variables
+(keep the two in step).
 
 There is no mobile version: the app is for a computer's browser, and has no
 phone layout (owner, 2026-09-29).
@@ -763,9 +766,17 @@ and shipped broken.
 - **The desktop page is one window tall** (`shell`: `height: 100vh`,
   `overflow: hidden`), and the card gets the height that is left, so the card
   and its buttons are always on screen together. The Stats and Lessons pages
-  scroll inside `main` (`mainInnerScroll`). `minHeight: 0` on `main`,
-  `mainInner` and `cardArea` is what lets them shrink; without it the buttons
-  are pushed off the bottom.
+  scroll inside `main` (`mainInnerScroll`). `minHeight: 0` on `main` and
+  `mainInner` is what lets them shrink; without it the buttons are pushed off
+  the bottom.
+- **The study view has a smallest size, and scrolls below it.** `cardArea`
+  stops at 300px (`minHeight: 300`: the card's 170 floor, its 20px margin, the
+  110 well); the view is then 460px tall with the class notice up. At 0 the
+  answer box ran off the bottom of a short window with nothing to scroll to,
+  because `cardArea`'s container type turns overflow into paint no scroller
+  reaches. In a window 460px tall or less, `mainInner` scrolls (`.study-column`
+  in `styles.css`; sideways hidden). Only then: a scrolling column clips the
+  blur shapes behind the card at its edges, which would show on wide windows.
 - **The card is sized by its height, with a floor and a cap:** `height: 100%`,
   `minHeight: 170`, `maxHeight: min(375px, 62.5cqw)`, `aspectRatio: 1.6 / 1`,
   so 600×375 at most. Without the floor it collapsed when a panel opened.
@@ -779,37 +790,52 @@ and shipped broken.
   a panel slid the card and then shrank it, with a jolt in between. An `auto`
   basis collapses the card to 170px.
 - **`cardTopSpacer` puts the card's own middle on the window's middle.** Its
-  106px is what sits under the card (the 170px well, `cardWrap`'s 20px margin,
+  46px is what sits under the card (the 110px well, `cardWrap`'s 20px margin,
   `mainInner`'s 16px bottom padding) less the ~100px of bars above `cardArea`;
   without it the card sat 118px too high. `cardArea` has no bottom padding;
-  don't add one. The spacer shrinks at factor 2 (`flex: 0 2 106px`), fast
+  don't add one. The spacer shrinks at factor 2 (`flex: 0 2 46px`), fast
   enough to give up its space before the card does and slow enough not to hit 0
-  mid-animation, which at 4 or 8 made the card change speed mid-move. (The code
-  comment still says `0 8`.)
+  mid-animation, which at 4 or 8 made the card change speed mid-move. Factor 2
+  was measured when the spacer was 106; at 46 its share of a squeeze is
+  smaller, so it bottoms out later, and `reflow` and `motion` still pass.
 - **`safe center`, not `center`,** on `cardArea`, `cardWrap` and the card's
   front face. When there isn't room, plain centring spills upward over the
   counter and Previous card, or cuts off the top of a long prompt; `safe` falls
   back to the top.
-- **Everything under the card sits in `belowCard`, at least 170px tall.**
+- **Everything under the card sits in `belowCard`, at least 110px tall.**
   `cardArea` centres its contents, so controls that change height move the card
-  (it jumped 45px on grading). 170 is a minimum: anything taller grows the well
-  and moves the card. Flip mode keeps one button row: Show answer, then Again /
-  Got It in the same place. `layout` checks the card stays put.
+  (it jumped 45px on grading). 110 is a minimum: anything taller grows the well
+  and moves the card. It was 170 until 2026-09-30, sized for a graded answer
+  stacked three rows deep, and on a short window those 170px came off the card.
+  The tallest common states now are the answer box plus Show answer (~82px) and
+  a graded answer whose links wrap to two lines (~107). Flip mode keeps one
+  button row: Show answer, then Again / Got It in the same place. `layout`
+  checks the card stays put.
 - **Type mode's graded state is one 420px column** (`S.typeFeedback`, the width
-  of Again and Got It): the result banner; then Continue, at its own size and
-  centred, because it is pressed nearly every time; then one centred row of
-  12px links, 32px apart ("My answer should be accepted", "Mark for review",
-  "Ask the tutor", each only where it applies). Sharing one row keeps it inside
-  the well: 133px in a 1400px window, measured on 2026-09-13. The dispute
-  result that replaces the row (a
-  reason plus "Accept anyway") hasn't been measured. Correct answers get a green
-  banner.
+  of Again and Got It), laid out as a grid: the result banner and Continue side
+  by side on the first row, Continue at its own size; then one centred row of
+  12px links across both columns, 32px apart ("My answer should be accepted",
+  "Mark for review", "Ask the tutor", each only where it applies). About 80px,
+  inside the well. The dispute result that replaces the links (a reason plus
+  "Accept anyway") hasn't been measured; a long reason grows the well and moves
+  the card. Correct answers get a green banner.
 - **Card text sizes to the card, not the window.** The two faces are the
   measuring containers (`container-type: size`), and the prompt
   (`clamp(19px, 10.7cqh, 40px)`), answer and instruction line scale with them.
   Full containment stays off the turning card (`S.card`) and anything that
   contains it, since it can flatten the 3D flip. That is a precaution: the flip
   measured fine either way (2026-09-06), whatever the comment on `S.card` says.
+- **A short card makes room instead of overlapping.** The fonts stop at their
+  floors and the lesson label and tap hint are pinned to the card's edges, so a
+  lesson card at 170px (label, two-line instruction, prompt, speaker) needed
+  ~140px of content in 114px: the label sat on the instruction and the speaker
+  on the hint. Container queries in `styles.css` ask each face its height
+  (content box, the card less 56px of padding): below a 270px card the label
+  moves into the top padding (`.card-badge`), the instruction's gap tightens
+  and the speaker drops from 52px to 36px (`.card-audio`); below 206px the tap
+  hint goes (`.card-hint`; clicking still turns the card). `!important`,
+  because the rest of each element's style is inline. Nothing outside the card
+  moves, and a panel reflow never crosses these heights.
 - **The corner controls are matching 30px circles, 14px in:** the pencil
   top-right on the answer side; the turn-back arrow top-left once the answer
   has been seen (never before, or it would be a way to peek); the flag
@@ -1584,6 +1610,19 @@ for the notes panel to appear instead of checking at a fixed moment. `lessons`
 had never really clicked Lessons: it looked for an element with no children
 reading "Lessons", and the button holds its icon too.
 
+### 2026-09-30 — Short windows: the card makes room, and the page scrolls
+
+The owner's screenshot, a window about 520px tall with the class notice up,
+showed the adverb card at its 170px floor with the lesson label over the
+instruction and the speaker over the tap hint. Three fixes, agreed from a
+mockup: a short card moves the label up, shrinks the speaker and, on the
+shortest cards, drops the hint; the result and Continue share a row, so the
+well under the card went from 170px to 110 and the card from 170px to 255 in
+that window; and the class notice goes once a card is answered. A second
+screenshot, a window shorter still, had the answer box cut off with no way to
+scroll: the card area now stops at 300px and the column scrolls in windows
+460px tall or less. `layout`, `reflow`, `motion` and `answering` pass.
+
 ---
 
 ## Open items
@@ -1662,6 +1701,10 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 ### Not yet checked on the live app
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
+
+- **The class notice closing on the first answer** (2026-09-30). The mock has
+  no linked cahier, so the notice never appeared in a test. After the next
+  class, answer one card and check it goes.
 
 - **Accepting an answer, Previous card and Stats "Today"** (2263aae,
   2026-09-27). An accepted answer stays right after a reload; moving on before
