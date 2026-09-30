@@ -165,7 +165,11 @@ console.log("\n  and the student can study it and read the notes");
   const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });
   await settled(page);
 
-  // The lesson is listed in the nav for everyone, with no "add" step.
+  // The lesson is listed in the nav for everyone, with no "add" step. The
+  // lessons drop down from Lessons, so open that first.
+  await page.evaluate(() => [...document.querySelectorAll("aside button")]
+    .find((b) => b.textContent.trim() === "Lessons")?.click());
+  await settled(page);
   const listed = await page.locator(`aside button[title="Study ${LESSON.title}"]`).count();
   ck("the lesson is offered in the nav", listed > 0, `${listed} entry`);
 
@@ -196,6 +200,10 @@ console.log("\n  and the student can study it and read the notes");
 
   // Notes: every section the lesson ships has to be reachable and non-empty.
   await page.locator("[data-lesson-toggle]").click();
+  // The panel mounts a moment after the click, and settled() can look before
+  // its slide has started — coming from the Lessons page, the app is busy
+  // dealing the lesson's first block.
+  await page.waitForSelector("[data-lesson-panel]", { timeout: 3000 }).catch(() => {});
   await settled(page);
   ck("the notes panel opens", (await page.$("[data-lesson-panel]")) !== null);
 

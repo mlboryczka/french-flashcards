@@ -20,11 +20,20 @@ const ck = checker();
   const panelInDom = () =>
     page.evaluate(() => !!document.querySelector("[data-lesson-panel]"));
 
+  // The lessons drop down from Lessons, so it is opened before picking one.
+  const openLessons = async () => {
+    await page.evaluate(() => [...document.querySelectorAll("aside button")]
+      .find((b) => b.textContent.trim() === "Lessons")?.click());
+    await settled(page);
+  };
+
+  await openLessons();
   const lesson = page.locator('aside button[title^="Study "]').first();
   if (await lesson.count()) {
     await lesson.click();
     await settled(page);
     await page.locator("[data-lesson-toggle]").click();
+    await page.waitForSelector("[data-lesson-panel]", { timeout: 3000 }).catch(() => {});
     await settled(page);
     ck("the notes panel makes room for itself", (await padRight()) > 400,
        `${await padRight()}px`);
@@ -45,6 +54,7 @@ const ck = checker();
 
     // And the lesson name is not a control any more — nothing in the bar
     // offers to take you out of the lesson, so nothing can half-do it.
+    await openLessons();
     await page.locator('aside button[title^="Study "]').first().click();
     await settled(page);
     const exits = await page.evaluate(() =>

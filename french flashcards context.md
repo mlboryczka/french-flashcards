@@ -912,6 +912,10 @@ and shipped broken.
   menu. The `sidebar` suite covers all of this.
 - **Exactly one nav item is marked**; inside a lesson, the lesson, not Cards
   (`navActive`).
+- **The lessons drop down from Lessons** (`lessonsOpen`): listed under it on
+  the Lessons page and inside a lesson, folded away on Cards and Stats, with an
+  arrow on Lessons pointing down or up to say which. Clicking Lessons opens the
+  Lessons page and the list together (owner, 2026-09-30).
 - **Every nav item style declares all four border sides, as longhands**, never
   the `borderRight` shorthand. React updates style properties one at a time,
   so a shorthand plus an override left a stale marker (`layout` checks this).
@@ -1085,8 +1089,8 @@ METHOD sheets) and Adjectif ou adverbe ? (81 cards, written for the app).
   order.
 - In normal study, lesson cards come back when due, and unseen ones come after
   all of the student's own notes.
-- Students enter a lesson from the Lessons page or the sidebar, and leave it
-  with Cards. The lesson's name in the top bar is a label, not a control.
+- Students enter a lesson from the Lessons page or from the list that drops
+  down under Lessons in the sidebar, and leave it with Cards. The lesson's name in the top bar is a label, not a control.
 - The notes (`LESSON.notes`, shown by `LessonPanel.jsx`) are for glancing at
   mid-card: tables, two-column contrasts, and the common mistakes called out.
 - Only the notes panel's ✕ and the Lesson notes button close it, because it
@@ -1569,6 +1573,16 @@ logged again (broken since 2026-09-08); `fix-multi-sense.mjs` no longer
 overwrites cards or touches archived and lesson cards, and backs up first; the
 link tab says the doc is read once a day and no longer shows the Replace box;
 and `README.md` no longer calls migration 007 safe to re-run.
+
+### 2026-09-30 — The lessons drop down from Lessons
+
+The lessons were always listed under Lessons in the sidebar. At the owner's
+request they now drop down from it: shown on the Lessons page and inside a
+lesson, folded away everywhere else. The suites that pick a lesson in the
+sidebar (`lesson-sync`, `lessons`, `regressions`) open Lessons first, and wait
+for the notes panel to appear instead of checking at a fixed moment. `lessons`
+had never really clicked Lessons: it looked for an element with no children
+reading "Lessons", and the button holds its icon too.
 
 ---
 

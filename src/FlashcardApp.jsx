@@ -2304,6 +2304,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   const navActive = (m) =>
     m === "study" ? mode === "study" && lessonFilter === "all" : mode === m;
 
+  // The lessons drop down from Lessons: open on the Lessons page and inside a
+  // lesson, where you pick one or see which you are in; folded away
+  // everywhere else, so the sidebar is just its four items.
+  const lessonsOpen = mode === "lessons" || (mode === "study" && lessonFilter !== "all");
+
   // Open the tutor panel and the app reflows to sit beside it rather than
   // being covered — you can still read the card you're asking about. Reflow
   // only while the content column stays usable: a 900px window leaves
@@ -2383,15 +2388,21 @@ export default function FlashcardApp({ user, onSignOut }) {
                 }}
                 title={sidebarMin ? label : undefined}
                 aria-label={sidebarMin ? label : undefined}
+                aria-expanded={m === "lessons" && !sidebarMin ? lessonsOpen : undefined}
               >
                 <span style={S.sideIcon}>{NAV_ICONS[m]}</span>
                 {!sidebarMin && label}
+                {m === "lessons" && !sidebarMin && (
+                  <span style={lessonsOpen ? { ...S.sideChevron, ...S.sideChevronOpen } : S.sideChevron} aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                  </span>
+                )}
               </button>
               {/* Lessons are the one nav item with children: each lesson sits
                   under it as a sub-item, so picking one is a single click
                   rather than a trip through the catalogue. Not on the rail,
                   which has no room to nest anything. */}
-              {m === "lessons" && !sidebarMin && LESSONS.map((lesson) => {
+              {m === "lessons" && !sidebarMin && lessonsOpen && LESSONS.map((lesson) => {
                 const on = mode === "study" && lessonFilter === lesson.id;
                 return (
                   <button
@@ -4345,6 +4356,9 @@ const S = {
   sideItemMin: { justifyContent:"center", padding:"14px 0", gap:0 },
   sideItemActive: { color:T.color.secondary, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideIcon: { display:"flex", alignItems:"center", flexShrink:0 },
+  // The arrow on Lessons: down while its lessons are folded away, up while they show.
+  sideChevron: { display:"flex", marginLeft:"auto", opacity:0.7, transition:"transform 0.2s" },
+  sideChevronOpen: { transform:"rotate(180deg)" },
   // ── Sidebar bottom: avatar + email + feedback in one row ────────────
   sideDivider: { marginTop:"auto", height:1, background:"rgba(3,22,50,0.07)", marginLeft:20, marginRight:20 },
   sideBottom: { padding:"14px 20px 4px" },

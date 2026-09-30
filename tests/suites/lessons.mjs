@@ -49,17 +49,13 @@ console.log(`  fixture: ${rows.length} cards from "${LESSON.title}"`);
 
 // ── Get into the lesson ───────────────────────────────────────────────
 // Click through the nav the way a person does: Lessons, then the lesson.
+// The Lessons button holds its icons as well as its word, so it is found by
+// its text as a whole. (Looking for an element with no children whose text is
+// "Lessons" found nothing, and this click silently never happened — harmless
+// while the lessons were always listed, fatal now that they drop down.)
 await page.evaluate(() => {
-  const hit = (root, label) => {
-    const n = [...root.querySelectorAll("*")].filter(
-      (x) => x.textContent.trim() === label && !x.children.length
-    ).pop();
-    for (let el = n; el; el = el.parentElement) {
-      el.click();
-      if (el.tagName === "BUTTON" || el.tagName === "DIV") break;
-    }
-  };
-  hit(document.querySelector("aside"), "Lessons");
+  [...document.querySelectorAll("aside button")]
+    .find((b) => b.textContent.trim() === "Lessons")?.click();
 });
 await page.waitForTimeout(400);
 await page.evaluate((title) => {
