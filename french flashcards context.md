@@ -1213,8 +1213,6 @@ Every figure that reads FSRS state counts each way round separately.
 - Your progress: a row per lesson, then "Last two weeks of class" and "Older
   classes". Each class group shows its dates, because the line between them
   moves daily.
-- Coming up: cards due today, older cards still waiting (counted apart, so a
-  backlog doesn't look like today's work), and the next seven days.
 - By type: right last time, from the FSRS rows, and seen / about remembered.
 - Hardest cards: the most `lapses`, both ways added.
 - Reset all progress: every card back to new both ways, in one update
@@ -1227,6 +1225,13 @@ Every figure that reads FSRS state counts each way round separately.
 
 The `stats` and `progress` suites guard all this. Finish estimates are not
 built; see *Open items*.
+
+### Why there is no "Coming up" forecast
+
+The page used to chart the cards due on each of the next seven days. The owner
+removed it on 2026-09-30. Its numbers counted each way round as a card, so "30
+due tomorrow" could be 15 words. And a student can't act on it: a session deals
+due cards before new ones by itself. The `stats` suite fails if it comes back.
 
 ### Why there is no "mastered" figure
 

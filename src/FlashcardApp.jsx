@@ -2741,7 +2741,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   if (mode === "stats") {
     const now = Date.now();
     const todayISO = localISODate();
-    const endToday = endOfLocalDay(new Date(now));
     // Every card, each way round it is asked: a word is two schedules, and
     // everything below that reads FSRS state reads them apart.
     const sides = [];
@@ -2821,32 +2820,6 @@ export default function FlashcardApp({ user, onSignOut }) {
       { key: "recent", label: AREA_LABEL.recent, sub: areaSpan.recent, summary: areas.recent },
       { key: "earlier", label: AREA_LABEL.earlier, sub: areaSpan.earlier, summary: areas.earlier },
     ].filter((r) => r.summary.total > 0);
-
-    // Coming up. Today's work is split in two: cards whose date is today, and
-    // cards left over from earlier days. Counted together this once read
-    // "708 due today" — almost all of them stamped due on one day by the
-    // move to FSRS — which reads as a day's work no one could do.
-    const startToday = startOfLocalDay(new Date(now));
-    let dueToday = 0, dueEarlier = 0;
-    for (const { side } of sides) {
-      if (!isSeenSide(side) || !side.next_due_at) continue;
-      const t = new Date(side.next_due_at).getTime();
-      if (t > endToday) continue;
-      if (t >= startToday) dueToday++; else dueEarlier++;
-    }
-    const week = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(now);
-      d.setDate(d.getDate() + i + 1);
-      return { iso: localISODate(d), label: d.toLocaleDateString(undefined, { weekday: "short" }), count: 0 };
-    });
-    const weekIndex = new Map(week.map((w, i) => [w.iso, i]));
-    for (const { side } of sides) {
-      if (!isSeenSide(side) || !side.next_due_at) continue;
-      const i = weekIndex.get(localISODate(new Date(side.next_due_at)));
-      if (i !== undefined) week[i].count++;
-    }
-    const weekTotal = week.reduce((n, w) => n + w.count, 0);
-    const weekMax = Math.max(1, ...week.map((w) => w.count));
 
     // Breakdown by card type. Grammar, words and phrases are different kinds
     // of work and tend to sit at different levels — this is where you find out
@@ -2950,27 +2923,6 @@ export default function FlashcardApp({ user, onSignOut }) {
                 </div>
               </div>
             )}
-
-            {/* Coming up: due cards on each of the next seven days */}
-            <div style={{marginTop:24}} data-stats-coming-up>
-              <h3 style={S.statsSectionTitle}>Coming up</h3>
-              <p style={S.statsSectionSub}>
-                {dueToday.toLocaleString()} due today
-                {dueEarlier > 0 ? `, and ${dueEarlier.toLocaleString()} older ${dueEarlier === 1 ? "card" : "cards"} still waiting from earlier days` : ""}.
-                {" "}{week[0].count.toLocaleString()} due tomorrow, {weekTotal.toLocaleString()} over the next seven days.
-              </p>
-              <div style={S.weekChart}>
-                {week.map((w) => (
-                  <div key={w.iso} style={S.weekCol} title={`${w.count} due on ${w.iso}`}>
-                    <div style={S.weekCount}>{w.count.toLocaleString()}</div>
-                    <div style={S.weekBarSlot}>
-                      <div style={{ ...S.weekBar, height: `${(w.count / weekMax) * 100}%` }} />
-                    </div>
-                    <div style={S.weekLabel}>{w.label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
 
             {/* By type: grammar vs words vs phrases */}
             {byType.length > 1 && (
@@ -4735,12 +4687,6 @@ const S = {
   areaName: { fontSize:15, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary },
   areaSub: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant },
   areaFigures: { fontSize:12.5, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontVariantNumeric:"tabular-nums", marginTop:-2 },
-  weekChart: { display:"grid", gridTemplateColumns:"repeat(7, minmax(0, 1fr))", gap:8, background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"16px 18px", border:"1px solid rgba(3,22,50,0.06)" },
-  weekCol: { display:"flex", flexDirection:"column", alignItems:"center", gap:6, minWidth:0 },
-  weekCount: { fontSize:12, fontFamily:T.font.sans, fontWeight:600, color:T.color.primary, fontVariantNumeric:"tabular-nums" },
-  weekBarSlot: { height:90, width:"100%", maxWidth:36, display:"flex", alignItems:"flex-end", background:T.color.surfaceLow, borderRadius:4, overflow:"hidden" },
-  weekBar: { width:"100%", background:T.color.secondary, borderRadius:"4px 4px 0 0", minHeight:0 },
-  weekLabel: { fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.04em" },
   statsSectionTitle: { fontSize:18, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, margin:"0 0 4px" },
   statsSectionSub: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"0 0 14px" },
   // Hardest cards

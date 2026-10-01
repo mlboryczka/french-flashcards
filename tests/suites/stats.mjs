@@ -1,5 +1,5 @@
-// The Stats page: seen, about remembered and not yet seen, per area; today's
-// answers; and what's coming up. Every expected figure is counted from the
+// The Stats page: seen, about remembered and not yet seen, per area; and
+// today's answers. Every expected figure is counted from the
 // served fixture here, independently of the app's own calculation, so the
 // check can't just agree with the code.
 import { openApp, finish, checker, gotoStats } from "../harness.mjs";
@@ -59,23 +59,6 @@ for (let i = 0; i < 12; i++) {
   });
 }
 
-// Review work: 4 cards left over from earlier days, 2 that came due today.
-const startOfToday = (() => {
-  const d = new Date(now);
-  if (d.getHours() < 4) d.setDate(d.getDate() - 1);
-  d.setHours(4, 0, 1, 0);
-  return d.getTime();
-})();
-for (let i = 0; i < 6; i++) {
-  rows.push({
-    id: id++, front: `révision ${i}`, back: `review ${i}`, category: "V", dates: [daysAgo(60)],
-    flagged_for_review: false, batch_id: null, source: "cahier-upload",
-    fsrs_state: 2, stability: 1, difficulty: 5, reps: 1, lapses: 0,
-    last_review: new Date(now - 10 * DAY).toISOString(), last_answer_correct: true,
-    next_due_at: new Date(i < 4 ? now - 3 * DAY : startOfToday).toISOString(),
-  });
-}
-
 // Each card, each way round it is asked, under plain names: grammar only as
 // written, words and phrases both ways.
 const twoWay = (r) => r.category === "V" || r.category === "E";
@@ -98,8 +81,6 @@ const notes = rows.filter((r) => !r.source.startsWith("lesson:"));
 const recent = notes.filter((r) => r.dates[0] >= daysAgo(14));
 const earlier = notes.filter((r) => r.dates[0] < daysAgo(14));
 const lesson = rows.filter((r) => r.source.startsWith("lesson:"));
-const tomorrow = (() => { const d = new Date(now); d.setDate(d.getDate() + 1); return localDay(d); })();
-const dueTomorrow = sides.filter((x) => x.fsrs_state !== 0 && x.next_due_at && localDay(x.next_due_at) === tomorrow).length;
 
 const { browser, page } = await openApp({
   width: 1400, height: 1000,
@@ -158,14 +139,9 @@ row("Older classes", earlier);
   ck("the older group runs from its first class to the day before", areas.includes(`${monthYear} to ${long(daysAgo(15))}`), areas.slice(0, 400));
 }
 
-console.log("\n  coming up");
-const coming = await within("[data-stats-coming-up]");
-ck("cards due tomorrow", coming.includes(`${dueTomorrow} due tomorrow`), coming.slice(0, 120));
-// A pile left from earlier days is not today's work, and must not read as it.
-ck("cards due today are only those whose date is today",
-   coming.includes("2 due today"), coming.slice(0, 160));
-ck("older cards still waiting are counted apart",
-   coming.includes("4 older cards still waiting from earlier days"), coming.slice(0, 160));
+// No forecast of cards due each day (owner, 2026-09-30): it counted each way
+// round as a card, and a session deals due cards by itself.
+ck("no \"Coming up\" forecast", !/coming up|due tomorrow/i.test(text), text.slice(0, 300));
 
 console.log("\n  by type");
 // Right last time, over the cards seen, from the same rows as everything else
