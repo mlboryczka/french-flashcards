@@ -33,7 +33,13 @@ add a History entry, and update Open items.
 - **Scheduling:** `ts-fsrs` 5.4.2. The server fits each student's settings with
   the official FSRS optimizer, `@open-spaced-repetition/binding` 0.5.0.
 - **Data and sign-in:** Supabase, free tier: Postgres with row-level security,
-  and magic-link email.
+  and magic-link email. A sign-in link works once. Opened again (a second
+  click, an older email after a newer one, or a work email system that opens
+  links to scan them), Supabase sends the browser back with the reason in the
+  address bar, and the sign-in page says "That sign-in link has expired or was
+  already used. Send yourself a new one." (`src/Auth.jsx`). Supabase also
+  allows one link a minute per address, and the page shows its "you can only
+  request this after N seconds".
 - **AI:** `@anthropic-ai/sdk` ^0.124.0, used only by the serverless functions
   and the scripts, with a model per route (see *Serverless functions*).
   Students bring their own API key; the owner and the linked cahier use the
@@ -1758,6 +1764,22 @@ table so no migration was needed. The status check reads the new set records,
 so a set that left out a switched-off lesson's due cards isn't reported. Tested
 against the mock with a deck of own cards, a started and an unstarted lesson.
 
+### 2026-10-04 — Sample students, and the used sign-in link
+
+The owner asked whether a tester can just be sent the link, and then for the
+sign-up to be tested with sample accounts that never appear among their
+students. Four sample students were run on a private copy of the app on the
+owner's Mac: a throwaway local database built from `supabase/schema.sql` and
+the migrations, the real PostgREST, a stand-in for Supabase's sign-in that kept
+the emails in a local inbox, and the `api/` functions with Claude cut off.
+Signing up, studying, reloading, a second computer, feedback, the tutor's
+request for a key, signing out, and one student being refused every read and
+write of another's data all passed. That ran on the code from before the
+lesson switches. The one fault was a used or older sign-in link silently
+landing back on the sign-in page, so the page now says what happened. The
+owner confirmed Supabase's free email sender reaches students outside the
+project, since students already use it.
+
 ---
 
 ## Open items
@@ -1839,6 +1861,11 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 ### Not yet checked on the live app
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
+
+- **The used sign-in link message** (2026-10-04). Ask for a link, open it,
+  sign out, and open the same link again: the sign-in page should say it has
+  expired or was already used. Checked against the mock and a stand-in for
+  Supabase's sign-in only.
 
 - **The lesson switches and My cahier** (2026-10-04). Switch a lesson off on
   one computer and open the app on another: it should be off there too.

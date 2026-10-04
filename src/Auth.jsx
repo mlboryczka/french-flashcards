@@ -1,11 +1,27 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
+
+// A sign-in link works once. Opened again (a second click, an older email
+// after a newer one, or a work email system that opens links to scan them)
+// Supabase sends the browser back here with the reason in the address bar,
+// which the page never showed.
+const linkFailed = () => {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  return !!(params.get("error") || params.get("error_code"));
+};
 
 export default function Auth() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() =>
+    linkFailed() ? "That sign-in link has expired or was already used. Send yourself a new one." : ""
+  );
+
+  // Cleared once read, so a reload or a later sign-out doesn't show it again.
+  useEffect(() => {
+    if (linkFailed()) window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
