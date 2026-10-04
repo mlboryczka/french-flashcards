@@ -69,8 +69,9 @@ from `main`, so nothing is live until it is there.
 
 **Resolve feedback in the session that fixes it:**
 `node scripts/resolve-feedback.mjs <ids> --note "what was done" --apply`, also
-for an entry that needed no change (the note says why). The app can't resolve
-entries, and resolving deletes nothing.
+for an entry that needed no change (the note says why). In the app the owner
+resolves entries only with Apply or Dismiss under Claude's review (see *View
+feedback and Claude's review*). Resolving deletes nothing.
 
 **No change may cost a student their progress** (owner, 2026-09-25): their
 schedules both ways round, the record of every answer (`card_reviews`), the
@@ -611,7 +612,7 @@ one. `api/_lib/` is shared code, not a route.
 | `cahier-sync.js` | Linked cahier: turns the doc's unread classes into cards |
 | `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs |
 | `chat.js` | The tutor. Gives hints, not the answer, until the card's answer is shown. Never writes cards |
-| `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude |
+| `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude. A body with `feedback` is instead Claude's review of a piece of feedback and the owner's Apply and Dismiss (`api/_lib/feedbackReview.js`), here because of the 12-route limit |
 | `fsrs-fit.js` | Once a day per student: fits their own FSRS settings when due, and recomputes memory estimates when the settings change |
 | `admin-update-card.js` | Saves a card edit, for any student's own cards despite the name. Uses the service role: edits from the browser under RLS silently did nothing |
 | `admin-users.js` | Admin only: every account and its activity |
@@ -634,6 +635,7 @@ one. `api/_lib/` is shared code, not a route.
 |---|---|
 | `chat.js` | `claude-sonnet-5`, effort `low` |
 | `review-answer.js`, `split-senses.js` | `claude-opus-5` |
+| `review-answer.js`, reviewing feedback | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
 | `parse-cahier.js`, `cahier-parse.js`, `cahier-sync.js`, `cahier-daily.js` | `claude-haiku-4-5` |
 
 No other route calls a model. The tutor's effort is set explicitly: left
@@ -662,6 +664,9 @@ unset, the model thought at high effort and the tutor was slow.
   `ANTHROPIC_API_KEY` pays.
 - The linked cahier always uses the server's key: the owner pays for it, not
   the students (owner, 2026-09-24).
+- So does Claude's review of feedback, since the reviews are for the owner
+  (owner, 2026-10-04). A student's browser can ask for one review per piece of
+  feedback it sent in the last 10 minutes, and nothing more.
 - The key is kept only in the student's browser (`src/lib/anthropicKey.js`),
   entered at profile menu → "Connect Claude account" (`src/ApiKeyModal.jsx`).
   It is never stored on the server, so the app holds nobody's credentials.
@@ -739,6 +744,8 @@ The files:
   target, and `apply_memory_estimates()`, which only the server may call.
 - `013_answer_settings_and_sets`: the settings each answer was scheduled
   with, on `card_reviews`, and `dealt_sets`, one row per set of cards dealt.
+- `014_feedback_review`: Claude's review of each piece of feedback, on
+  `beta_feedback`.
 
 ---
 
@@ -922,7 +929,36 @@ and shipped broken.
   paused on hover). A failed send keeps the panel open with an error or, if it
   was closed meanwhile, shows a toast that stays until dismissed.
 - **The flag on the card opens it about that card**, with "Attach card" ticked
-  even if the draft had it unticked.
+  even if the draft had it unticked. The attached card now carries its row id,
+  so Claude's review finds it even after it has been edited.
+
+### View feedback and Claude's review
+
+Asked for by the owner on 2026-10-04: Claude reviews all feedback and serves it
+up in a review pane, the owner's own feedback apart from other students'.
+Nothing changes until the owner presses a button.
+
+- **Claude reviews each piece of feedback when it is sent.** The sender's
+  browser asks once the note is saved, and View feedback asks for any open
+  entry still without a review when it opens, three at a time. Claude reads the
+  note, the card as it is in the sender's deck now, and any screenshot, and
+  saves one of three verdicts on the row (migration_014): a corrected card,
+  an app problem with a brief for a coding session, or no change needed. Each
+  comes with a sentence or three saying whether the sender is right and why.
+- **View feedback has two sections**, "Your feedback" and "Other students".
+  Entries keep the numbers `resolve-feedback.mjs` uses, newest first across the
+  whole list, so the two sections' numbers interleave.
+- **Apply** writes the corrected card over the card in place, in the sender's
+  deck only, so it keeps its schedule, answers and place in any set. It is
+  refused if the card has changed since Claude looked ("Review again"), or if
+  the deck already has a card with the new front. Applying a fix to the
+  owner's own card reloads the deck on screen.
+- **"Copy for Claude"** on an app problem copies the note, the card, Claude's
+  review and brief, and the command that resolves the entry, to paste into a
+  coding session. That session fixes it and resolves the entry.
+- **Dismiss** resolves any entry, keeping Claude's reasoning in the note.
+- A database without migration_014 shows the list as before, with a line
+  saying to run it.
 
 ### The sidebar
 
@@ -990,7 +1026,7 @@ protocol*.
 
 ### The suites
 
-Twelve need no browser:
+Thirteen need no browser:
 
 - `logic`: the pure rules, from card types and prompt cleaning to
   `reconcileLessons` and the released-lesson-cards list.
@@ -1012,6 +1048,9 @@ Twelve need no browser:
   and each fault planted in it fails its check.
 - `status-script`: `scripts/status-check.mjs` against a stand-in Supabase,
   sending only GETs.
+- `feedback-review`: Claude's review of feedback and Apply and Dismiss, with a
+  stand-in store and Claude: who may ask, Apply changing only the card's text,
+  and refusing a card that changed after the review.
 
 Sixteen drive the app in a browser:
 
@@ -1628,6 +1667,19 @@ screenshot, a window shorter still, had the answer box cut off with no way to
 scroll: the card area now stops at 300px and the column scrolls in windows
 460px tall or less. `layout`, `reflow`, `motion` and `answering` pass.
 
+### 2026-10-04 — Claude reviews feedback; the owner applies or dismisses
+
+The owner asked for an automated way to fix their feedback and review other
+students'. Agreed: Claude reviews every piece of feedback and nothing changes
+until the owner acts, in a review pane that keeps the owner's own feedback
+apart from other students'. For app problems the owner chose to paste a brief
+into a session themselves rather than have a session start by itself each day.
+See *View feedback and Claude's review*. Tested with stand-ins for the
+database and for Claude (`feedback-review`, `auth`, `panels`), and the pane in
+the browser against sample feedback. No real call to Claude was made, as this
+Mac has no Anthropic key: the request was checked against the installed
+library only.
+
 ---
 
 ## Open items
@@ -1637,6 +1689,9 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 
 ### The owner's to-dos
 
+- **Run `migrations/migration_014_feedback_review.sql`** in the Supabase SQL
+  editor. Until then View feedback works as before and says the reviews need
+  it.
 - **Check that `CRON_SECRET` is set in Vercel.** Without it the daily cahier
   check (`api/cahier-daily.js`) refuses to run. Linked docs are still read
   when a student opens the app, so the only sign is classes arriving late.
@@ -1706,6 +1761,10 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 ### Not yet checked on the live app
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
+
+- **Claude's review of feedback** (2026-10-04). After migration_014, send a
+  note about a card and open View feedback: a review should be there or arrive
+  within about half a minute. Its request has never reached the real Claude.
 
 - **The class notice closing on the first answer** (2026-09-30). The mock has
   no linked cahier, so the notice never appeared in a test. After the next

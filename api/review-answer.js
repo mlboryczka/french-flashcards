@@ -11,6 +11,10 @@
 // Returns:
 //   { ok, verdict: "accept"|"reject"|"uncertain", reasoning: "..." }
 //
+// A body with `feedback` instead is Claude's review of a piece of feedback,
+// and the owner's Apply and Dismiss: see _lib/feedbackReview.js. It lives
+// here because the Hobby plan deploys at most 12 routes.
+//
 // This route used to have NO authentication of any kind. Anyone who could
 // reach the URL could spend the deploy owner's Anthropic credit and write
 // rows with the service role key. It now requires a verified session, and
@@ -19,8 +23,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
-import { requireUser } from "./_lib/auth.js";
+import { requireUser, isAdmin } from "./_lib/auth.js";
 import { requireAnthropicKey } from "./_lib/anthropicKey.js";
+import { handleFeedbackRequest, supabaseFeedbackStore } from "./_lib/feedbackReview.js";
 
 export const config = { maxDuration: 60 };
 
@@ -58,6 +63,8 @@ export default async function handler(req, res) {
 
   const user = await requireUser(req, res);
   if (!user) return;
+
+  if (req.body?.feedback) return feedbackReview(req, res, user);
 
   const {
     card_id,
@@ -168,5 +175,28 @@ Respond with ONLY a JSON object, no other text:
       return res.status(429).json({ error: "Rate limited — give it a moment." });
     }
     return res.status(500).json({ error: err.message });
+  }
+}
+
+async function feedbackReview(req, res, user) {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY } = process.env;
+  const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  try {
+    const { status, json } = await handleFeedbackRequest({
+      body: req.body.feedback,
+      user,
+      isAdmin: isAdmin(user),
+      store: supabaseFeedbackStore(db),
+      apiKey: ANTHROPIC_API_KEY || null,
+    });
+    return res.status(status).json(json);
+  } catch (err) {
+    console.error("feedback review failed:", err);
+    if (err instanceof Anthropic.RateLimitError) {
+      return res.status(429).json({ error: "Claude is busy. Try again in a minute." });
+    }
+    return res.status(500).json({ error: err.message || "The review failed." });
   }
 }

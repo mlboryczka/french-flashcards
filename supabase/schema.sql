@@ -259,7 +259,11 @@ create table if not exists public.beta_feedback (
   -- Null while open. Set when the feedback has been dealt with, which takes it
   -- off the admin list without deleting it (migration_009).
   resolved_at timestamptz,
-  resolution text
+  resolution text,
+  -- Claude's review, written by the server (api/_lib/feedbackReview.js) and
+  -- acted on with Apply or Dismiss in View feedback (migration_014).
+  review jsonb,
+  reviewed_at timestamptz
 );
 
 create index if not exists beta_feedback_created_at_idx

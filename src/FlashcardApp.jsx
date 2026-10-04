@@ -2607,7 +2607,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         }}
       />
       {showFeedbackModal && (
-        <FeedbackReviewModal onClose={() => setShowFeedbackModal(false)} />
+        <FeedbackReviewModal user={user} onClose={() => setShowFeedbackModal(false)} onOwnCardChanged={reloadDeck} />
       )}
       {showUsersModal && (
         <UsersModal onClose={() => setShowUsersModal(false)} />
@@ -3526,10 +3526,10 @@ export default function FlashcardApp({ user, onSignOut }) {
 // ─── EDIT CARD MODAL ─────────────────────────────────────────────────────
 // ─── FEEDBACK ENTRY ────────────────────────────────────────────────────────
 // One entry in the feedback log, the same in the "View feedback" modal and on
-// the Feedback Review page. Read-only on purpose: feedback is worked through by
-// a Claude session, which fixes the card or the code and then resolves the
-// entry with scripts/resolve-feedback.mjs. There is nothing for the owner to do
-// by hand, so there are no buttons.
+// the Feedback Review page. The entry itself is read-only; in View feedback,
+// Claude's review and the owner's buttons sit beneath it (`children`, see
+// FeedbackReview). Feedback about the app is still fixed by a Claude session,
+// which resolves the entry with scripts/resolve-feedback.mjs.
 //
 // Layout: the message is the headline, then who and when (to the minute), then
 // the attached card as two lines beside a screenshot thumbnail stretched to the
@@ -3568,7 +3568,7 @@ function ScreenshotLightbox({ src, onClose }) {
   );
 }
 
-function FeedbackEntry({ item, number, last }) {
+function FeedbackEntry({ item, number, last, children }) {
   const [zoomed, setZoomed] = useState(false);
   const ctx = item.card_context;
   const type = ctx ? classifyCard({ cat: ctx.category, f: ctx.front, b: ctx.back }) : null;
@@ -3617,6 +3617,7 @@ function FeedbackEntry({ item, number, last }) {
           )}
         </div>
       )}
+      {children}
       </div>
       {zoomed && <ScreenshotLightbox src={item.screenshot} onClose={() => setZoomed(false)} />}
     </div>
@@ -3644,44 +3645,277 @@ async function loadOpenFeedback() {
   return { data: open.data || [], error: open.error, resolvable: true };
 }
 
+const NEEDS_MIGRATION_014 =
+  "Claude can't review feedback yet: this database has no review column. Run migrations/migration_014_feedback_review.sql in the Supabase SQL editor.";
+
 const NEEDS_MIGRATION_009 =
   "Showing resolved feedback too: this database has no resolved_at column yet. Run migrations/migration_009_beta_feedback_resolved.sql in the Supabase SQL editor.";
 
-// Shows open beta_feedback entries in a portal overlay. Triggered from the
-// profile dropdown → "View feedback".
-function FeedbackReviewModal({ onClose }) {
+// ─── CLAUDE'S REVIEW OF FEEDBACK ──────────────────────────────────────────
+// Every piece of feedback is reviewed by Claude when it is sent, or here when
+// View feedback opens, for anything that has no review yet. Claude says whether
+// the sender is right and what it needs (api/_lib/feedbackReview.js):
+//   card  a corrected card. Apply writes it over the card, in place, so the
+//         card keeps its schedule and history; it works on any student's deck.
+//   app   a change to the app or a lesson, which only a coding session can
+//         make. "Copy for Claude" copies a brief to paste into one; that
+//         session resolves the entry when it has fixed it.
+//   none  nothing to change.
+// Dismiss resolves any entry. Nothing changes until the owner presses a button
+// (owner, 2026-10-04).
+
+async function feedbackRequest(feedback) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch("/api/review-answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || ""}` },
+    body: JSON.stringify({ feedback }),
+  });
+  let body = null;
+  try { body = await res.json(); } catch {}
+  if (!res.ok) {
+    const err = new Error(body?.error || `The server answered ${res.status}.`);
+    err.code = body?.code;
+    throw err;
+  }
+  return body;
+}
+
+const REVIEW_LABEL = { card: "Card fix", app: "App problem", none: "No change needed" };
+const REVIEW_COLOR = { card: T.color.secondary, app: T.color.primary, none: T.color.onSurfaceVariant };
+
+// What "Copy for Claude" puts on the clipboard: enough for a fresh session to
+// find the problem, fix it and resolve the entry.
+function feedbackBrief(item) {
+  const r = item.review || {};
+  const ctx = item.card_context;
+  return [
+    `Fix feedback #${item.id} from ${item.user_email || "a student"}, sent ${feedbackTime(item.created_at)}:`,
+    `"${item.message}"`,
+    ctx ? `Card: ${ctx.front} · ${ctx.back}` : null,
+    "",
+    `Claude's review: ${r.reasoning || ""}`,
+    r.brief ? `What needs changing: ${r.brief}` : null,
+    "",
+    `When it is fixed, resolve it: node scripts/resolve-feedback.mjs ${item.id} --note "what was done" --apply`,
+  ].filter((l) => l !== null).join("\n");
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch {}
+    area.remove();
+    return ok;
+  }
+}
+
+function FeedbackReview({ item, state, onApply, onDismiss, onReview }) {
+  const [copied, setCopied] = useState(false);
+  const r = item.review;
+
+  if (state.done) {
+    return (
+      <div data-feedback-review style={S.fbReview}>
+        <div style={S.fbReviewDone}>
+          {state.done === "applied"
+            ? <>Applied. The card now reads <b>{state.card.front}</b> · {state.card.back}</>
+            : "Dismissed."}
+        </div>
+      </div>
+    );
+  }
+  if (state.reviewing) {
+    return (
+      <div data-feedback-review style={S.fbReview}>
+        <div style={S.fbReviewMuted}>Claude is reviewing this…</div>
+      </div>
+    );
+  }
+
+  const busy = !!state.busy;
+  const error = state.error && (
+    <div style={S.fbReviewError}>
+      {state.error}
+      {(state.errorCode === "card_changed" || !r) && (
+        <> <button type="button" style={S.fbReviewLink} onClick={onReview}>Review again</button></>
+      )}
+    </div>
+  );
+
+  if (!r) {
+    return (
+      <div data-feedback-review style={S.fbReview}>
+        {error || <div style={S.fbReviewMuted}>Not reviewed yet.</div>}
+        <div style={S.fbReviewActions}>
+          {!state.error && <button type="button" style={S.fbReviewBtn} onClick={onReview}>Ask Claude</button>}
+          <button type="button" style={S.fbReviewBtn} disabled={busy} onClick={onDismiss}>Dismiss</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div data-feedback-review={r.kind} style={S.fbReview}>
+      <div style={{ ...S.fbReviewLabel, color: REVIEW_COLOR[r.kind] }}>Claude · {REVIEW_LABEL[r.kind]}</div>
+      {r.reasoning && <div style={S.fbReviewText}>{r.reasoning}</div>}
+      {r.kind === "card" && r.fix && (
+        <div style={S.fbReviewFix}>
+          <span style={S.fbReviewFixLabel}>Now</span>
+          <span style={S.fbReviewFixText}>{r.card?.front} · {r.card?.back}</span>
+          <span style={S.fbReviewFixLabel}>After</span>
+          <span style={{ ...S.fbReviewFixText, color: T.color.onSurface, fontWeight: 600 }}>{r.fix.front} · {r.fix.back}</span>
+        </div>
+      )}
+      <div style={S.fbReviewActions}>
+        {r.kind === "card" && r.fix && (
+          <button type="button" data-feedback-apply style={S.fbReviewPrimary} disabled={busy} onClick={onApply}>
+            {state.busy === "apply" ? "Applying…" : "Apply"}
+          </button>
+        )}
+        {r.kind === "app" && (
+          <button
+            type="button"
+            data-feedback-copy
+            style={S.fbReviewPrimary}
+            onClick={async () => {
+              if (await copyText(feedbackBrief(item))) {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }
+            }}
+          >
+            {copied ? "Copied" : "Copy for Claude"}
+          </button>
+        )}
+        <button type="button" data-feedback-dismiss style={S.fbReviewBtn} disabled={busy} onClick={onDismiss}>
+          {state.busy === "dismiss" ? "Dismissing…" : "Dismiss"}
+        </button>
+      </div>
+      {error}
+    </div>
+  );
+}
+
+// Shows open beta_feedback entries in a portal overlay, the owner's own first
+// and other students' below. Triggered from the profile dropdown → "View
+// feedback". Entries keep the numbers the script uses (newest first across
+// the whole list), so the two sections' numbers interleave.
+function FeedbackReviewModal({ user, onClose, onOwnCardChanged }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [resolvable, setResolvable] = useState(true);
+  // A database without migration_014 has no review column, so nothing can be
+  // reviewed or kept.
+  const [reviewable, setReviewable] = useState(true);
+  // Per entry, by id: { reviewing, busy, error, errorCode, done, card }.
+  const [states, setStates] = useState({});
+  const patch = (id, next) => setStates((all) => ({ ...all, [id]: { ...all[id], ...next } }));
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  // Development runs effects twice; each review is a paid call to Claude.
+  const started = useRef(false);
+
+  const review = useCallback(async (item) => {
+    patch(item.id, { reviewing: true, error: null, errorCode: null });
+    try {
+      const { review: r } = await feedbackRequest({ action: "review", id: item.id });
+      if (!mounted.current) return;
+      setItems((list) => list.map((x) => (x.id === item.id ? { ...x, review: r } : x)));
+      patch(item.id, { reviewing: false });
+    } catch (e) {
+      if (mounted.current) patch(item.id, { reviewing: false, error: `Claude couldn't review this: ${e.message}` });
+    }
+  }, []);
 
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     (async () => {
       const { data, error, resolvable } = await loadOpenFeedback();
       if (error) console.error("Failed to load feedback:", error);
+      const canReview = resolvable && (data.length === 0 || data.some((x) => "review" in x));
       setItems(data);
       setResolvable(resolvable);
+      setReviewable(canReview);
       setLoading(false);
+      if (!canReview) return;
+      // Three at a time, oldest first: each is a call to Claude.
+      const queue = data.filter((x) => !x.review).reverse();
+      queue.forEach((x) => patch(x.id, { reviewing: true }));
+      const worker = async () => {
+        while (queue.length && mounted.current) await review(queue.shift());
+      };
+      await Promise.all([worker(), worker(), worker()]);
     })();
-  }, []);
+  }, [review]);
+
+  const act = async (item, action) => {
+    patch(item.id, { busy: action, error: null, errorCode: null });
+    try {
+      const result = await feedbackRequest({ action, id: item.id });
+      if (!mounted.current) return;
+      patch(item.id, { busy: null, done: action === "apply" ? "applied" : "dismissed", card: result.card });
+      if (action === "apply" && result.own) onOwnCardChanged?.();
+    } catch (e) {
+      if (mounted.current) patch(item.id, { busy: null, error: e.message, errorCode: e.code });
+    }
+  };
+
+  const numbered = items.map((item, i) => ({ item, number: i + 1 }));
+  const sections = [
+    ["Your feedback", numbered.filter(({ item }) => item.user_id && item.user_id === user?.id)],
+    ["Other students", numbered.filter(({ item }) => !(item.user_id && item.user_id === user?.id))],
+  ];
+  const openCount = items.filter((x) => !states[x.id]?.done).length;
 
   return createPortal(
     <div style={S.feedbackModalOverlay} onClick={onClose}>
       <div data-feedback-log style={S.feedbackModalBox} onClick={e => e.stopPropagation()}>
         <div style={S.fbLogHeader}>
           <h2 style={S.fbLogTitle}>Feedback</h2>
-          {!loading && <span style={S.fbLogCount}>{items.length} open</span>}
+          {!loading && <span style={S.fbLogCount}>{openCount} open</span>}
           <span style={{ flex: 1 }} />
           <button aria-label="Close" style={S.fbLogClose} onClick={onClose}>×</button>
         </div>
         {!resolvable && <div style={S.fbLogNote}>{NEEDS_MIGRATION_009}</div>}
+        {resolvable && !reviewable && <div style={S.fbLogNote}>{NEEDS_MIGRATION_014}</div>}
         {loading ? (
           <div style={S.fbLogEmpty}>Loading…</div>
         ) : items.length === 0 ? (
           <div style={S.fbLogEmpty}>No open feedback.</div>
         ) : (
           <div style={S.fbLogList}>
-            {items.map((item, i) => (
-              <FeedbackEntry key={item.id} item={item} number={i + 1} last={i === items.length - 1} />
+            {sections.map(([title, entries]) => (
+              <section key={title} data-feedback-section={title}>
+                <h3 style={S.fbLogSection}>{title}</h3>
+                {entries.length === 0 && <div style={S.fbLogSectionEmpty}>Nothing open.</div>}
+                {entries.map(({ item, number }, i) => (
+                  <FeedbackEntry key={item.id} item={item} number={number} last={i === entries.length - 1}>
+                    {reviewable && (
+                      <FeedbackReview
+                        item={item}
+                        state={states[item.id] || {}}
+                        onApply={() => act(item, "apply")}
+                        onDismiss={() => act(item, "dismiss")}
+                        onReview={() => review(item)}
+                      />
+                    )}
+                  </FeedbackEntry>
+                ))}
+              </section>
             ))}
           </div>
         )}
@@ -4855,6 +5089,21 @@ const S = {
   // by the margin, gives the ring room without moving anything.
   fbLogList: { overflowY:"auto", minHeight:0, padding:"0 4px", margin:"0 -4px" },
   fbLogPage: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"4px 24px", boxShadow:T.shadow.card },
+  fbLogSection: { margin:0, padding:"18px 0 2px", fontSize:13, fontWeight:600, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, letterSpacing:"0.02em" },
+  fbLogSectionEmpty: { fontSize:14, color:T.color.onSurfaceVariant, padding:"10px 0 14px", borderBottom:"1px solid rgba(3,22,50,0.08)" },
+  fbReview: { marginTop:12, padding:"12px 14px", borderRadius:T.radius.md, border:"1px solid rgba(3,22,50,0.08)", fontFamily:T.font.sans },
+  fbReviewLabel: { fontSize:13, fontWeight:600 },
+  fbReviewText: { fontSize:15, lineHeight:1.5, color:T.color.onSurface, marginTop:4 },
+  fbReviewMuted: { fontSize:14, color:T.color.onSurfaceVariant },
+  fbReviewDone: { fontSize:14, color:T.color.onSurfaceVariant, overflowWrap:"anywhere" },
+  fbReviewFix: { display:"grid", gridTemplateColumns:"auto minmax(0, 1fr)", columnGap:10, rowGap:4, marginTop:10, padding:"8px 10px", background:T.color.surfaceLow, borderRadius:T.radius.md, fontSize:15, lineHeight:1.5 },
+  fbReviewFixLabel: { fontSize:13, color:T.color.onSurfaceVariant, lineHeight:"22.5px" },
+  fbReviewFixText: { color:T.color.onSurfaceVariant, overflowWrap:"anywhere" },
+  fbReviewActions: { display:"flex", gap:8, marginTop:12 },
+  fbReviewPrimary: { padding:"7px 16px", background:T.gradient.ink, color:T.color.onPrimary, border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:T.font.sans },
+  fbReviewBtn: { padding:"7px 14px", background:"transparent", color:T.color.onSurfaceVariant, border:"1px solid rgba(3,22,50,0.15)", borderRadius:T.radius.md, cursor:"pointer", fontSize:13, fontWeight:500, fontFamily:T.font.sans },
+  fbReviewLink: { padding:0, background:"none", border:"none", color:T.color.primary, textDecoration:"underline", cursor:"pointer", fontSize:13, fontFamily:T.font.sans },
+  fbReviewError: { fontSize:13, color:T.color.error, marginTop:8 },
   fbEntry: { display:"grid", gridTemplateColumns:"32px minmax(0, 1fr)", columnGap:12, padding:"16px 0", borderBottom:"1px solid rgba(3,22,50,0.08)", fontFamily:T.font.sans },
   // Same line height as the message, so the number sits on its first line.
   fbEntryNumber: { fontSize:15, fontWeight:600, lineHeight:"25.5px", color:T.color.onSurfaceVariant, fontVariantNumeric:"tabular-nums" },

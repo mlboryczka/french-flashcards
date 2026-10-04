@@ -239,6 +239,22 @@ export function BetaFeedback({
     };
   }, [open, close]);
 
+  // Ask Claude to review what was just sent, so the review is ready when the
+  // owner opens View feedback (api/_lib/feedbackReview.js). Nobody waits on
+  // it and a failure costs nothing: View feedback reviews anything still
+  // without a review when it opens.
+  async function requestReview() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      fetch("/api/review-answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ feedback: { action: "review" } }),
+      }).catch(() => {});
+    } catch {}
+  }
+
   async function handleSubmit() {
     if (submitting) return;
     // Anything counts: a word, or just a screenshot. There used to be a
@@ -263,6 +279,8 @@ export function BetaFeedback({
     // Build card_context snapshot if toggle is on and card is available
     const cardContext = (attachCard && currentCard) ? {
       card_id: currentCard.id || null,
+      // user_cards.id, so Claude's review finds the card even after an edit.
+      row_id: currentCard.row_id ?? null,
       front: currentCard.f,
       back: currentCard.b,
       category: currentCard.cat,
@@ -299,6 +317,8 @@ export function BetaFeedback({
       if (!openRef.current) setToast({ kind: "failed", id: Date.now() });
       return;
     }
+
+    requestReview();
 
     // Sent: there is no draft any more, so there is nothing a later close
     // could ask about. Clear first, then close, then say so.

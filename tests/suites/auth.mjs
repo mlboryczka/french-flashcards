@@ -66,6 +66,7 @@ const SPENDERS = [
   ["/api/chat", "../../api/chat.js", { messages: [{ role: "user", content: "hi" }] }],
   ["/api/review-answer", "../../api/review-answer.js",
    { user_answer: "a hill", expected_answer: "a hill", card_id: "une colline" }],
+  ["/api/review-answer (feedback)", "../../api/review-answer.js", { feedback: { action: "review" } }],
   ["/api/split-senses", "../../api/split-senses.js",
    { cards: [{ row_id: "1", front: "les frais", back: "the costs; fresh" }] }],
   ["/api/cahier-parse", "../../api/cahier-parse.js", { text: "bonjour = hello" }],
