@@ -5,6 +5,7 @@ import { LESSONS, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } fr
 import { reconcileLessons } from "./lib/lessonSync";
 import { archivedSource } from "./lib/archive";
 import { readPlace, writePlace, dropSets, packSet, unpackEntries } from "./lib/studyPlace";
+import { CHOICE_KEY, choicesOf, startedLessons, lessonsInCards, onCards, setKeyOf, dealScopeOf } from "./lib/lessonChoice";
 import { withdrawRetry } from "./lib/sessionQueue";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
 import { useProgress } from "./useProgress";
@@ -351,6 +352,8 @@ export default function FlashcardApp({ user, onSignOut }) {
   // either has moved on, the block is dealt again — see the deck-build effect.
   const dealtSeqRef = useRef(null);
   const dealtDayRef = useRef(null);
+  // And which lessons were switched off then (switchSig).
+  const dealtSwitchRef = useRef(null);
   // Bumped on coming back to the tab on a new day, to run that check.
   const [recheck, setRecheck] = useState(0);
   // Where the student was, kept in this browser (lib/studyPlace.js): the set
@@ -410,6 +413,10 @@ export default function FlashcardApp({ user, onSignOut }) {
     const l = placeRef.current.current?.lessonFilter;
     return l === "all" || LESSONS.some((x) => x.id === l) ? l : "all";
   });
+  // Cards: everything, or only the student's own cards, "My cahier"
+  // (lib/lessonChoice.js). Kept with the other two. Inside a lesson it has no
+  // effect, and its control is hidden.
+  const [scope, setScope] = useState(() => (placeRef.current.current?.scope === "cahier" ? "cahier" : "all"));
   const [dir, setDir] = useState(() => {
     const d = placeRef.current.current?.dir;
     return ["fr", "en", "mix"].includes(d) ? d : "mix"; // fr | en | mix
@@ -690,14 +697,70 @@ export default function FlashcardApp({ user, onSignOut }) {
   // in Brunmair & Richter's (2019) meta-analysis of 59 studies. FSRS has no
   // opinion on categories either — it schedules on memory state alone — so a
   // filter here could only make sessions worse.
-  // The cards a block may be drawn from: the whole deck, or one lesson's or
-  // one type's when the student has narrowed it.
-  const candidatesFrom = useCallback((cards) => {
+  // Which lessons come up on Cards (lib/lessonChoice.js). The student's
+  // choices are kept on their account: read from the session, and once from
+  // the server on opening, in case another computer has changed them since
+  // this one last signed in.
+  const [lessonChoices, setLessonChoices] = useState(() => choicesOf(user));
+  const lessonChoicesRef = useRef(lessonChoices);
+  lessonChoicesRef.current = lessonChoices;
+  const sessionChoices = JSON.stringify(choicesOf(user));
+  useEffect(() => { setLessonChoices(JSON.parse(sessionChoices)); }, [sessionChoices]);
+  useEffect(() => {
+    if (!user?.id) return;
+    let live = true;
+    supabase.auth.getUser()
+      .then(({ data }) => { if (live && data?.user?.id === user.id) setLessonChoices(choicesOf(data.user)); })
+      .catch(() => { /* the session's copy stands */ });
+    return () => { live = false; };
+  }, [user?.id]);
+  // The lesson whose switch failed to save, to say so beside it.
+  const [choiceFailed, setChoiceFailed] = useState(null);
+  const setLessonChoice = useCallback(async (id, on) => {
+    const was = lessonChoicesRef.current[id];
+    const next = { ...lessonChoicesRef.current, [id]: on };
+    lessonChoicesRef.current = next;
+    setLessonChoices(next);
+    setChoiceFailed(null);
+    const { error } = await supabase.auth.updateUser({ data: { [CHOICE_KEY]: next } });
+    if (!error) return;
+    console.error("Saving the lesson switch failed:", error);
+    setLessonChoices((cur) => ({ ...cur, [id]: was }));
+    setChoiceFailed(id);
+  }, []);
+  const lessonIds = useMemo(() => LESSONS.map((l) => l.id), []);
+  const lessonsStarted = useMemo(() => startedLessons(userCards), [userCards]);
+  // The lessons switched off, as a string, so that it changes only when one
+  // is switched, not on every answer.
+  const switchedOn = lessonsInCards(lessonIds, lessonsStarted, lessonChoices);
+  const lessonsOff = lessonIds.filter((id) => !switchedOn.has(id)).join(",");
+  const lessonsOn = useMemo(
+    () => new Set(lessonIds.filter((id) => !lessonsOff.split(",").includes(id))),
+    [lessonIds, lessonsOff]
+  );
+  // What the lesson switches change about the set on screen: on Cards with
+  // everything, which lessons are off; nothing under My cahier or inside a
+  // lesson. A set dealt under other switches has its cards not yet reached
+  // dealt again (the deck-build effect).
+  const switchSig = lessonFilter === "all" && scope === "all" ? lessonsOff : "";
+
+  // The cards a set may hold: one lesson's, or the whole deck's, and one
+  // type's when the student has narrowed it. A set under way is read back
+  // from these, so a card it has already shown stays in it when its lesson is
+  // switched off.
+  const poolFrom = useCallback((cards) => {
     let candidates = cards;
     if (typeFilter !== "all") candidates = candidates.filter(c => classifyCard(c) === typeFilter);
     if (lessonFilter !== "all") candidates = candidates.filter(c => lessonIdOf(c) === lessonFilter);
     return candidates;
   }, [typeFilter, lessonFilter]);
+  // The cards a set is dealt from: the pool, less on Cards the lessons
+  // switched off, or every lesson under My cahier.
+  const candidatesFrom = useCallback((cards) => {
+    const pool = poolFrom(cards);
+    if (lessonFilter !== "all") return pool;
+    return pool.filter((c) => onCards(c, { scope, lessonsOn, lessonIds }));
+  }, [poolFrom, lessonFilter, scope, lessonsOn, lessonIds]);
 
   // The record of each set dealt (lib/dealLog.js), for the status check. Never
   // waited on and never retried: a set is studied the same whether its record
@@ -720,21 +783,24 @@ export default function FlashcardApp({ user, onSignOut }) {
     // Direction is not part of this: changing it re-deals the cards still to
     // come (see the effect below) instead of dealing a new block, which threw
     // away the block's running count and a missed card's pending retry.
-    const filterSig = `${typeFilter}|${lessonFilter}`;
+    const filterSig = setKeyOf(typeFilter, lessonFilter, scope);
     // A set dealt, or brought back, that hasn't reached the screen yet is not
     // dealt again from the same deck. Under React's strict mode an effect runs
     // twice on mount, the second time before the first one's deck is in state:
     // it dealt a fresh set over one just brought back from the browser.
-    const stamp = { sig: filterSig, blockSeq, fresh: deckFreshSeq, cards: userCards, recheck };
+    const stamp = { sig: filterSig, blockSeq, fresh: deckFreshSeq, cards: userCards, recheck, switches: switchSig };
     const last = scheduledRef.current;
     if (deck.length === 0 && last && last.sig === stamp.sig && last.blockSeq === stamp.blockSeq &&
-        last.fresh === stamp.fresh && last.cards === stamp.cards && last.recheck === stamp.recheck) return;
+        last.fresh === stamp.fresh && last.cards === stamp.cards && last.recheck === stamp.recheck &&
+        last.switches === stamp.switches) return;
     const prevSig = filterSigRef.current;
     const filterChanged = prevSig !== filterSig;
     filterSigRef.current = filterSig;
 
     const candidates = candidatesFrom(userCards);
+    const pool = poolFrom(userCards);
     const today = localISODate();
+    const dealScope = dealScopeOf(filterSig, switchSig);
 
     // The cards of a set not yet reached, dealt again from the deck as it now
     // is. What has been shown, answered or lined up for a retry stays put.
@@ -752,7 +818,7 @@ export default function FlashcardApp({ user, onSignOut }) {
             inBlock: [...head, ...kept],
           })
         : null;
-      if (dealt) recordDeal({ kind: "rest", scope: filterSig, direction: dirRef.current, slots: room, dealt, kept: [...head, ...kept] });
+      if (dealt) recordDeal({ kind: "rest", scope: dealScope, direction: dirRef.current, slots: room, dealt, kept: [...head, ...kept] });
       const fill = dealt ? dealt.queue : [];
       let f = 0;
       return [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
@@ -768,22 +834,23 @@ export default function FlashcardApp({ user, onSignOut }) {
         placeRef.current.sets[prevSig] = packSet({
           deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
           face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "", accepted: disputeAccepted },
-          day: dealtDayRef.current, dir: dirRef.current, seq: dealtSeqRef.current,
+          day: dealtDayRef.current, dir: dirRef.current, seq: dealtSeqRef.current, switches: dealtSwitchRef.current,
         });
       }
       const saved = placeRef.current.sets[filterSig];
-      const back = saved && saved.day === today ? unpackEntries(saved, candidates) : null;
+      const back = saved && saved.day === today ? unpackEntries(saved, pool) : null;
       if (back && back.entries.length > 0) {
         blockAnswersRef.current = new Map(saved.answers || []);
         for (const [, a] of blockAnswersRef.current) if (a?.reviewId) knownReviewIdsRef.current.add(a.reviewId);
         blockStartRef.current = saved.blockStart || progressByArea(userCards);
         // Unchanged since it was left, it comes back as it was; otherwise the
         // cards not yet reached are checked against the deck as it now is.
-        const unchanged = saved.seq === deckFreshSeq && saved.dir === dirRef.current;
+        const unchanged = saved.seq === deckFreshSeq && saved.dir === dirRef.current && saved.switches === switchSig;
         const next = unchanged ? back.entries : redealRest(back.entries, back.idx);
         const at = Math.min(back.idx, next.length - 1);
         dealtSeqRef.current = deckFreshSeq;
         dealtDayRef.current = saved.day;
+        dealtSwitchRef.current = switchSig;
         scheduledRef.current = stamp;
         setDeck(next);
         setDeckSig(filterSig);
@@ -831,11 +898,15 @@ export default function FlashcardApp({ user, onSignOut }) {
     // A new day starts a new set, whatever state the last one was in: its
     // answers are all saved, and a set spread over two days makes its
     // checkpoint meaningless (the owner's choice, 2026-09-26).
-    const outOfDate = dealtSeqRef.current !== deckFreshSeq;
+    //
+    // Switching a lesson on or off does the same to a set on Cards: what has
+    // been shown, answered or lined up for a retry stays, so the count and the
+    // student's place don't move, and the rest is dealt under the new switches.
+    const outOfDate = dealtSeqRef.current !== deckFreshSeq || dealtSwitchRef.current !== switchSig;
     const newDay = dealtDayRef.current !== today;
     const started = blockAnswersRef.current.size > 0 || answerSeen;
     if (!filterChanged && deck.length > 0 && !newDay && !(outOfDate && !started)) {
-      const byRow = new Map(candidates.map(c => [c.row_id, c]));
+      const byRow = new Map(pool.map(c => [c.row_id, c]));
       const patched = deck
         .map(c => {
           const u = byRow.get(c.row_id);
@@ -849,6 +920,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (outOfDate) {
         next = redealRest(patched, Math.min(idx, patched.length - 1));
         dealtSeqRef.current = deckFreshSeq;
+        dealtSwitchRef.current = switchSig;
       }
       setDeck(next);
       setIdx(i => Math.min(i, Math.max(0, next.length - 1)));
@@ -869,7 +941,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       lessonRank,
     });
     const { queue: cards, counts } = dealt;
-    recordDeal({ kind: "new", scope: filterSig, direction: dirRef.current, slots: BLOCK_SIZE, dealt });
+    recordDeal({ kind: "new", scope: dealScope, direction: dirRef.current, slots: BLOCK_SIZE, dealt });
     blockStartRef.current = progressByArea(userCards);
 
     // A full rebuild is a NEW block — first load, a filter or direction
@@ -896,6 +968,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     blockAnswersRef.current = new Map();
     dealtSeqRef.current = deckFreshSeq;
     dealtDayRef.current = today;
+    dealtSwitchRef.current = switchSig;
     scheduledRef.current = stamp;
     setDeck(cards);
     setDeckSig(filterSig);
@@ -904,7 +977,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setSessionDone(false);
     setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, typeFilter, lessonFilter, userCards, blockSeq, deckFreshSeq, recheck]);
+  }, [loaded, typeFilter, lessonFilter, scope, switchSig, userCards, blockSeq, deckFreshSeq, recheck]);
 
   // Answers given somewhere else — another device, another tab — since the
   // deck in memory was fetched. Coming back to the tab asks for their ids,
@@ -992,10 +1065,12 @@ export default function FlashcardApp({ user, onSignOut }) {
     // French side up is not waiting for them.
     const dueToday = (side) => (side.fsrs_state ?? State.New) !== State.New && !!side.next_due_at &&
       new Date(side.next_due_at).getTime() <= endToday;
+    // Elsewhere is what Cards would deal: not the lessons switched off, and
+    // under My cahier no lesson at all.
     let waiting = 0;
     if (lessonFilter !== "all") {
       for (const c of userCards) {
-        if (lessonIdOf(c) === lessonFilter) continue;
+        if (lessonIdOf(c) === lessonFilter || !onCards(c, { scope, lessonsOn, lessonIds })) continue;
         for (const d of directionsOf(c)) {
           if (isTwoWay(c) && dir !== "mix" && d !== dir) continue;
           if (dueToday(sideOf(c, d))) waiting++;
@@ -1003,7 +1078,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       }
     }
     return { after, changes, next, waiting };
-  }, [sessionDone, userCards, candidatesFrom, lessonFilter, dir]);
+  }, [sessionDone, userCards, candidatesFrom, lessonFilter, scope, lessonsOn, lessonIds, dir]);
   // Keep the ref in sync so deck rebuilds can find the current card.
   useEffect(() => { currentCardIdRef.current = card ? itemKey(card) : null; }, [card]);
   // The card on screen as the tutor needs it: what it asks, and whether its
@@ -1057,15 +1132,15 @@ export default function FlashcardApp({ user, onSignOut }) {
     const set = packSet({
       deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
       face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "", accepted: disputeAccepted },
-      day: dealtDayRef.current, dir, seq: dealtSeqRef.current,
+      day: dealtDayRef.current, dir, seq: dealtSeqRef.current, switches: dealtSwitchRef.current,
     });
     placeRef.current.sets[deckSig] = set;
-    placeRef.current.current = { lessonFilter, typeFilter, dir };
+    placeRef.current.current = { lessonFilter, typeFilter, scope, dir };
     pendingPlaceRef.current = { userId: user.id, write: { key: deckSig, set, current: placeRef.current.current, today: localISODate() } };
     clearTimeout(placeTimerRef.current);
     placeTimerRef.current = setTimeout(flushPlace, 400);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, deckSig, deck, idx, stats, sessionDone, answerSeen, typeResult, disputeAccepted, dir, lessonFilter, typeFilter]);
+  }, [user?.id, deckSig, deck, idx, stats, sessionDone, answerSeen, typeResult, disputeAccepted, dir, lessonFilter, typeFilter, scope]);
   useEffect(() => {
     const onHide = () => { if (document.visibilityState === "hidden") flushPlace(); };
     window.addEventListener("pagehide", flushPlace);
@@ -1107,7 +1182,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           inBlock: [...head, ...kept],
         })
       : null;
-    if (dealt) recordDeal({ kind: "direction", scope: `${typeFilter}|${lessonFilter}`, direction: dir, slots: room, dealt, kept: [...head, ...kept] });
+    if (dealt) recordDeal({ kind: "direction", scope: dealScopeOf(setKeyOf(typeFilter, lessonFilter, scope), switchSig), direction: dir, slots: room, dealt, kept: [...head, ...kept] });
     const fill = dealt ? dealt.queue : [];
     let f = 0;
     const next = [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
@@ -1438,6 +1513,13 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (card.row_id != null) {
         save(`card:${itemKey(card)}`, reviewId, () => supabase.from("user_cards").update(sr).eq("id", card.row_id));
       }
+    }
+    // The first answer inside a lesson switches it on for Cards: the class has
+    // reached it (lib/lessonChoice.js). Only the first, so a student who
+    // switches it off again is not overruled by studying it.
+    if (recordsReview && lessonFilter !== "all" && lessonIdOf(card) === lessonFilter &&
+        !lessonsStarted.has(lessonFilter) && lessonChoicesRef.current[lessonFilter] !== true) {
+      setLessonChoice(lessonFilter, true);
     }
     // The record of the answer: every answer, counted or not. A correction
     // rewrites the same record, and only if the grade changed.
@@ -2694,8 +2776,9 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div style={S.mainInnerScroll}>
             <h1 style={S.statsHeading}>Lessons</h1>
             <p style={S.lessonIntro}>
-              Card sets built from a teacher's lesson materials. Adding one copies its
-              cards into your deck, where they schedule alongside everything else.
+              Card sets built from a teacher's lesson materials. Every lesson is in your
+              deck; switch one on once your class has reached it, and its cards come up
+              in Cards alongside your cahier.
             </p>
             {LESSONS.map((lesson) => {
               const owned = userCards.filter((c) => lessonIdOf(c) === lesson.id);
@@ -2704,6 +2787,20 @@ export default function FlashcardApp({ user, onSignOut }) {
               // not added (reconcileLessons' `taken`), but the word is there.
               const ownFronts = new Set(userCards.filter((c) => !lessonIdOf(c)).map((c) => c.f));
               const inDeck = owned.length + lesson.cards.filter(([f]) => ownFronts.has(f)).length;
+              // Whether its cards come up on Cards (lib/lessonChoice.js), and
+              // how many are due today, the way the student is studying: in
+              // EN→FR a word due only French side up is not waiting for them.
+              const on = lessonsOn.has(lesson.id);
+              const endToday = endOfLocalDay(new Date());
+              let due = 0;
+              for (const c of owned) {
+                for (const d of directionsOf(c)) {
+                  if (isTwoWay(c) && dir !== "mix" && d !== dir) continue;
+                  const side = sideOf(c, d);
+                  if ((side.fsrs_state ?? State.New) !== State.New && side.next_due_at &&
+                      new Date(side.next_due_at).getTime() <= endToday) due++;
+                }
+              }
               return (
                 <div key={lesson.id} style={S.lessonCard}>
                   <div style={S.lessonHead}>
@@ -2728,6 +2825,29 @@ export default function FlashcardApp({ user, onSignOut }) {
                       : `${lesson.cards.length} cards · adding to your deck`}
                     {" · "}
                     {lesson.source}
+                  </div>
+                  <div style={S.lessonSwitchRow}>
+                    <button
+                      role="switch"
+                      aria-checked={on}
+                      data-lesson-include={lesson.id}
+                      style={S.lessonSwitch}
+                      onClick={() => setLessonChoice(lesson.id, !on)}
+                    >
+                      <span style={on ? {...S.switchTrack, ...S.switchTrackOn} : S.switchTrack}>
+                        <span style={on ? {...S.switchKnob, ...S.switchKnobOn} : S.switchKnob} />
+                      </span>
+                      In my daily cards
+                    </button>
+                    <div style={choiceFailed === lesson.id ? {...S.lessonSwitchNote, ...S.lessonSwitchFailed} : S.lessonSwitchNote} data-lesson-include-note>
+                      {choiceFailed === lesson.id
+                        ? "That didn't save. Try again."
+                        : on
+                        ? "Its cards come up in Cards alongside your cahier."
+                        : due > 0
+                        ? `${due.toLocaleString()} ${due === 1 ? "card is" : "cards are"} due. While this is off, they come up only when you study the lesson.`
+                        : "Its cards come up only when you study the lesson."}
+                    </div>
                   </div>
                 </div>
               );
@@ -3064,6 +3184,27 @@ export default function FlashcardApp({ user, onSignOut }) {
         {/* Top app bar — direction toggle, type answer chip, sticky glass */}
         <div style={S.topBar}>
           <div style={S.topBarInner} className="chip-row">
+          {/* Everything, or only the student's own cards (lib/lessonChoice.js).
+              A choice of one or the other, so it looks like the direction
+              setting rather than the type chips. Inside a lesson it means
+              nothing, and is hidden. */}
+          {lessonFilter === "all" && (
+            <div style={S.scopeGroup} data-scope>
+              {[["all", "Everything"], ["cahier", "My cahier"]].map(([k, label]) => (
+                <button
+                  key={k}
+                  data-scope-choice={k}
+                  style={scope === k ? {...S.dirBtn, ...S.dirBtnA, ...S.scopeBtn} : {...S.dirBtn, ...S.scopeBtn}}
+                  onClick={() => setScope(k)}
+                  title={k === "all"
+                    ? "Your cahier and the lessons switched on"
+                    : "Only your own cards: your classes, uploads and words from the tutor"}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {/* The type filter is a whole-deck control and it does not survive
               contact with a lesson: of the 108 impératif cards, 80 classify as
               grammar and 28 as phrase, so Vocab hands you an empty session and
@@ -3256,7 +3397,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 {checkpoint && checkpoint.next.queue.length === 0 && (
                   <p style={S.checkpointNote}>
                     <strong>You're all caught up.</strong> Nothing is due, and there are no new cards
-                    {lessonFilter !== "all" ? " left in this lesson" : ""}.
+                    {lessonFilter !== "all" ? " left in this lesson" : scope === "cahier" ? " left in your cahier" : ""}.
                   </p>
                 )}
                 {checkpoint?.waiting > 0 && (
@@ -3514,7 +3655,15 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
           ) : (
-            <div style={S.empty}><p><strong>You're all caught up.</strong> Nothing is due, and there are no new cards here.</p><button style={S.resetSBtn} onClick={resetSession}>Check again</button></div>
+            <div style={S.empty}>
+              <p><strong>You're all caught up.</strong> Nothing is due, and there are no new cards here.</p>
+              {/* A new student's deck holds only lessons, all off until they
+                  switch one on (lib/lessonChoice.js): say where that is. */}
+              {lessonFilter === "all" && scope === "all" && lessonsOff && (
+                <p data-lessons-off-note>Lessons come up here once you switch them on, on the Lessons page.</p>
+              )}
+              <button style={S.resetSBtn} onClick={resetSession}>Check again</button>
+            </div>
           )}
         </div>
 
@@ -4769,6 +4918,8 @@ const S = {
   dirGroup: { display:"flex", gap:2, marginLeft:"auto", padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md },
   dirBtn: { padding:"5px 12px", border:"none", borderRadius:T.radius.sm, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500 },
   dirBtnA: { background:T.color.surfaceLowest, color:T.color.primary, fontWeight:600, boxShadow:T.shadow.focus },
+  scopeGroup: { display:"flex", gap:2, padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md, flexShrink:0 },
+  scopeBtn: { whiteSpace:"nowrap" },
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   counterBreakdown: { opacity:0.7 },
@@ -4898,6 +5049,14 @@ const S = {
   lessonSub: { fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
   lessonMeta: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, marginTop:14, textTransform:"uppercase", letterSpacing:"0.06em" },
   lessonAddBtn: { padding:"9px 18px", border:"none", borderRadius:T.radius.md, background:T.color.primary, color:"#fff", fontSize:12, fontWeight:600, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 },
+  lessonSwitchRow: { display:"flex", alignItems:"center", gap:12, marginTop:14, flexWrap:"wrap" },
+  lessonSwitch: { display:"inline-flex", alignItems:"center", gap:8, padding:0, border:"none", background:"transparent", cursor:"pointer", fontSize:12, fontWeight:600, fontFamily:T.font.sans, color:T.color.onSurface, whiteSpace:"nowrap" },
+  switchTrack: { position:"relative", width:30, height:18, borderRadius:T.radius.full, background:T.color.surfaceHighest, transition:"background 0.15s", flexShrink:0 },
+  switchTrackOn: { background:T.color.primary },
+  switchKnob: { position:"absolute", top:2, left:2, width:14, height:14, borderRadius:"50%", background:T.color.surfaceLowest, boxShadow:"0 1px 2px rgba(3,22,50,0.2)", transition:"left 0.15s" },
+  switchKnobOn: { left:14 },
+  lessonSwitchNote: { fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
+  lessonSwitchFailed: { color:T.color.error },
   lessonStudyBtn: { padding:"9px 18px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceLow, color:T.color.primary, fontSize:12, fontWeight:600, fontFamily:T.font.sans, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0, boxShadow:T.shadow.focus },
   empty: { textAlign:"center", padding:60, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
   sessionDone: { textAlign:"center", padding:24, background:T.color.surfaceLow, borderRadius:T.radius.xl, marginTop:12 },

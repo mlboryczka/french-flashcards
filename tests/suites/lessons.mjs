@@ -31,6 +31,9 @@ const rows = LESSON.cards.map(([front, back, category], i) => ({
   last_answer_correct: null,
 }));
 
+// None of these cards has been answered, so the lesson is off on Cards
+// (lib/lessonChoice.js) and Cards would have nothing to show. The student has
+// switched it on, which is where these checks start.
 const route = async (page) => {
   await page.route("**/rest/v1/user_cards**", async (r) => {
     if (r.request().method() !== "GET") return r.continue();
@@ -39,6 +42,20 @@ const route = async (page) => {
       contentType: "application/json",
       headers: { "access-control-allow-origin": "*" },
       body: JSON.stringify(rows),
+    });
+  });
+  await page.route("**/auth/v1/user**", async (r) => {
+    if (r.request().method() === "OPTIONS") return r.continue();
+    await r.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify({
+        id: "00000000-0000-0000-0000-000000000001",
+        email: "test@example.com",
+        aud: "authenticated",
+        user_metadata: { lessons_in_cards: { [LESSON.id]: true } },
+      }),
     });
   });
 };

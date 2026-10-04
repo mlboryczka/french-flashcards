@@ -37,6 +37,9 @@ const rows=[
   {id:15,front:"vivre → nous",back:"nous vivons",category:"G",dates:["2025-07-01"],flagged_for_review:false,batch_id:null,
    next_due_at:new Date(now-DAY).toISOString(),lapses:0,stability:4,difficulty:5,fsrs_state:2,reps:2,last_review:new Date(now-5*DAY).toISOString(),last_answer_correct:true},
 ];
+// The signed-in user, as /auth/v1/user returns it. Saving the student's
+// choices writes user_metadata, merged key by key as Supabase does.
+const user={id:"00000000-0000-0000-0000-000000000001",email:"test@example.com",aud:"authenticated",user_metadata:{}};
 const deck=rows.map(r=>({...r,en_stability:null,en_difficulty:null,en_fsrs_state:0,en_reps:0,en_lapses:0,en_next_due_at:null,en_last_review:null,en_last_answer_correct:null}));
 http.createServer((req,res)=>{
   if(req.method==='OPTIONS'){res.writeHead(204,cors);return res.end();}
@@ -53,6 +56,14 @@ http.createServer((req,res)=>{
       return j(200,[]);
     }
     if(req.url.includes('/rest/v1/user_cards')&&req.method==='GET') return j(200,deck);
+    if(req.url.includes('/auth/v1/user')){
+      if(req.method==='PUT'){
+        let parsed={}; try{parsed=JSON.parse(body||'{}');}catch{}
+        console.log('[USER WRITE]', JSON.stringify(parsed.data||{}));
+        Object.assign(user.user_metadata, parsed.data||{});
+      }
+      return j(200,user);
+    }
     if(req.url.includes('/rest/v1/')) return j(200,[]);
     j(200,{});
   });

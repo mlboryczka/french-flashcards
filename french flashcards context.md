@@ -140,7 +140,9 @@ check ("the tutor reflow actually ran") fails there on unchanged code (see
 too. FSRS decides when a card already seen comes back. Which cards make a
 block, and which new card comes next, are the app's rules (owner, 2026-09-12).
 The cards come from the whole deck, or from one lesson or type when the student
-narrows it.
+narrows it. On Cards, "the whole deck" means the student's own cards and the
+lessons they have switched on, or only their own under My cahier; see
+*Which lessons come up on Cards*.
 
 **A block is made of questions: a card asked one way round.** Since 2026-09-14
 (migration_010) a word or phrase card has two FSRS states: `fr` for
@@ -198,7 +200,10 @@ which tests worse than mixed. A lesson's block is shuffled too (owner,
 
 **Each deal is recorded** in `dealt_sets` (`recordDeal`, `src/lib/dealLog.js`;
 migration_013, run 2026-09-28), with what the app believed about each card at
-the time, for the status check. The app never waits for this write.
+the time, for the status check. The app never waits for this write. Its
+`scope` is the set's key, plus on Cards "|off=a,b" for the lessons switched
+off (`dealScopeOf`), which the status check reads to rebuild what the set
+could have been dealt from.
 
 **A block is 50 answers, retries included** (`placeRetry`).
 
@@ -278,9 +283,10 @@ answered since looks unanswered. Guarded by `regressions` and `serving`.
 ### Where the student is: the set on screen, kept
 
 Each set is kept in the browser as it changes (`src/lib/studyPlace.js`,
-`study-place:<user>`), one per filter (`typeFilter|lessonFilter`). A reload,
-which is how every update arrives, puts the student back on the same card with
-the same count and retries.
+`study-place:<user>`), one per filter (`typeFilter|lessonFilter`, and
+`typeFilter|all|cahier` for My cahier, from `setKeyOf`). A reload, which is how
+every update arrives, puts the student back on the same card with the same
+count and retries.
 
 - Kept: the cards and ways round (their details are read from the deck again),
   the retries and the cards they replaced, the position, the score, the
@@ -1004,6 +1010,10 @@ Nothing changes until the owner presses a button.
   row never shifts.
 - **Inside a lesson its name is a plain title, not a pill**: a pill with an ×
   beside "Lesson notes" read as a second switch. Cards is the way out.
+- **Everything and My cahier come first on Cards** (`data-scope`), styled like
+  the direction setting because it is a choice of one or the other. Hidden
+  inside a lesson, where it means nothing; unlike the type filter it is not
+  cleared on entering one, so Cards comes back as the student left it.
 
 ---
 
@@ -1025,7 +1035,12 @@ protocol*.
 - `tests/mock-supabase.mjs` serves a fixed 15-card deck and stores nothing.
   Every write gets an empty success, except a PATCH that sets a NOT NULL column
   to null, which it refuses as the live table does. Suites that need writes to
-  stick serve their own store through `page.route`.
+  stick serve their own store through `page.route`. It also answers
+  `/auth/v1/user` with the test user, keeping what the app saves in
+  `user_metadata`: a bare `{}` there would replace the signed-in user.
+- A deck of nothing but unstarted lesson cards shows no card on Cards, so
+  `openApp()` would wait in vain: such a suite serves `/auth/v1/user` with
+  the lesson switched on (`lessons`, `lesson-sync`).
 - `tests/harness.mjs` opens the real app in headless Chromium, signed in with a
   fake token. `openApp()` starts in flip mode unless given `studyMode` (`null`
   means a new student, who gets typing). `APP_URL`, `MOCK_URL` and
@@ -1161,8 +1176,9 @@ METHOD sheets) and Adjectif ou adverbe ? (81 cards, written for the app).
 - Inside a lesson, `lessonFilter` narrows the cards a set is dealt from, as the
   type filter does, so FSRS still schedules them. New cards come in teaching
   order.
-- In normal study, lesson cards come back when due, and unseen ones come after
-  all of the student's own notes.
+- In normal study, a lesson's cards come up only if the student has switched
+  it on (below). Then they come back when due, and unseen ones come after all
+  of the student's own notes.
 - Students enter a lesson from the Lessons page or from the list that drops
   down under Lessons in the sidebar, and leave it with Cards. The lesson's name in the top bar is a label, not a control.
 - The notes (`LESSON.notes`, shown by `LessonPanel.jsx`) are for glancing at
@@ -1170,6 +1186,43 @@ METHOD sheets) and Adjectif ou adverbe ? (81 cards, written for the app).
 - Only the notes panel's ✕ and the Lesson notes button close it, because it
   stays open while you answer. It also closes when you leave the lesson, and
   reopens on its first tab.
+
+### Which lessons come up on Cards
+
+Not every class has reached every lesson, so each lesson has a switch, "In my
+daily cards", on the Lessons page (`data-lesson-include`), and Cards can be
+narrowed to My cahier (owner, 2026-10-04; `src/lib/lessonChoice.js`).
+
+- **Off, a lesson's cards are not dealt on Cards.** Nothing is deleted: they
+  keep their schedules and answers, Study still opens the lesson, and
+  switching it back on picks up where the student was. The line beside the
+  switch says how many of its cards are due while it is off.
+- **Without a choice, a lesson is on if the student has answered any of its
+  cards either way round** (`startedLessons`), so nobody's reviews went
+  missing with the update. One they haven't started is off, as is any lesson
+  added later.
+- **The first answer inside a lesson switches it on**, by then the class has
+  reached it. Only the first, so a student who switches it off again isn't
+  overruled by studying it.
+- **Reset all progress** makes every lesson unstarted again, so a lesson that
+  was on only because it had been started goes off. One switched on by hand,
+  or by a first answer inside it, stays on.
+- **My cahier** deals every card that isn't a lesson's: classes from the
+  linked doc, uploads, and words added from the tutor (owner, 2026-10-04). It
+  keeps a set of its own.
+- **Switching a lesson changes the set on screen like a fresh deck does**:
+  what has been shown, answered or lined up for a retry stays, and the cards
+  not yet reached are dealt again (`switchSig`, `dealtSwitchRef`). A set under
+  way is read back from `poolFrom`, which ignores the switches, so a card
+  already shown can't drop out and move the student's place.
+- **The choices are kept on the student's account**, in Supabase's
+  `user_metadata.lessons_in_cards` (`{ lessonId: true | false }`), so they
+  are the same on every computer, with no migration. They are read from the
+  session and once from the server on opening (`getUser`). A failed save puts
+  the switch back and says so.
+- **A new student whose deck is only lessons** sees "You're all caught up" on
+  Cards, with a line saying lessons come up once switched on
+  (`data-lessons-off-note`).
 
 ### Card-design rules the impératif module established
 
@@ -1694,6 +1747,17 @@ had called "estar, a Spanish word, remove it" an app problem: it could only
 suggest rewording a card. Claude can now suggest removing one, which archives
 it, and Revert undoes either.
 
+### 2026-10-04 — Lessons switched on by the student; My cahier
+
+Some students' classes hadn't reached the impératif, yet Cards dealt its cards
+once their own new cards ran out. The owner agreed a switch per lesson and a
+My cahier choice on Cards, with a started lesson on by default and the first
+answer inside a lesson switching it on; words from the tutor count as cahier.
+See *Which lessons come up on Cards*. Kept on the account rather than in a
+table so no migration was needed. The status check reads the new set records,
+so a set that left out a switched-off lesson's due cards isn't reported. Tested
+against the mock with a deck of own cards, a started and an unstarted lesson.
+
 ---
 
 ## Open items
@@ -1775,6 +1839,11 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 ### Not yet checked on the live app
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
+
+- **The lesson switches and My cahier** (2026-10-04). Switch a lesson off on
+  one computer and open the app on another: it should be off there too.
+  Switch it off mid-set: the count and the card on screen stay. Saving to the
+  account has only been tested against the mock.
 
 - **Claude's review of feedback** (2026-10-04). After migration_014, send a
   note about a card and open View feedback: a review should be there or arrive

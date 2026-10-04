@@ -89,6 +89,22 @@ function makeStore(seed = []) {
       if (method === "PATCH") return json([]);
       return json([]);
     });
+    // Lessons nobody has started are off on Cards (lib/lessonChoice.js), and
+    // openApp waits for a card. This student has every lesson switched on.
+    await page.route("**/auth/v1/user**", async (route) => {
+      if (route.request().method() === "OPTIONS") return route.continue();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({
+          id: "00000000-0000-0000-0000-000000000001",
+          email: "test@example.com",
+          aud: "authenticated",
+          user_metadata: { lessons_in_cards: Object.fromEntries(LESSONS.map((l) => [l.id, true])) },
+        }),
+      });
+    });
   };
 
   return { rows, writes, install };

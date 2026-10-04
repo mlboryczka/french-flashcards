@@ -80,11 +80,14 @@ export function clearStudyPlace(userId) {
 //            answer was seen comes back showing it, so it can't be graded as
 //            if seen for the first time, and an accepted answer comes back
 //            accepted — a reload before Continue used to save it as wrong
-export function packSet({ deck, idx, stats, done, answers, blockStart, face, day, dir, seq }) {
+//   switches the lessons switched off when it was dealt (lib/lessonChoice.js):
+//            if they have changed, its cards not yet reached are dealt again
+export function packSet({ deck, idx, stats, done, answers, blockStart, face, day, dir, seq, switches }) {
   return {
     day,
     dir,
     seq: seq ?? null,
+    switches: switches ?? null,
     idx,
     done: !!done,
     stats,

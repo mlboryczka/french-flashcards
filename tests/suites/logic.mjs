@@ -10,6 +10,7 @@ import { planReplace } from "../../src/lib/replaceDeck.js";
 import { lessonSource, lessonCardKey } from "../../src/lib/lessonSource.js";
 import { isArchived, archivedSource } from "../../src/lib/archive.js";
 import { LESSONS } from "../../src/data/lessons/index.js";
+import { choicesOf, startedLessons, lessonsInCards, onCards, setKeyOf, dealScopeOf } from "../../src/lib/lessonChoice.js";
 import { readFileSync } from "node:fs";
 import { checker } from "../check.mjs";
 
@@ -606,6 +607,52 @@ console.log("\n  archive — out of circulation, recoverable");
   ck("two senses whose labels come out the same are one card, never two with one front",
      sameLabel.deduped.length === 1 && unique(sameLabel) && sameLabel.deduped[0].dates.length === 2,
      JSON.stringify(sameLabel));
+}
+
+// ── Which lessons come up on Cards ─────────────────────────────────────────
+// The owner's rules (2026-10-04): a lesson the student has answered cards in
+// is on until they say otherwise, one they haven't started is off, and My
+// cahier is every card that isn't a lesson's.
+{
+  console.log("\n  lesson switches and My cahier");
+  const ids = ["imperatif", "adverbes"];
+  const card = (source, extra = {}) => ({ cat: "vocab", f: "x", b: "y", source, fsrs_state: 0, en_fsrs_state: 0, ...extra });
+  const answeredEnOnly = card("lesson:imperatif#k1", { en_fsrs_state: 2 });
+  const untouched = card("lesson:adverbes#k2");
+  const own = card("cahier-upload");
+  const tutor = card("tutor-chat");
+  const cards = [answeredEnOnly, untouched, own, tutor];
+  const started = startedLessons(cards);
+
+  ck("a lesson answered only English side up counts as started", started.has("imperatif") && !started.has("adverbes"),
+     JSON.stringify([...started]));
+  const byDefault = lessonsInCards(ids, started, {});
+  ck("without a choice, a started lesson is on and an untouched one is off",
+     byDefault.has("imperatif") && !byDefault.has("adverbes"), JSON.stringify([...byDefault]));
+  const chosen = lessonsInCards(ids, started, { imperatif: false, adverbes: true });
+  ck("the student's choice overrides that, either way", !chosen.has("imperatif") && chosen.has("adverbes"),
+     JSON.stringify([...chosen]));
+
+  const all = { scope: "all", lessonsOn: byDefault, lessonIds: ids };
+  const cahier = { scope: "cahier", lessonsOn: byDefault, lessonIds: ids };
+  ck("Everything deals the student's own cards and the lessons switched on",
+     onCards(own, all) && onCards(tutor, all) && onCards(answeredEnOnly, all) && !onCards(untouched, all));
+  ck("My cahier deals no lesson card, and does deal words added from the tutor",
+     onCards(own, cahier) && onCards(tutor, cahier) && !onCards(answeredEnOnly, cahier) && !onCards(untouched, cahier));
+  ck("a card from a lesson no longer in the catalogue is dealt as before",
+     onCards(card("lesson:retired#k3"), { ...all, lessonsOn: new Set() }));
+
+  ck("the whole deck and a lesson keep the set keys they had, so kept sets come back",
+     setKeyOf("all", "all", "all") === "all|all" && setKeyOf("grammar", "all", "all") === "grammar|all" &&
+     setKeyOf("all", "imperatif", "cahier") === "all|imperatif");
+  ck("My cahier keeps a set of its own", setKeyOf("all", "all", "cahier") === "all|all|cahier");
+  ck("a set's record says which lessons were off", dealScopeOf("all|all", "adverbes") === "all|all|off=adverbes" &&
+     dealScopeOf("all|all", "") === "all|all");
+
+  ck("choices are read from the account, and junk there is ignored",
+     choicesOf({ user_metadata: { lessons_in_cards: { imperatif: true } } }).imperatif === true &&
+     Object.keys(choicesOf({ user_metadata: { lessons_in_cards: ["imperatif"] } })).length === 0 &&
+     Object.keys(choicesOf(null)).length === 0);
 }
 
 const n = ck.fails();

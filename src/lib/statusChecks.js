@@ -375,14 +375,20 @@ function checkNotEarly(idx, ctx) {
 }
 
 // The cards a set could be dealt from, as the app narrows them: the type
-// filter and the lesson (the set's scope), and the direction setting.
+// filter and the lesson (the set's scope), and the direction setting. Since
+// 2026-10-04 a set on Cards also says what it left out (lib/lessonChoice.js):
+// "|cahier" for the student's own cards only, "|off=a,b" for lessons
+// switched off.
 function candidateItems(idx, deal, at) {
-  const [typeFilter = "all", lessonFilter = "all"] = String(deal.scope || "all|all").split("|");
+  const [typeFilter = "all", lessonFilter = "all", narrowed = ""] = String(deal.scope || "all|all").split("|");
+  const ownOnly = narrowed === "cahier";
+  const off = new Set(narrowed.startsWith("off=") ? narrowed.slice(4).split(",") : []);
   const items = [];
   for (const [id, c] of idx.deck) {
     if (c.created_at && ms(c.created_at) > at) continue;
     if (typeFilter !== "all" && classifyCard(c) !== typeFilter) continue;
     if (lessonFilter !== "all" && lessonIdOf(c) !== lessonFilter) continue;
+    if (lessonFilter === "all" && lessonIdOf(c) && (ownOnly || off.has(lessonIdOf(c)))) continue;
     const dirs = directionsOf(c);
     const use = dirs.length === 1 || deal.direction === "mix" ? dirs : [deal.direction];
     for (const dir of use) items.push({ id, dir, card: c });
