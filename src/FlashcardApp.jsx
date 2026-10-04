@@ -260,6 +260,11 @@ function matchAnswer(typed, correct, extraAlts = [], { exact = false } = {}) {
 // grade can be recomputed from the card as it was, not from the answer being
 // replaced.
 const STUDY_MODE_KEY = "study-mode";
+// Auto-speak and the number of cards in a set, kept on this browser like the
+// flip/type choice. A new set size is used from the next set dealt.
+const AUTO_SPEAK_KEY = "auto-speak";
+const SET_SIZE_KEY = "set-size";
+const SET_SIZES = [20, 30, 50, 100];
 
 // An answer's place in the block, for telling a correction from a first
 // answer. A retry is its own slot; otherwise it is the card asked that way
@@ -433,6 +438,19 @@ export default function FlashcardApp({ user, onSignOut }) {
   useEffect(() => {
     try { localStorage.setItem(STUDY_MODE_KEY, typeMode ? "type" : "flip"); } catch { /* storage blocked */ }
   }, [typeMode]);
+  // How many cards a set has. Read through a ref when a set is dealt, so
+  // changing it never touches the set under way: the next set has the new size.
+  const [setSize, setSetSize] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem(SET_SIZE_KEY));
+      return SET_SIZES.includes(n) ? n : BLOCK_SIZE;
+    } catch { return BLOCK_SIZE; }
+  });
+  const setSizeRef = useRef(setSize);
+  setSizeRef.current = setSize;
+  useEffect(() => {
+    try { localStorage.setItem(SET_SIZE_KEY, String(setSize)); } catch { /* storage blocked */ }
+  }, [setSize]);
   const [typedAnswer, setTypedAnswer] = useState("");
   const [typeResult, setTypeResult] = useState(null); // null | 'correct' | 'wrong'
   const studyInputRef = useRef(null);
@@ -512,6 +530,21 @@ export default function FlashcardApp({ user, onSignOut }) {
     });
   }, []);
   const [showLessonPanel, setShowLessonPanel] = useState(false);
+  // The settings menu behind the gear: direction, typing, auto-speak, lessons,
+  // set size. Closes on a click outside it or Escape.
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsRef = useRef(null);
+  useEffect(() => {
+    if (!showSettings) return;
+    const onDown = (e) => { if (!settingsRef.current?.contains(e.target)) setShowSettings(false); };
+    const onKey = (e) => { if (e.key === "Escape") setShowSettings(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showSettings]);
 
   // Leaving a lesson closes its notes.
   //
@@ -666,7 +699,12 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // ── AUDIO STATE ─────────────────────────────────────────────────────
   // Pronunciation states: 'idle' | 'recording' | 'processing' | 'result' | 'error'
-  const [autoSpeak, setAutoSpeak] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(() => {
+    try { return localStorage.getItem(AUTO_SPEAK_KEY) === "on"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(AUTO_SPEAK_KEY, autoSpeak ? "on" : "off"); } catch { /* storage blocked */ }
+  }, [autoSpeak]);
   const [recState, setRecState] = useState("idle");
   const [pronResult, setPronResult] = useState(null);
   const [pronError, setPronError] = useState("");
@@ -937,11 +975,12 @@ export default function FlashcardApp({ user, onSignOut }) {
     // written, whatever the setting.
     const dealt = buildSession(candidates, {
       direction: dirRef.current,
+      target: setSizeRef.current,
       lessonMode: lessonFilter !== "all",
       lessonRank,
     });
     const { queue: cards, counts } = dealt;
-    recordDeal({ kind: "new", scope: dealScope, direction: dirRef.current, slots: BLOCK_SIZE, dealt });
+    recordDeal({ kind: "new", scope: dealScope, direction: dirRef.current, slots: setSizeRef.current, dealt });
     blockStartRef.current = progressByArea(userCards);
 
     // A full rebuild is a NEW block — first load, a filter or direction
@@ -1195,8 +1234,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!answerSeen) setTypedAnswer("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dir]);
-  const directionPending =
-    !!card && card.flippable && answerSeen && !sessionDone && dir !== "mix" && card.shownDir !== dir;
   useEffect(() => {
     if (pendingTypeMode === null) return;
     setTypeMode(pendingTypeMode);
@@ -3176,46 +3213,28 @@ export default function FlashcardApp({ user, onSignOut }) {
     <div style={shellStyle}>
       {sidebar}
       <main style={mainStyle}>
-        {/* Top app bar — direction toggle, type answer chip, sticky glass */}
+        {/* Top app bar — kind of card, settings menu, sticky glass */}
         <div style={S.topBar}>
-          <div style={S.topBarInner} className="chip-row">
-          {/* Everything, or only the student's own cards (lib/lessonChoice.js).
-              A choice of one or the other, so it looks like the direction
-              setting rather than the type chips. Inside a lesson it means
-              nothing, and is hidden. */}
+          <div style={S.topBarInner}>
+          {/* The row scrolls in a narrow window rather than squeezing; the gear
+              sits outside it, as the scrolling would clip its menu. */}
+          <div style={S.topBarLeft} className="chip-row">
+          {/* The kind of card: the one choice left on the bar. Hidden inside a
+              lesson, where it does not survive contact: of the 108 impératif
+              cards, 80 classify as grammar and 28 as phrase, so Vocab hands
+              you an empty session and the other two collapse to "drills or
+              sentences" — a distinction the lesson's own sections make far
+              better. enterLesson() clears it so nothing narrows the deck
+              invisibly while the control that would show it is gone.
+              Everything or only the student's own cards is "Include lessons"
+              in the settings menu. */}
           {lessonFilter === "all" && (
-            <div style={S.scopeGroup} data-scope>
-              {[["all", "Everything"], ["cahier", "My cahier"]].map(([k, label]) => (
-                <button
-                  key={k}
-                  data-scope-choice={k}
-                  style={scope === k ? {...S.dirBtn, ...S.dirBtnA, ...S.scopeBtn} : {...S.dirBtn, ...S.scopeBtn}}
-                  onClick={() => setScope(k)}
-                  title={k === "all"
-                    ? "Your cahier and the lessons switched on"
-                    : "Only your own cards: your classes, uploads and words from the tutor"}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-          {/* The type filter is a whole-deck control and it does not survive
-              contact with a lesson: of the 108 impératif cards, 80 classify as
-              grammar and 28 as phrase, so Vocab hands you an empty session and
-              the other two collapse to "drills or sentences" — a distinction
-              the lesson's own sections make far better. Hidden inside a
-              lesson; enterLesson() clears it so nothing narrows the deck
-              invisibly while the control that would show it is gone. */}
-          {lessonFilter === "all" && (
-          <div style={S.typeGroup}>
-            {[["all", "All"], ...CARD_TYPES.map((t) => [t, TYPE_LABEL[t] === "Phrase" ? "Phrases" : TYPE_LABEL[t]])]
-              .map(([k, label]) => {
-                const on = typeFilter === k;
-                return (
+            <div style={S.typeGroup} data-type-filter>
+              {[["all", "All"], ...CARD_TYPES.map((t) => [t, TYPE_LABEL[t] === "Phrase" ? "Phrases" : TYPE_LABEL[t]])]
+                .map(([k, label]) => (
                   <button
                     key={k}
-                    style={on ? {...S.typeBtn, ...S.typeBtnA, ...(k !== "all" ? {background: TYPE_COLOR[k], borderColor: TYPE_COLOR[k]} : null)} : S.typeBtn}
+                    style={typeFilter === k ? {...S.dirBtn, ...S.dirBtnA} : S.dirBtn}
                     onClick={() => setTypeFilter(k)}
                     title={k === "all"
                       ? "Everything, mixed — best for long-term retention"
@@ -3223,9 +3242,8 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     {label}
                   </button>
-                );
-              })}
-          </div>
+                ))}
+            </div>
           )}
           {/* Which lesson you are in — a label, not a control. It sat beside
               the "Lesson notes" toggle as an identically shaped pill with an ×
@@ -3259,38 +3277,54 @@ export default function FlashcardApp({ user, onSignOut }) {
               Lesson notes
             </button>
           )}
-          <div style={S.dirGroup}>
-            {[["fr","FR→EN"],["en","EN→FR"],["mix","Mixed"]].map(([k,label]) => (
-              <button key={k} style={dir===k ? {...S.dirBtn,...S.dirBtnA} : S.dirBtn} onClick={() => setDir(k)}>{label}</button>
-            ))}
           </div>
-          <button
-            data-type-toggle
-            style={(pendingTypeMode ?? typeMode) ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
-            onClick={toggleTypeMode}
-            title={pendingTypeMode === null ? undefined : "This card's answer has been seen, so the switch waits for the next card"}
-          >
-            Type answer
-          </button>
-          {directionPending && pendingTypeMode === null && (
-            <span style={S.pendingSwitch} data-pending-direction>
-              The new direction starts from the next card
-            </span>
-          )}
-          {pendingTypeMode !== null && (
-            <span style={S.pendingSwitch} data-pending-switch>
-              {pendingTypeMode ? "Typing starts from the next card" : "Flipping starts from the next card"}
-            </span>
-          )}
-          {TTS_AVAILABLE && (
+          <div style={S.settingsWrap} ref={settingsRef}>
             <button
-              style={autoSpeak ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
-              onClick={() => setAutoSpeak(v => !v)}
-              title="Auto-speak French side"
+              data-settings-toggle
+              style={showSettings ? {...S.gearBtn, ...S.gearBtnA} : S.gearBtn}
+              onClick={() => setShowSettings((v) => !v)}
+              aria-label="Settings"
+              aria-expanded={showSettings}
+              title="Settings"
             >
-              Auto-speak
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
-          )}
+            {/* Kept in the page when closed, only hidden, so its switches can
+                be reached the same way whether or not it is showing. */}
+            {(
+              <div style={showSettings ? S.settingsMenu : {...S.settingsMenu, display:"none"}} data-settings-menu role="dialog" aria-label="Settings" aria-hidden={!showSettings}>
+                <div style={S.settingsSec}>
+                  <div style={S.settingsSeg}>
+                    {[["fr", "French → English"], ["en", "English → French"], ["mix", "Mixed"]].map(([k, label]) => (
+                      <button key={k} data-dir-choice={k} style={dir === k ? {...S.dirBtn, ...S.dirBtnA, ...S.settingsSegBtn} : {...S.dirBtn, ...S.settingsSegBtn}} onClick={() => setDir(k)}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+                {/* A change made once the card's answer has been seen waits for
+                    the next card (toggleTypeMode, the effect on dir); the
+                    switch shows where it is going. */}
+                <div style={{...S.settingsSec, ...S.settingsSecRule}}>
+                  <SettingsSwitch label="Type answer" on={pendingTypeMode ?? typeMode} onClick={toggleTypeMode} data-type-toggle />
+                  {TTS_AVAILABLE && (
+                    <SettingsSwitch label="Auto-speak" on={autoSpeak} onClick={() => setAutoSpeak((v) => !v)} data-auto-speak />
+                  )}
+                  {/* Everything (on) or only the student's own cards (off):
+                      lib/lessonChoice.js. Inside a lesson it means nothing. */}
+                  {lessonFilter === "all" && (
+                    <SettingsSwitch label="Include lessons" on={scope === "all"} onClick={() => setScope(scope === "all" ? "cahier" : "all")} data-scope />
+                  )}
+                </div>
+                <div style={{...S.settingsSec, ...S.settingsSecRule}}>
+                  <div style={S.settingsCap}>Cards in a set</div>
+                  <div style={S.settingsSeg}>
+                    {SET_SIZES.map((n) => (
+                      <button key={n} data-set-size={n} style={setSize === n ? {...S.dirBtn, ...S.dirBtnA, ...S.settingsSegBtn} : {...S.dirBtn, ...S.settingsSegBtn}} onClick={() => setSetSize(n)}>{n}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
           </div>
         </div>
 
@@ -4472,6 +4506,18 @@ function FeedbackAdminView({ user, setMode, resetSession }) {
 // is about a card, and the only way in used to be a 12px link at the foot of
 // the sidebar. Opens the feedback panel with this card attached. Stops the
 // click so it never flips, continues or grades the card underneath it.
+// One on/off row in the settings menu.
+function SettingsSwitch({ label, on, onClick, ...rest }) {
+  return (
+    <button {...rest} role="switch" aria-checked={on} onClick={onClick} style={S.settingsRow}>
+      <span style={S.settingsLabel}>{label}</span>
+      <span style={on ? {...S.switchTrack, ...S.switchTrackOn} : S.switchTrack}>
+        <span style={on ? {...S.switchKnob, ...S.switchKnobOn} : S.switchKnob} />
+      </span>
+    </button>
+  );
+}
+
 function ReportCardButton({ onReport, nextToInfo = false }) {
   const [hover, setHover] = useState(false);
   return (
@@ -4880,7 +4926,7 @@ const S = {
   // column. This row growing a second line is what made the card jump 39px in
   // a single frame partway through every horizontal reflow.
   topBarInner: { display:"flex", alignItems:"center", gap:12, padding:"14px 0", maxWidth:1100, width:"100%", margin:"0 auto", borderBottom:"1px solid rgba(3,22,50,0.07)" },
-  topBarSpacer: { flex:1 },
+  topBarLeft: { display:"flex", alignItems:"center", gap:12, flex:1, minWidth:0 },
   topBarBtn: { padding:"6px 12px", background:"transparent", border:"none", borderRadius:T.radius.md, cursor:"pointer", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, fontWeight:600, letterSpacing:"0.02em" },
   topBarEmail: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
   // Session ribbon — small uppercase metadata line beneath the navbar,
@@ -4904,17 +4950,26 @@ const S = {
   // Chip-style toggle button — used in the study filter row in place of
   // raw checkboxes. Same pill shape as catBtn but with an active state.
   chipToggle: { padding:"6px 13px", border:`1px solid ${T.color.outlineGhost || "rgba(3,22,50,0.08)"}`, borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
-  pendingSwitch: { fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, whiteSpace:"nowrap", flexShrink:0 },
   chipToggleA: { background:T.color.primary, color:T.color.onPrimary, borderColor:T.color.primary, fontWeight:600 },
   // Sits inside the scrolling chip row, so it must not wrap on its own either.
-  typeGroup: { display:"flex", gap:6, alignItems:"center", flexWrap:"nowrap", flexShrink:0 },
-  typeBtn: { padding:"6px 13px", borderWidth:1, borderStyle:"solid", borderColor:"rgba(3,22,50,0.08)", borderRadius:T.radius.full, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500, letterSpacing:"0.02em", transition:"all 0.15s" },
-  typeBtnA: { background:T.color.primary, borderColor:T.color.primary, color:T.color.onPrimary, fontWeight:600 },
-  dirGroup: { display:"flex", gap:2, marginLeft:"auto", padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md },
+  typeGroup: { display:"flex", gap:2, padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md, flexShrink:0 },
+  settingsWrap: { position:"relative", flexShrink:0 },
+  gearBtn: { width:34, height:34, display:"flex", alignItems:"center", justifyContent:"center", padding:0, border:"1px solid rgba(3,22,50,0.08)", borderRadius:T.radius.full, background:"transparent", color:T.color.onSurfaceVariant, cursor:"pointer", transition:"all 0.15s" },
+  gearBtnA: { background:T.color.surfaceLowest, color:T.color.primary, borderColor:"rgba(3,22,50,0.22)", boxShadow:T.shadow.focus },
+  settingsMenu: { position:"absolute", top:"calc(100% + 10px)", right:0, width:344, background:T.color.surfaceLowest, borderRadius:T.radius.xl, border:"1px solid rgba(3,22,50,0.08)", boxShadow:"0 20px 60px rgba(3,22,50,0.15)", padding:"6px 0", zIndex:40, fontFamily:T.font.sans },
+  settingsSec: { padding:"14px 18px" },
+  settingsSecRule: { borderTop:"1px solid rgba(3,22,50,0.07)" },
+  settingsSeg: { display:"flex", gap:2, padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md },
+  settingsSegBtn: { flex:"1 1 auto", whiteSpace:"nowrap" },
+  settingsCap: { fontSize:10, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:"rgba(68,71,77,0.78)", marginBottom:8 },
+  settingsRow: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, width:"100%", padding:"7px 0", border:"none", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, textAlign:"left" },
+  settingsLabel: { fontSize:13, fontWeight:600, color:T.color.primary },
+  switchTrack: { position:"relative", display:"block", width:34, height:20, flexShrink:0, borderRadius:T.radius.full, background:T.color.surfaceHighest, transition:"background 0.15s" },
+  switchTrackOn: { background:T.color.primary },
+  switchKnob: { display:"block", position:"absolute", top:3, left:3, width:14, height:14, borderRadius:"50%", background:"#fff", boxShadow:"0 1px 3px rgba(3,22,50,0.25)", transition:"left 0.15s" },
+  switchKnobOn: { left:17 },
   dirBtn: { padding:"5px 12px", border:"none", borderRadius:T.radius.sm, background:"transparent", cursor:"pointer", fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontWeight:500 },
   dirBtnA: { background:T.color.surfaceLowest, color:T.color.primary, fontWeight:600, boxShadow:T.shadow.focus },
-  scopeGroup: { display:"flex", gap:2, padding:3, background:T.color.surfaceLow, borderRadius:T.radius.md, flexShrink:0 },
-  scopeBtn: { whiteSpace:"nowrap" },
   counterRow: { display:"flex", alignItems:"center", gap:8, marginBottom:10 },
   counter: { textAlign:"center", fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, letterSpacing:"0.05em", textTransform:"uppercase", fontWeight:500 },
   counterBreakdown: { opacity:0.7 },
@@ -5047,7 +5102,7 @@ const S = {
   lessonSwitch: { display:"inline-flex", alignItems:"center", gap:8, padding:0, border:"none", background:"transparent", cursor:"pointer", fontSize:12, fontWeight:600, fontFamily:T.font.sans, color:T.color.onSurface, whiteSpace:"nowrap" },
   switchTrack: { position:"relative", width:30, height:18, borderRadius:T.radius.full, background:T.color.surfaceHighest, transition:"background 0.15s", flexShrink:0 },
   switchTrackOn: { background:T.color.primary },
-  switchKnob: { position:"absolute", top:2, left:2, width:14, height:14, borderRadius:"50%", background:T.color.surfaceLowest, boxShadow:"0 1px 2px rgba(3,22,50,0.2)", transition:"left 0.15s" },
+  switchKnob: { display:"block", position:"absolute", top:2, left:2, width:14, height:14, borderRadius:"50%", background:T.color.surfaceLowest, boxShadow:"0 1px 2px rgba(3,22,50,0.2)", transition:"left 0.15s" },
   switchKnobOn: { left:14 },
   lessonSwitchNote: { fontSize:12, color:T.color.onSurfaceVariant, fontFamily:T.font.sans },
   lessonSwitchFailed: { color:T.color.error },

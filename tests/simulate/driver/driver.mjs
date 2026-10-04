@@ -534,7 +534,7 @@ async function studyBlock() {
   let switched = !ctxS.dirSwitch || ctxS.dirSwitched;
   if (ctxS.typing && !st.typeInput) {
     // Switch to typing before the first card is seen.
-    await page.click("[data-type-toggle]"); await blurActive();
+    await page.evaluate(() => document.querySelector("[data-type-toggle]").click()); await blurActive();
     await waitFor(async () => (await read()).typeInput, { timeout: 5000, what: "typing mode on" });
     logEvent("typing-on", { simLocal: (await read()).local });
   }
@@ -545,7 +545,7 @@ async function studyBlock() {
     if (!st.counter) { await sleep(50); continue; }
     if (!switched && st.idx >= 20) {
       const beforeQ = st.queue;
-      await clickButton(ctxS.dirSwitch === "fr" ? "FR→EN" : "EN→FR");
+      await clickButton(ctxS.dirSwitch === "fr" ? "French → English" : "English → French");
       await sleep(300);
       const after = await read();
       ctxS.dirSwitched = true; switched = true;
@@ -609,7 +609,7 @@ async function runSitting(s, sittingIndex, schedule) {
     await onboarding(s);
     // New students start in typing mode; this one prefers flipping.
     const st = await read();
-    if (st.typeInput) { await page.click("[data-type-toggle]"); await blurActive(); await waitFor(async () => !(await read()).typeInput, { timeout: 5000, what: "flip mode" }); logEvent("flip-mode-chosen", {}); }
+    if (st.typeInput) { await page.evaluate(() => document.querySelector("[data-type-toggle]").click()); await blurActive(); await waitFor(async () => !(await read()).typeInput, { timeout: 5000, what: "flip mode" }); logEvent("flip-mode-chosen", {}); }
   } else {
     await rebuildIndex();
   }
@@ -646,7 +646,7 @@ async function runSitting(s, sittingIndex, schedule) {
   }
   if (s.typing) {
     // Back to flipping for the days after.
-    await page.click("[data-type-toggle]"); await blurActive(); await sleep(200);
+    await page.evaluate(() => document.querySelector("[data-type-toggle]").click()); await blurActive(); await sleep(200);
     logEvent("typing-off", { stored: await page.evaluate(() => localStorage.getItem("study-mode")) });
   }
   await waitAllWrites(`end of ${s.id}`);

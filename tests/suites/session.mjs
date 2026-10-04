@@ -243,7 +243,7 @@ console.log("\n  FSRS gets one answer per card per day");
   // French side up only, so the block is one question per card and shorter
   // than a retry's 20-card gap: the checks below rely on a miss coming back
   // as the block's last card.
-  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "FR→EN")?.click());
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "French → English")?.click());
   await page.waitForTimeout(500);
   const total = (await sessionCounter(page))?.total;
   ck("French side up, one question per card", total === firstBlockItems(deck, "fr").length,
@@ -366,6 +366,9 @@ console.log("\n  switching between flipping and typing waits once the answer is 
   const has = (re) => page.evaluate(([s, f]) => new RegExp(s, f).test(document.body.innerText), [re.source, re.flags]);
   const typing = () => page.evaluate(() => !!document.querySelector("input[placeholder^='Type ']"));
   const wait = (ms = 350) => page.waitForTimeout(ms);
+  // The Type answer switch in the settings menu shows where it is going, so a
+  // switch waiting for the next card reads as on while the card is flipped.
+  const switchOn = () => page.evaluate(() => document.querySelector("[data-type-toggle]")?.getAttribute("aria-checked") === "true");
 
   await click("Type answer"); await wait();
   ck("before the answer is seen, switching is immediate", await typing());
@@ -373,21 +376,21 @@ console.log("\n  switching between flipping and typing waits once the answer is 
   await page.keyboard.press(" "); await wait(700);
   await click("Type answer"); await wait();
   ck("after flipping, the switch to typing waits for the next card",
-     !(await typing()) && await has(/Typing starts from the next card/));
+     !(await typing()) && await switchOn());
   await click("Type answer"); await wait();
-  ck("pressing again cancels it", !(await has(/starts from the next card/)));
+  ck("pressing again cancels it", !(await typing()) && !(await switchOn()));
   await click("Type answer"); await wait();
   await click("Got It"); await wait(600);
   ck("the next card is typed", await typing());
   await click("Show answer"); await wait(500);
   await click("Type answer"); await wait();
   ck("after Show answer, the switch to flipping waits, and Got It is not offered",
-     await has(/Flipping starts from the next card/) && !(await has(/Got It/)));
+     !(await switchOn()) && !(await has(/Got It/)));
   await click("Continue →"); await wait(600);
   const grades = writes.map((w) => w.last_answer_correct ?? w.en_last_answer_correct);
   ck("so the flip was recorded as right and Show answer as a miss",
      JSON.stringify(grades) === "[true,false]", JSON.stringify(grades));
-  ck("and the card after is flipped", !(await typing()) && !(await has(/starts from the next card/)));
+  ck("and the card after is flipped", !(await typing()) && !(await switchOn()));
   await browser.close();
 }
 

@@ -1,7 +1,7 @@
 // Layout: the card fits the window, and a panel makes room by moving the
 // CONTENT COLUMN — never the sidebar. The feedback panel, which lives inside
 // the sidebar, makes no room at all.
-import { openApp, finish, checker, gotoStats, layoutProbe, cardBox, settled } from "../harness.mjs";
+import { openApp, finish, checker, gotoStats, layoutProbe, cardBox, settled, setting } from "../harness.mjs";
 
 const ck = checker();
 const { browser, page } = await openApp();
@@ -118,13 +118,13 @@ await settled(page);
   await page.mouse.click(after.centreX, after.top + 40);
   await page.waitForTimeout(800);
 }
-await page.click('button:has-text("FR→EN")');
+await setting(page, '[data-dir-choice="fr"]');
 await page.waitForTimeout(300);
-if (!(await page.$('input[placeholder^="Type"]'))) await page.click('button:has-text("Type answer")');
+if (!(await page.$('input[placeholder^="Type"]'))) await setting(page, "[data-type-toggle]");
 // The card above was flipped, so its answer has been seen, and switching to
 // typing waits for the next card rather than letting it be typed from memory.
 // Grade it to get there.
-if (await page.$("[data-pending-switch]")) {
+if (!(await page.$('input[placeholder^="Type"]'))) {
   await page.click('button:has-text("Got It")');
   await page.waitForTimeout(400);
 }
@@ -146,7 +146,7 @@ await page.waitForSelector('input[placeholder^="Type"]');
   if (cont) await cont.click();
   await page.waitForTimeout(700);
 }
-await page.click('button:has-text("Type answer")');
+await setting(page, "[data-type-toggle]");
 await page.waitForTimeout(400);
 
 console.log("\n  the card survives having a panel open");

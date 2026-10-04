@@ -47,7 +47,7 @@ export const READ_STATE = (opts = {}) => {
   const tr = bodyText.match(/^(✓ Correct!|✓ Close enough[^\n]*|✗ Wrong article[^\n]*|✗ You wrote[^\n]*|✗ Answer:[^\n]*|Answer: [^\n]*)$/m);
   out.typeResultText = tr ? tr[1] : null;
   // The active direction button is the one styled differently from the other two.
-  const dirButtons = buttons.filter((x) => ["FR→EN", "EN→FR", "Mixed"].includes(x.innerText.trim()));
+  const dirButtons = buttons.filter((x) => ["French → English", "English → French", "Mixed"].includes(x.innerText.trim()));
   if (dirButtons.length === 3) {
     const bg = dirButtons.map((x) => getComputedStyle(x).backgroundColor);
     const odd = bg.findIndex((c, i) => bg.filter((d) => d === c).length === 1);

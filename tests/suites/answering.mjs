@@ -299,7 +299,7 @@ console.log("\n  changing direction re-deals the rest of the block, without a ne
     await t.click("Got It"); await t.wait(400);
   }
   const before = await sessionCounter(t.page);
-  await t.click("EN→FR"); await t.wait(600);
+  await t.click("English → French"); await t.wait(600);
   const after = await sessionCounter(t.page);
   ck("the block carries on where it was, no longer than it was",
      after?.index === before?.index && after?.total <= before?.total,

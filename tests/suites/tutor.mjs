@@ -6,7 +6,7 @@
 // two chunks with a gap, because "the answer appears as it is generated" is
 // the requirement and a single-shot response cannot test it.
 import { createServer } from "node:http";
-import { openApp, finish, checker, servedDeck } from "../harness.mjs";
+import { openApp, finish, checker, servedDeck, setting } from "../harness.mjs";
 
 const ck = checker();
 const deck = await servedDeck();
@@ -297,7 +297,7 @@ ck(
 const chip = () => page.locator("[data-tutor-context]").innerText().catch(() => "");
 // Answer until the card on screen is an English-prompt card: the case where
 // the header used to show the French answer.
-await page.click("button:text-is('EN→FR')");
+await setting(page, '[data-dir-choice="en"]');
 await page.waitForTimeout(500);
 // The last click was outside the panel (the direction button), so the key is
 // the card's.

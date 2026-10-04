@@ -1,6 +1,6 @@
 // Card behaviour: the French prompt never gives away its own answer, the
 // result banner shows what YOU typed, and tapping the card continues.
-import { openApp, finish, checker, cardBox, enableTypeMode } from "../harness.mjs";
+import { openApp, finish, checker, cardBox, enableTypeMode, setting } from "../harness.mjs";
 
 const ck = checker();
 
@@ -38,7 +38,7 @@ await page.unroute("**/rest/v1/user_cards*");
 await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("deck-cache")).forEach((k) => localStorage.removeItem(k)));
 await page.reload({ waitUntil: "commit" });
 await page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
-await page.click('button:has-text("FR→EN")');
+await setting(page, '[data-dir-choice="fr"]');
 await page.waitForTimeout(400);
 await enableTypeMode(page);
 

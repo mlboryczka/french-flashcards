@@ -231,9 +231,18 @@ export async function settled(page) {
   await page.waitForTimeout(50);
 }
 
+// Turns a switch in the settings menu behind the gear (direction, Type
+// answer, Auto-speak, Include lessons, set size), opening it first and
+// closing it after.
+export async function setting(page, selector) {
+  await page.click("[data-settings-toggle]");
+  await page.click(`[data-settings-menu] ${selector}`);
+  await page.keyboard.press("Escape");
+}
+
 export async function enableTypeMode(page) {
   if (!(await page.$('input[placeholder^="Type"]'))) {
-    await page.click('button:has-text("Type answer")');
+    await setting(page, "[data-type-toggle]");
   }
   await page.waitForSelector('input[placeholder^="Type"]', { timeout: 5000 });
 }
