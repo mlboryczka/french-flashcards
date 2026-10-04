@@ -1301,7 +1301,7 @@ and the Stats page, so they always agree.
 - The figure is worked out when a set is dealt and at its checkpoint, not after
   each answer. It is allowed to fall.
 - The checkpoint lists what each area gained (see *The checkpoint*). Inside a
-  lesson, the top bar reads "~N/M remembered".
+  lesson, the top bar reads "N/M remembered".
 
 ### The Stats page
 
