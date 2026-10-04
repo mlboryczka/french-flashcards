@@ -3239,13 +3239,13 @@ export default function FlashcardApp({ user, onSignOut }) {
           )}
           {/* The lesson's progress. Read when the block was dealt and again at
               its checkpoint — never per answer, because a figure that moves
-              on every card reads as noise rather than progress. "About",
-              because remembered is an estimate. */}
+              on every card reads as noise rather than progress. "~", because
+              remembered is an estimate (owner, 2026-10-04). */}
           {lessonFilter !== "all" && (() => {
             const snap = (sessionDone && checkpoint ? checkpoint.after : blockStartRef.current)?.lessons?.[lessonFilter];
             return snap ? (
               <div style={S.lessonProgress} data-lesson-progress>
-                about {aboutRemembered(snap).toLocaleString()} of {snap.total.toLocaleString()} remembered
+                ~{aboutRemembered(snap).toLocaleString()}/{snap.total.toLocaleString()} remembered
               </div>
             ) : null;
           })()}

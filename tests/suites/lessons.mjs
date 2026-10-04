@@ -241,7 +241,7 @@ ck("the ✕ closes the panel", (await page.$("[data-lesson-panel]")) === null);
 }
 const barText = () => page.evaluate(() => document.querySelector("[data-lesson-progress]")?.textContent.trim() || null);
 const total = LESSON.cards.length;
-const startBar = `about 0 of ${total} remembered`;
+const startBar = `~0/${total} remembered`;
 ck("the bar shows the lesson's progress", (await barText()) === startBar, await barText());
 await page.keyboard.press("ArrowRight");
 await page.waitForTimeout(300);
@@ -256,7 +256,7 @@ ck("an answer does not move it", (await barText()) === startBar, await barText()
 }
 ck("the block ends in a checkpoint", !!(await page.$("[data-checkpoint]")));
 const shown = await barText();
-const n = Number(/about (\d+) of/.exec(shown || "")?.[1]);
+const n = Number(/~(\d+)\//.exec(shown || "")?.[1]);
 // The block is the lesson's first 50 cards in teaching order, each met one way.
 // Just answered right, each grammar card is very likely remembered; a phrase
 // met only one way is not remembered yet — that needs both ways, which can't
