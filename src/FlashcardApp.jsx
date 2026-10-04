@@ -2843,7 +2843,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       {choiceFailed === lesson.id
                         ? "That didn't save. Try again."
                         : on
-                        ? "Its cards come up in Cards alongside your cahier."
+                        ? null
                         : due > 0
                         ? `${due.toLocaleString()} ${due === 1 ? "card is" : "cards are"} due. While this is off, they come up only when you study the lesson.`
                         : "Its cards come up only when you study the lesson."}
