@@ -65,13 +65,17 @@ function memoryStore() {
         .filter((f) => f.user_id === userId && !f.review && !f.resolved_at && f.created_at >= sinceIso)
         .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] || null;
     },
-    async card({ userId, rowId, front }) {
+    async card({ userId, rowId, front, includeArchived = false }) {
       const row = rowId != null
         ? s.deck.find((c) => c.id === rowId && c.user_id === userId)
         : s.deck.find((c) => c.user_id === userId && c.front.toLowerCase() === String(front).toLowerCase());
-      if (!row) return null;
+      if (!row || (!includeArchived && row.source?.startsWith("archived:"))) return null;
       const lesson = row.source?.startsWith("lesson:") ? row.source.slice(7).split("#")[0] : null;
-      return { row_id: row.id, front: row.front, back: row.back, lesson };
+      return { row_id: row.id, front: row.front, back: row.back, lesson, source: row.source ?? null };
+    },
+    async setSource(rowId, userId, source) {
+      Object.assign(s.deck.find((c) => c.id === rowId && c.user_id === userId), { source });
+      return { error: null };
     },
     async saveReview(id, review) { Object.assign(s.entries.find((f) => f.id === id), { review }); },
     async updateCard(rowId, userId, { front, back }) {
@@ -82,6 +86,7 @@ function memoryStore() {
       Object.assign(row, { front, back });
       return { error: null };
     },
+    async reopen(id) { Object.assign(s.entries.find((f) => f.id === id), { resolved_at: null, resolution: null }); },
     async resolve(id, note) {
       const f = s.entries.find((x) => x.id === id);
       if (!f.resolved_at) Object.assign(f, { resolved_at: new Date(NOW).toISOString(), resolution: note });
@@ -146,6 +151,69 @@ console.log("\n  Apply corrects the card where it is");
   ck("another student's card is not reported as the owner's", r.json.own === false);
   const twice = await run(store, OWNER, { action: "apply", id: 1 });
   ck("applying twice is refused", twice.status === 409, `HTTP ${twice.status}`);
+}
+
+console.log("\n  Revert undoes an Apply");
+{
+  const store = memoryStore();
+  answer = { kind: "card", reasoning: "Colline is a hill.", front: "une colline", back: "a hill" };
+  await run(store, OWNER, { action: "review", id: 1 });
+  await run(store, OWNER, { action: "apply", id: 1 });
+  const student = await run(store, STUDENT, { action: "revert", id: 1 });
+  ck("a student can't revert", student.status === 403 && store.deck[0].back === "a hill", `HTTP ${student.status}`);
+  const r = await run(store, OWNER, { action: "revert", id: 1 });
+  ck("the card reads as it did before", r.status === 200 && store.deck[0].back === "a mountain" && store.deck[0].id === 10,
+     JSON.stringify(r.json));
+  ck("its schedule is untouched", store.deck[0].stability === 21 && store.deck[0].reps === 4);
+  ck("the entry is open again, review kept",
+     !store.entries[0].resolved_at && !store.entries[0].resolution && store.entries[0].review?.fix?.back === "a hill");
+  const again = await run(store, OWNER, { action: "apply", id: 1 });
+  ck("and can be applied again", again.status === 200 && store.deck[0].back === "a hill", `HTTP ${again.status}`);
+
+  store.deck[0].back = "a hill, a mound"; // edited after the fix went in
+  const edited = await run(store, OWNER, { action: "revert", id: 1 });
+  ck("an edit made after the fix is never reverted",
+     edited.status === 409 && store.deck[0].back === "a hill, a mound" && !!store.entries[0].resolved_at,
+     JSON.stringify(edited.json));
+
+  answer = { kind: "app", reasoning: "Flip.", brief: "b" };
+  await run(store, OWNER, { action: "review", id: 2 });
+  await run(store, OWNER, { action: "dismiss", id: 2 });
+  const dismissed = await run(store, OWNER, { action: "revert", id: 2 });
+  ck("a dismissed entry can't be reverted", dismissed.status === 409 && !!store.entries[1].resolved_at,
+     `HTTP ${dismissed.status}`);
+}
+
+console.log("\n  removing a card that shouldn't be in the deck");
+{
+  const store = memoryStore();
+  store.deck.push({ id: 30, user_id: "owner", front: "estar", back: "to be (location or temporary state)",
+                    source: "cahier-upload", stability: 5, reps: 3 });
+  store.entries.push({ id: 4, user_id: "owner", user_email: "owner@example.com", message: "this is a spanish word, remove it",
+    card_context: { row_id: 30, front: "estar", back: "to be (location or temporary state)", category: "vocab" },
+    created_at: ago(120_000), resolved_at: null, review: null });
+  answer = { kind: "remove", reasoning: "Estar is Spanish, not French." };
+  await run(store, OWNER, { action: "review", id: 4 });
+  const est = () => store.deck.find((c) => c.id === 30);
+  ck("Claude can suggest taking the card out", store.entries[3].review?.kind === "remove"
+     && store.entries[3].review.card?.source === "cahier-upload");
+  const student = await run(store, STUDENT, { action: "apply", id: 4 });
+  ck("a student can't take it out", student.status === 403 && est().source === "cahier-upload", `HTTP ${student.status}`);
+  const r = await run(store, OWNER, { action: "apply", id: 4 });
+  ck("Apply archives it rather than deleting it",
+     r.status === 200 && r.json.removed === true && est()?.source === "archived:cahier-upload", JSON.stringify(r.json));
+  ck("its answers and schedule stay with it", est().stability === 5 && est().reps === 3);
+  ck("the entry is resolved, saying so", /^Card taken out of the deck, answers kept: "estar/.test(store.entries[3].resolution || ""),
+     store.entries[3].resolution);
+  const back = await run(store, OWNER, { action: "revert", id: 4 });
+  ck("Revert puts it back in the deck", back.status === 200 && est().source === "cahier-upload", JSON.stringify(back.json));
+  ck("and reopens the entry", !store.entries[3].resolved_at);
+
+  est().back = "to be";
+  const edited = await run(store, OWNER, { action: "apply", id: 4 });
+  ck("a card edited since the review isn't taken out", edited.status === 409 && est().source === "cahier-upload",
+     JSON.stringify(edited.json));
+  ck("a removal with no card to remove becomes no change", shapeReview({ kind: "remove", reasoning: "" }, null).kind === "none");
 }
 
 console.log("\n  Apply refuses a card that changed after Claude looked");

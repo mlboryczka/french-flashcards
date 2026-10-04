@@ -17,6 +17,7 @@ import { useCahierSync } from "./useCahierSync";
 import { supabase } from "./supabase";
 import { CahierUpload } from "./CahierUpload";
 import { BetaFeedback } from "./BetaFeedback";
+import { FEEDBACK_REVIEW_VERSION } from "./lib/feedbackReviewVersion";
 import ApiKeyModal from "./ApiKeyModal";
 import FsrsSettingsModal from "./FsrsSettingsModal";
 import { useFsrsSettings } from "./useFsrsSettings";
@@ -3657,6 +3658,8 @@ const NEEDS_MIGRATION_009 =
 // the sender is right and what it needs (api/_lib/feedbackReview.js):
 //   card  a corrected card. Apply writes it over the card, in place, so the
 //         card keeps its schedule and history; it works on any student's deck.
+//   remove  the card shouldn't be in the deck. "Remove card" archives it, so
+//         its answers are kept. Revert undoes either (owner, 2026-10-04).
 //   app   a change to the app or a lesson, which only a coding session can
 //         make. "Copy for Claude" copies a brief to paste into one; that
 //         session resolves the entry when it has fixed it.
@@ -3681,8 +3684,8 @@ async function feedbackRequest(feedback) {
   return body;
 }
 
-const REVIEW_LABEL = { card: "Card fix", app: "App problem", none: "No change needed" };
-const REVIEW_COLOR = { card: T.color.secondary, app: T.color.primary, none: T.color.onSurfaceVariant };
+const REVIEW_LABEL = { card: "Card fix", remove: "Remove card", app: "App problem", none: "No change needed" };
+const REVIEW_COLOR = { card: T.color.secondary, remove: T.color.secondary, app: T.color.primary, none: T.color.onSurfaceVariant };
 
 // What "Copy for Claude" puts on the clipboard: enough for a fresh session to
 // find the problem, fix it and resolve the entry.
@@ -3719,7 +3722,7 @@ async function copyText(text) {
   }
 }
 
-function FeedbackReview({ item, state, onApply, onDismiss, onReview }) {
+function FeedbackReview({ item, state, onApply, onDismiss, onReview, onRevert }) {
   const [copied, setCopied] = useState(false);
   const r = item.review;
 
@@ -3727,10 +3730,20 @@ function FeedbackReview({ item, state, onApply, onDismiss, onReview }) {
     return (
       <div data-feedback-review style={S.fbReview}>
         <div style={S.fbReviewDone}>
-          {state.done === "applied"
-            ? <>Applied. The card now reads <b>{state.card.front}</b> · {state.card.back}</>
-            : "Dismissed."}
+          {state.done === "dismissed"
+            ? "Dismissed."
+            : state.removed
+              ? <>Taken out of the deck, answers kept: <b>{state.card.front}</b> · {state.card.back}</>
+              : <>Applied. The card now reads <b>{state.card.front}</b> · {state.card.back}</>}
         </div>
+        {state.done === "applied" && (
+          <div style={S.fbReviewActions}>
+            <button type="button" data-feedback-revert style={S.fbReviewBtn} disabled={!!state.busy} onClick={onRevert}>
+              {state.busy === "revert" ? "Reverting…" : "Revert"}
+            </button>
+          </div>
+        )}
+        {state.error && <div style={S.fbReviewError}>{state.error}</div>}
       </div>
     );
   }
@@ -3776,10 +3789,21 @@ function FeedbackReview({ item, state, onApply, onDismiss, onReview }) {
           <span style={{ ...S.fbReviewFixText, color: T.color.onSurface, fontWeight: 600 }}>{r.fix.front} · {r.fix.back}</span>
         </div>
       )}
+      {r.kind === "remove" && r.card && (
+        <div style={S.fbReviewFix}>
+          <span style={S.fbReviewFixLabel}>Remove</span>
+          <span style={{ ...S.fbReviewFixText, color: T.color.onSurface }}>{r.card.front} · {r.card.back}</span>
+        </div>
+      )}
       <div style={S.fbReviewActions}>
         {r.kind === "card" && r.fix && (
           <button type="button" data-feedback-apply style={S.fbReviewPrimary} disabled={busy} onClick={onApply}>
             {state.busy === "apply" ? "Applying…" : "Apply"}
+          </button>
+        )}
+        {r.kind === "remove" && r.card && (
+          <button type="button" data-feedback-apply style={S.fbReviewPrimary} disabled={busy} onClick={onApply}>
+            {state.busy === "apply" ? "Removing…" : "Remove card"}
           </button>
         )}
         {r.kind === "app" && (
@@ -3852,8 +3876,11 @@ function FeedbackReviewModal({ user, onClose, onOwnCardChanged }) {
       setReviewable(canReview);
       setLoading(false);
       if (!canReview) return;
-      // Three at a time, oldest first: each is a call to Claude.
-      const queue = data.filter((x) => !x.review).reverse();
+      // Three at a time, oldest first: each is a call to Claude. A review from
+      // before Claude could suggest what it can now is asked for afresh.
+      const queue = data
+        .filter((x) => !x.review || (x.review.version ?? 1) < FEEDBACK_REVIEW_VERSION)
+        .reverse();
       queue.forEach((x) => patch(x.id, { reviewing: true }));
       const worker = async () => {
         while (queue.length && mounted.current) await review(queue.shift());
@@ -3867,8 +3894,9 @@ function FeedbackReviewModal({ user, onClose, onOwnCardChanged }) {
     try {
       const result = await feedbackRequest({ action, id: item.id });
       if (!mounted.current) return;
-      patch(item.id, { busy: null, done: action === "apply" ? "applied" : "dismissed", card: result.card });
-      if (action === "apply" && result.own) onOwnCardChanged?.();
+      if (action === "revert") patch(item.id, { busy: null, done: null, removed: false, card: null });
+      else patch(item.id, { busy: null, done: action === "apply" ? "applied" : "dismissed", removed: !!result.removed, card: result.card });
+      if (action !== "dismiss" && result.own) onOwnCardChanged?.();
     } catch (e) {
       if (mounted.current) patch(item.id, { busy: null, error: e.message, errorCode: e.code });
     }
@@ -3911,6 +3939,7 @@ function FeedbackReviewModal({ user, onClose, onOwnCardChanged }) {
                         onApply={() => act(item, "apply")}
                         onDismiss={() => act(item, "dismiss")}
                         onReview={() => review(item)}
+                        onRevert={() => act(item, "revert")}
                       />
                     )}
                   </FeedbackEntry>

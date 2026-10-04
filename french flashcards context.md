@@ -942,9 +942,12 @@ Nothing changes until the owner presses a button.
   browser asks once the note is saved, and View feedback asks for any open
   entry still without a review when it opens, three at a time. Claude reads the
   note, the card as it is in the sender's deck now, and any screenshot, and
-  saves one of three verdicts on the row (migration_014): a corrected card,
-  an app problem with a brief for a coding session, or no change needed. Each
-  comes with a sentence or three saying whether the sender is right and why.
+  saves one of four verdicts on the row (migration_014): a corrected card,
+  remove the card, an app problem with a brief for a coding session, or no
+  change needed. Each comes with a sentence or three saying whether the
+  sender is right and why. A review made before Claude could suggest removing
+  a card is asked for afresh when View feedback opens
+  (`src/lib/feedbackReviewVersion.js`).
 - **View feedback has two sections**, "Your feedback" and "Other students".
   Entries keep the numbers `resolve-feedback.mjs` uses, newest first across the
   whole list, so the two sections' numbers interleave.
@@ -953,6 +956,12 @@ Nothing changes until the owner presses a button.
   refused if the card has changed since Claude looked ("Review again"), or if
   the deck already has a card with the new front. Applying a fix to the
   owner's own card reloads the deck on screen.
+- **"Remove card"** archives the card (`source` gets `archived:`), so it leaves
+  study and keeps its answers. It is never deleted. Claude suggests it for a
+  card that shouldn't be in the deck, such as "estar", which is Spanish.
+- **Revert**, shown after Apply or Remove card while the pane is open, puts the
+  card back as it was and reopens the entry. It is refused if the card has been
+  edited since.
 - **"Copy for Claude"** on an app problem copies the note, the card, Claude's
   review and brief, and the command that resolves the entry, to paste into a
   coding session. That session fixes it and resolves the entry.
@@ -1679,6 +1688,11 @@ database and for Claude (`feedback-review`, `auth`, `panels`), and the pane in
 the browser against sample feedback. No real call to Claude was made, as this
 Mac has no Anthropic key: the request was checked against the installed
 library only.
+
+The same day the owner asked for a Revert button, and pointed out that Claude
+had called "estar, a Spanish word, remove it" an app problem: it could only
+suggest rewording a card. Claude can now suggest removing one, which archives
+it, and Revert undoes either.
 
 ---
 

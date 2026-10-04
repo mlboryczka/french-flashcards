@@ -6,10 +6,10 @@
 //
 //   review   Claude reads the feedback, the card it was about (as it is in the
 //            deck now) and any screenshot, and decides what it needs: "card"
-//            (editing the card fixes it, with the corrected card), "app" (it
-//            needs a change to the app or a lesson, with a brief for a coding
-//            session) or "none". The review is saved on the row and nothing
-//            else changes.
+//            (editing the card fixes it, with the corrected card), "remove"
+//            (the card shouldn't be in the deck), "app" (it needs a change to
+//            the app or a lesson, with a brief for a coding session) or "none".
+//            The review is saved on the row and nothing else changes.
 //              With an id: the admin, for any open entry. View feedback asks
 //              for every open entry that has no review yet.
 //              Without one: the sender's own browser, straight after sending.
@@ -20,17 +20,23 @@
 //            (owner, 2026-10-04).
 //   apply    Admin only. Writes Claude's corrected card over the card, in
 //            place, so it keeps its schedule, its answer history and its place
-//            in any set, and resolves the entry saying what changed. Refused if
-//            the card has changed since Claude saw it.
+//            in any set; or, for "remove", archives the card, which takes it
+//            out of study and keeps its answers (src/lib/archive.js). Then
+//            resolves the entry saying what changed. Refused if the card has
+//            changed since Claude saw it.
 //   dismiss  Admin only. Resolves the entry, keeping Claude's reasoning in the
 //            note.
+//   revert   Admin only, after Apply. Puts the card back as it was (a removed
+//            card comes back into the deck) and reopens the entry. Refused if
+//            the card has been edited since.
 //
 // Nothing here deletes anything. The store is passed in so the rules can be
 // tested without a database (tests/suites/feedback-review.mjs).
 
 import Anthropic from "@anthropic-ai/sdk";
-import { isArchived } from "../../src/lib/archive.js";
+import { isArchived, archivedSource, ARCHIVE_PREFIX } from "../../src/lib/archive.js";
 import { lessonIdOf } from "../../src/lib/lessonSource.js";
+import { FEEDBACK_REVIEW_VERSION } from "../../src/lib/feedbackReviewVersion.js";
 
 export const FEEDBACK_MODEL = "claude-opus-5-5";
 
@@ -51,6 +57,7 @@ A good card teaches one word or phrase in one sense, has an answer that can be t
 
 Decide what the feedback needs:
 - "card": the card's own text is wrong or badly made, and editing this one card fixes it. For example a wrong or incomplete translation, a typo, a missing alternative answer, or the answer showing on the question side. Give the whole corrected front and back. Change only what the feedback is about, keep the card's style, and leave the front alone unless it is wrong.
+- "remove": the card shouldn't be in the deck at all, and taking it out fixes it. For example a word that isn't French, a card that repeats another, or something no student could learn from. Taking a card out keeps its answer history.
 - "app": fixing it needs a change to how the app works (marking, layout, buttons, scheduling, something broken), or to a built-in lesson card, which has to be fixed in the lesson for every student. Write a brief for the developer: what the student reported, what is actually wrong, and what you would change.
 - "none": nothing should change. The feedback is mistaken, a test, a question, or already dealt with (for example the card already reads the way the student asked).
 
@@ -59,7 +66,7 @@ Check every claim about French yourself; students are sometimes wrong. In "reaso
 const REVIEW_SCHEMA = {
   type: "object",
   properties: {
-    kind: { type: "string", enum: ["card", "app", "none"] },
+    kind: { type: "string", enum: ["card", "remove", "app", "none"] },
     reasoning: { type: "string" },
     front: { type: "string" },
     back: { type: "string" },
@@ -130,7 +137,7 @@ async function askClaude({ apiKey, row, card }) {
 
 // Claude's answer, made safe to store and act on.
 export function shapeReview(raw, card) {
-  let kind = ["card", "app", "none"].includes(raw?.kind) ? raw.kind : "none";
+  let kind = ["card", "remove", "app", "none"].includes(raw?.kind) ? raw.kind : "none";
   const reasoning = String(raw?.reasoning || "").trim();
   let fix = null;
   if (kind === "card") {
@@ -140,18 +147,27 @@ export function shapeReview(raw, card) {
     // A card change needs a card to change and something to change on it.
     else kind = "none";
   }
+  if (kind === "remove" && !card) kind = "none";
   return {
     kind,
     reasoning,
     fix,
     brief: kind === "app" ? String(raw?.brief || "").trim() : null,
-    card: card ? { row_id: card.row_id, front: card.front, back: card.back, lesson: card.lesson } : null,
+    card: card
+      ? { row_id: card.row_id, front: card.front, back: card.back, lesson: card.lesson, source: card.source ?? null }
+      : null,
+    version: FEEDBACK_REVIEW_VERSION,
     model: FEEDBACK_MODEL,
     at: new Date().toISOString(),
   };
 }
 
 const reply = (status, json) => ({ status, json });
+
+// How an applied fix's resolution note starts. Revert looks for them, so that a
+// dismissed entry is never "reverted".
+const APPLIED_NOTE = "Card changed from";
+const REMOVED_NOTE = "Card taken out of the deck, answers kept:";
 
 export async function handleFeedbackRequest({ body, user, isAdmin, store, apiKey, now = Date.now() }) {
   const action = body?.action;
@@ -180,11 +196,13 @@ export async function handleFeedbackRequest({ body, user, isAdmin, store, apiKey
     return reply(200, { ok: true, id: row.id, review });
   }
 
-  if (action !== "apply" && action !== "dismiss") return reply(400, { error: "Unknown action." });
+  if (!["apply", "dismiss", "revert"].includes(action)) return reply(400, { error: "Unknown action." });
   if (!isAdmin) return reply(403, { error: "Admin only" });
   if (id == null) return reply(400, { error: "Which feedback?" });
   const row = await store.feedback(id);
   if (!row) return reply(404, { error: "No such feedback." });
+
+  if (action === "revert") return revert(row, user, store);
   if (row.resolved_at) return reply(409, { error: "This feedback has already been dealt with." });
 
   if (action === "dismiss") {
@@ -194,6 +212,7 @@ export async function handleFeedbackRequest({ body, user, isAdmin, store, apiKey
   }
 
   const review = row.review;
+  if (review?.kind === "remove" && review.card) return remove(row, user, store);
   if (review?.kind !== "card" || !review.fix || !review.card) {
     return reply(409, { error: "Claude didn't suggest a change to the card for this feedback." });
   }
@@ -217,11 +236,70 @@ export async function handleFeedbackRequest({ body, user, isAdmin, store, apiKey
   }
   await store.resolve(
     row.id,
-    `Card changed from "${before.front} · ${before.back}" to "${fix.front} · ${fix.back}". ${review.reasoning}`.trim()
+    `${APPLIED_NOTE} "${before.front} · ${before.back}" to "${fix.front} · ${fix.back}". ${review.reasoning}`.trim()
   );
   return reply(200, {
     ok: true,
     card: { row_id: card.row_id, front: fix.front, back: fix.back },
+    own: row.user_id === user.id,
+  });
+}
+
+// Taking the card out: archived, never deleted, since deleting a card deletes
+// every answer recorded against it.
+async function remove(row, user, store) {
+  const before = row.review.card;
+  const card = await store.card({ userId: row.user_id, rowId: before.row_id });
+  if (!card) return reply(404, { error: "That card is no longer in the deck." });
+  if (card.front !== before.front || card.back !== before.back) {
+    return reply(409, {
+      error: "The card has been edited since Claude reviewed it. Ask Claude to review it again.",
+      code: "card_changed",
+    });
+  }
+  const { error } = await store.setSource(card.row_id, row.user_id, archivedSource(card.source ?? null));
+  if (error) throw new Error(error.message || "The card couldn't be taken out.");
+  await store.resolve(row.id, `${REMOVED_NOTE} "${before.front} · ${before.back}". ${row.review.reasoning}`.trim());
+  return reply(200, { ok: true, removed: true, card: { row_id: card.row_id, front: before.front, back: before.back }, own: row.user_id === user.id });
+}
+
+// Undoing an Apply: the card goes back to what Claude saw, and the entry is
+// open again with its review, so it can be applied or dismissed afresh.
+async function revert(row, user, store) {
+  const review = row.review;
+  const note = String(row.resolution || "");
+  if (row.resolved_at && review?.kind === "remove" && review.card && note.startsWith(REMOVED_NOTE)) {
+    const card = await store.card({ userId: row.user_id, rowId: review.card.row_id, includeArchived: true });
+    if (!card) return reply(404, { error: "That card is no longer in the deck." });
+    if (isArchived(card)) {
+      const source = card.source.slice(ARCHIVE_PREFIX.length) || review.card.source || null;
+      const { error } = await store.setSource(card.row_id, row.user_id, source);
+      if (error) throw new Error(error.message || "The card couldn't be put back.");
+    }
+    await store.reopen(row.id);
+    return reply(200, { ok: true, card: { row_id: card.row_id, front: card.front, back: card.back }, own: row.user_id === user.id });
+  }
+  const applied = row.resolved_at && note.startsWith(APPLIED_NOTE);
+  if (!applied || review?.kind !== "card" || !review.fix || !review.card) {
+    return reply(409, { error: "Only a fix that was applied can be reverted." });
+  }
+  const before = review.card;
+  const card = await store.card({ userId: row.user_id, rowId: before.row_id });
+  if (!card) return reply(404, { error: "That card is no longer in the deck." });
+  if (card.front !== before.front || card.back !== before.back) {
+    if (card.front !== review.fix.front || card.back !== review.fix.back) {
+      return reply(409, { error: "The card has been edited since the fix was applied, so it can't be reverted." });
+    }
+    const { error } = await store.updateCard(card.row_id, row.user_id, { front: before.front, back: before.back });
+    if (error?.code === "23505") {
+      return reply(409, { error: `That deck now has another card "${before.front}", so this one can't be changed back.` });
+    }
+    if (error) throw new Error(error.message || "The card couldn't be saved.");
+  }
+  await store.reopen(row.id);
+  return reply(200, {
+    ok: true,
+    card: { row_id: card.row_id, front: before.front, back: before.back },
     own: row.user_id === user.id,
   });
 }
@@ -232,9 +310,9 @@ const FEEDBACK_COLUMNS =
   "id,user_id,user_email,message,page,screenshot,card_context,created_at,resolved_at,review";
 
 export function supabaseFeedbackStore(db) {
-  const shapeCard = (row) =>
-    row && !isArchived(row)
-      ? { row_id: row.id, front: row.front, back: row.back, lesson: lessonIdOf(row) }
+  const shapeCard = (row, includeArchived = false) =>
+    row && (includeArchived || !isArchived(row))
+      ? { row_id: row.id, front: row.front, back: row.back, lesson: lessonIdOf(row), source: row.source ?? null }
       : null;
 
   return {
@@ -260,12 +338,13 @@ export function supabaseFeedbackStore(db) {
 
     // By row id when the feedback has one (sent since 2026-10-04), otherwise by
     // the front, which is unique in a deck.
-    async card({ userId, rowId, front }) {
+    // Archived cards count as gone, unless asked for (Revert of a removal).
+    async card({ userId, rowId, front, includeArchived = false }) {
       const columns = "id,user_id,front,back,source";
       if (rowId != null) {
         const { data, error } = await db.from("user_cards").select(columns).eq("id", rowId).maybeSingle();
         if (error) throw new Error(error.message);
-        if (data) return data.user_id === userId ? shapeCard(data) : null;
+        if (data) return data.user_id === userId ? shapeCard(data, includeArchived) : null;
       }
       const key = String(front || "").trim();
       if (!key) return null;
@@ -282,6 +361,16 @@ export function supabaseFeedbackStore(db) {
     async updateCard(rowId, userId, { front, back }) {
       const { error } = await db.from("user_cards").update({ front, back }).eq("id", rowId).eq("user_id", userId);
       return { error };
+    },
+
+    async setSource(rowId, userId, source) {
+      const { error } = await db.from("user_cards").update({ source }).eq("id", rowId).eq("user_id", userId);
+      return { error };
+    },
+
+    async reopen(id) {
+      const { error } = await db.from("beta_feedback").update({ resolved_at: null, resolution: null }).eq("id", id);
+      if (error) throw new Error(error.message);
     },
 
     async resolve(id, note) {
