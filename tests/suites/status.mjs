@@ -157,6 +157,57 @@ console.log("\n  following the app's rules");
   const dropped = set2.items.findIndex((x) => x.b === "review");
   set2.items.splice(dropped, 1);
   failsOnly(check(rec2), "due-first", "a set taking new cards while a due one is left out fails");
+  // The same stale set replaced before anything in it was answered, dealt
+  // again twelve seconds later (2026-10-04): nothing in it was asked, so it
+  // isn't faulted.
+  const rec3 = clone(base);
+  const i = rec3.deals.findIndex((d) => d.id === stale.id);
+  const early = { ...clone(rec3.deals[i]), id: "replaced", dealt_at: new Date(at - 12000).toISOString() };
+  early.items.push({ c: notDue.card_id, d: notDue.direction, b: "review", due: null, st: 2, miss: false });
+  early.items.splice(early.items.findIndex((x) => x.b === "review"), 1);
+  ck("(nothing answered in the twelve seconds between)",
+     !rec3.answers.some((r) => Date.parse(r.answered_at) >= at - 12000 && Date.parse(r.answered_at) < at));
+  rec3.deals.splice(i, 0, early);
+  const r3 = check(rec3);
+  for (const id of ["not-early", "due-first"]) {
+    ck(`a set replaced before any answer isn't judged: "${result(r3, id).title}" passes`, result(r3, id).status === "pass", result(r3, id).summary);
+  }
+}
+{
+  // A class's notes arriving after a set was dealt (2026-10-04): the set
+  // isn't faulted for not putting that class first. Once they had arrived, a
+  // set passing over them is.
+  const lastAt = Math.max(...base.deals.map((d) => Date.parse(d.dealt_at)));
+  const dayOf = (t) => {
+    const d = new Date(t - 4 * 3600000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  // A set taking new cards while one of the student's notes cards waits;
+  // that card gets the class of the set's own day, whose notes (a card made
+  // by the upload) arrive at `notesAt`.
+  const withClass = (notesAt) => {
+    const rec = clone(base);
+    for (const set of rec.deals.filter((d) => d.scope === "all|all" && d.items.some((x) => x.b === "new")).reverse()) {
+      const at = Date.parse(set.dealt_at);
+      const met = new Set(rec.answers.filter((r) => Date.parse(r.answered_at) < at).map((r) => r.card_id));
+      const inSet = new Set([...set.items, ...(set.kept || [])].map((x) => x.c));
+      const waits = rec.cards.find((c) => c.source === "cahier-upload" && !met.has(c.id) && !inSet.has(c.id));
+      if (!waits) continue;
+      const day = dayOf(at);
+      waits.dates = [...waits.dates, day];
+      rec.cards.push({ ...clone(waits), id: -1, front: "une nouvelle", source: "archived:cahier-upload", dates: [day], created_at: new Date(notesAt(at)).toISOString() });
+      return rec;
+    }
+    return null;
+  };
+  const after = withClass(() => lastAt + 3600000);
+  ck("(a set took new cards while a notes card waited)", !!after);
+  if (after) {
+    const r = result(check(after), "new-order");
+    ck("a class whose notes arrived after the set doesn't fault it", r.status === "pass", `${r.status}: ${r.summary} ${r.details[0] || ""}`);
+    const beforeSet = withClass((at) => at - 60000);
+    failsOnly(check(beforeSet), "new-order", "but one whose notes had arrived does");
+  }
 }
 {
   // Missed cards first: a full set of due cards that took a review and left

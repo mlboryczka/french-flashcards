@@ -1424,6 +1424,17 @@ How well it's working:
 Checks 5, 6 and 8 need the set records, so they start the day after the
 first recorded set: 2026-09-29 at the earliest.
 
+Two things the set checks leave alone (2026-10-04, after three false alarms
+on the owner's record). A set replaced before anything in it was answered,
+meaning the next set was dealt in the same place with no answer in between,
+isn't judged by checks 4 to 7. That happens when the up-to-date cards or a
+class's notes arrive seconds after a set was dealt, and nothing in the first
+set was asked. Check 6 also counts a class date only once the app could have
+known it. A date after the set's day never counts. A date counts once its
+notes had arrived, which is when the first card carrying that date was made
+on or after that day, since only a notes upload makes one. Any other date is
+uncertain, and an order that depends on it isn't judged.
+
 ### The simulations (`tests/simulate/`)
 
 `student.mjs` is a simulated student studying with the app's own code, so its

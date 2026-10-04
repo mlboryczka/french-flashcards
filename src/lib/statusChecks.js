@@ -112,7 +112,39 @@ function indexRecord({ answers, cards, deals, timeZone }) {
     .filter((d) => d && Number.isFinite(ms(d.dealt_at)))
     .sort((a, b) => ms(a.dealt_at) - ms(b.dealt_at));
   const tzOf = (x) => x?.time_zone || timeZone;
-  return { rows, byItem, deck, sets, tzOf };
+  // A set the app replaced before anything in it was answered: the next set
+  // is dealt in the same place with no answer in between — the up-to-date
+  // cards, or a class's notes, arriving seconds after the first. Nothing in
+  // it was asked, so it isn't judged; the set that replaced it is
+  // (2026-10-04: a set dealt from the browser's old copy, replaced twelve
+  // seconds later, failed two checks).
+  const replaced = new Set();
+  const times = rows.map((r) => ms(r.answered_at));
+  let j = 0;
+  for (let i = 0; i + 1 < sets.length; i++) {
+    const s = sets[i], next = sets[i + 1];
+    if ((s.scope || "all|all") !== (next.scope || "all|all")) continue;
+    while (j < times.length && times[j] < ms(s.dealt_at)) j++;
+    if (j >= times.length || times[j] >= ms(next.dealt_at)) replaced.add(s);
+  }
+  return { rows, byItem, deck, sets, tzOf, replaced, classArrived: classArrivals(cards, timeZone) };
+}
+
+// When each class's notes arrived: the first card carrying its date that was
+// made on or after that day, which only a notes upload does. A date with no
+// such card was added to cards already there, at a time the record doesn't
+// keep.
+function classArrivals(rows, tz) {
+  const at = new Map();
+  for (const row of rows || []) {
+    const t = ms(row?.created_at);
+    if (!Number.isFinite(t) || !Array.isArray(row.dates)) continue;
+    for (const d of row.dates) {
+      if (typeof d !== "string" || dayNo(t, tz) < labelNo(d)) continue;
+      if (!at.has(d) || t < at.get(d)) at.set(d, t);
+    }
+  }
+  return at;
 }
 
 // What the record says of one card, one way round, at a moment: its last
@@ -351,7 +383,7 @@ function checkNotEarly(idx, ctx) {
   }
   // And what the app dealt as due: was it?
   for (const d of idx.sets) {
-    if (!ctx.dealInWindow(d)) continue;
+    if (!ctx.dealJudged(d)) continue;
     const at = ms(d.dealt_at);
     const tz = idx.tzOf(d);
     for (const it of d.items || []) {
@@ -403,7 +435,7 @@ function checkDueFirst(idx, ctx) {
   const badSets = new Set();
   let checked = 0;
   for (const d of idx.sets) {
-    if (!ctx.dealInWindow(d)) continue;
+    if (!ctx.dealJudged(d)) continue;
     const at = ms(d.dealt_at);
     const tz = idx.tzOf(d);
     const today = dayNo(at, tz);
@@ -451,12 +483,13 @@ function checkDueFirst(idx, ctx) {
 
 // Where a new card comes in the agreed order (sessionQueue's orderNewCards),
 // as a sort key: lower comes first. Cards with equal keys are shuffled.
-function newCardKey(card, { lessonMode, cutoff, lessonRank }) {
+// `has` says which of its class dates count: those the app knew of then.
+function newCardKey(card, { lessonMode, cutoff, lessonRank }, has = () => true) {
   const rank = lessonRank ? lessonRank(card) : null;
   const r = Number.isFinite(rank) ? rank : Infinity;
   if (lessonMode) return [r];
   if (lessonIdOf(card)) return [3, r];
-  const days = classDaysOf(card).sort();
+  const days = classDaysOf(card).filter((d) => card.source === "tutor-chat" || has(d)).sort();
   if (!days.length) return [2];
   const latest = days[days.length - 1];
   if (latest >= cutoff) return [0, -labelNo(latest), -days.length];
@@ -476,7 +509,7 @@ function checkNewOrder(idx, ctx) {
   const bad = [];
   let checked = 0;
   for (const d of idx.sets) {
-    if (!ctx.dealInWindow(d)) continue;
+    if (!ctx.dealJudged(d)) continue;
     const dealtNew = (d.items || []).filter((x) => x.b === "new");
     if (!dealtNew.length) continue;
     const at = ms(d.dealt_at);
@@ -485,6 +518,29 @@ function checkNewOrder(idx, ctx) {
     const { items, lessonMode } = candidateItems(idx, d, at);
     const cutoff = dayIso(today - RECENT_DAYS);
     const opts = { lessonMode, cutoff, lessonRank: ctx.lessonRank };
+    // The class dates the app knew of when it dealt the set. A date after
+    // the set's day it can't have (notes come after the class); one whose
+    // notes had arrived it had; any other is uncertain, and an order that
+    // hangs on it isn't judged (2026-10-04: sets dealt before a class's
+    // notes arrived were faulted for not putting that class first).
+    const known = (iso) => labelNo(iso) > today ? "no" : idx.classArrived.get(iso) <= at ? "yes" : "maybe";
+    const sure = (iso) => known(iso) === "yes";
+    const keyed = (card) => ({
+      card,
+      unsure: card.source === "tutor-chat" ? [] : classDaysOf(card).filter((iso) => known(iso) === "maybe"),
+      key: newCardKey(card, opts, sure),
+    });
+    // `w` comes before `x` however the uncertain dates stood.
+    const surelyBefore = (w, x) => {
+      if (!w.unsure.length && !x.unsure.length) return before(w.key, x.key);
+      const unsure = [...new Set([...w.unsure, ...x.unsure])];
+      if (unsure.length > 4) return false;
+      for (let m = 0; m < 1 << unsure.length; m++) {
+        const has = (iso) => sure(iso) || unsure.some((u, i) => u === iso && m & (1 << i));
+        if (!before(newCardKey(w.card, opts, has), newCardKey(x.card, opts, has))) return false;
+      }
+      return true;
+    };
     // A card with a new item in the set has no second one to give.
     const taken = new Set([...(d.items || []), ...(d.kept || [])].filter((x) => x.b === "new").map((x) => x.c));
     const inSet = new Set([...(d.items || []), ...(d.kept || [])].map((x) => keyOf(x.c, x.d)));
@@ -494,14 +550,14 @@ function checkNewOrder(idx, ctx) {
       const s = stateAt(idx, it.id, it.dir, at);
       if (!s.known || !s.isNew) continue;
       if (metOtherWayOn(idx, it.card, it.dir, at, tz)) continue;
-      waiting.push(it);
+      waiting.push({ ...it, ...keyed(it.card) });
     }
     checked++;
     for (const x of dealtNew) {
       const card = idx.deck.get(x.c);
       if (!card) continue;
-      const k = newCardKey(card, opts);
-      const ahead = waiting.find((w) => before(newCardKey(w.card, opts), k));
+      const dealt = keyed(card);
+      const ahead = waiting.find((w) => surelyBefore(w, dealt));
       if (ahead) {
         bad.push(`The set dealt ${when(at, tz)} took ${nameOf(idx, x.c, x.d)} ahead of ${nameOf(idx, ahead.id, ahead.dir)}, which comes first${lessonMode ? " in the lesson" : " (a more recent class, or one that came up more often)"}.`);
         break;
@@ -540,7 +596,7 @@ function checkFirstMeetings(idx, ctx) {
     if (e.fr === e.en) bad.push(`${nameOf(idx, cardId, "fr")} was met both ways round for the first time on ${dayLabel(e.fr)}.`);
   }
   for (const d of idx.sets) {
-    if (!ctx.dealInWindow(d)) continue;
+    if (!ctx.dealJudged(d)) continue;
     const seen = new Set();
     for (const x of (d.items || []).filter((i) => i.b === "new")) {
       checked++;
@@ -667,6 +723,8 @@ export function runStatusChecks({
       ? "Waiting for the database update."
       : "Starts the day after the first set is recorded.",
     dealInWindow: (d) => dealsFromDay != null && dayNo(ms(d.dealt_at), idx.tzOf(d)) >= dealsFromDay,
+    // A set judged: in the window, and not replaced before it was answered.
+    dealJudged: (d) => dealsFromDay != null && dayNo(ms(d.dealt_at), idx.tzOf(d)) >= dealsFromDay && !idx.replaced.has(d),
     dealsOnDay: (day) => dealsFromDay != null && day >= dealsFromDay,
   };
   const results = [
