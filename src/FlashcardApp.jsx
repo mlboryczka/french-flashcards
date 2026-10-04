@@ -2775,11 +2775,6 @@ export default function FlashcardApp({ user, onSignOut }) {
         <main style={mainStyle}>
           <div style={S.mainInnerScroll}>
             <h1 style={S.statsHeading}>Lessons</h1>
-            <p style={S.lessonIntro}>
-              Card sets built from a teacher's lesson materials. Every lesson is in your
-              deck; switch one on once your class has reached it, and its cards come up
-              in Cards alongside your cahier.
-            </p>
             {LESSONS.map((lesson) => {
               const owned = userCards.filter((c) => lessonIdOf(c) === lesson.id);
               const added = owned.length > 0;
@@ -5042,7 +5037,6 @@ const S = {
   // The lesson you are in, set as a title rather than a pill: it names where
   // you are, and the only pill-shaped things in this row are controls.
   lessonName: { fontFamily:T.font.serif, fontSize:15, fontWeight:600, color:T.color.primary, whiteSpace:"nowrap", letterSpacing:"-0.01em", flexShrink:0 },
-  lessonIntro: { fontSize:13, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, maxWidth:560, lineHeight:1.55, marginBottom:24 },
   lessonCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card, maxWidth:720 },
   lessonHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16 },
   lessonTitle: { fontSize:18, fontFamily:T.font.serif, color:T.color.onSurface, marginBottom:4 },
