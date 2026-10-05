@@ -104,7 +104,9 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
         <div style={S.head}>
           <div>
             <div style={S.title}>{lesson.title}</div>
-            <div style={S.sub}>{lesson.source}</div>
+            {/* Whose materials the lesson is from. A lesson written for the
+                app has no one to credit and leaves the line out. */}
+            {lesson.creditInNotes !== false && <div style={S.sub}>{lesson.source}</div>}
           </div>
           <button style={S.close} onClick={onClose} title="Close">✕</button>
         </div>
@@ -165,10 +167,10 @@ function rich(text) {
 // interleaves: a rule, its examples, then a caveat about those examples.
 //
 // Two rules about separators, both from review:
-//   - A subheading draws a divider above it, EXCEPT as the first block of a
-//     section (nothing to separate from) or straight after a table, which
-//     already closes with a hairline. Two rules stacked 20px apart read as a
-//     mistake, because they are one.
+//   - The only line inside a section is the one under a table's column names
+//     (owner, 2026-10-04: there were too many). A subheading is set off by
+//     space alone: extra space above it, except as the first block of a
+//     section or straight after a table, which already leaves a gap.
 //   - Every block of French specimens carries a label. An unlabelled specimen
 //     reads as a pull-quote and the reader has to guess what they are seeing.
 function Block({ b, prev, first }) {
@@ -177,8 +179,8 @@ function Block({ b, prev, first }) {
   if (b.t === "note") return <p style={S.note}>{rich(b.v)}</p>;
 
   if (b.t === "sub") {
-    const divide = !first && prev?.t !== "table" && prev?.t !== "pairs";
-    return <div style={divide ? { ...S.subH, ...S.subHDivide } : S.subH}>{b.v}</div>;
+    const spaced = !first && prev?.t !== "table" && prev?.t !== "pairs";
+    return <div style={spaced ? { ...S.subH, ...S.subHSpaced } : S.subH}>{b.v}</div>;
   }
 
   if (b.t === "list") {
@@ -303,7 +305,7 @@ const S = {
   strong: { color: T.color.onSurface, fontWeight: 700 },
 
   subH: { fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: T.color.onSurface, margin: "0 0 9px" },
-  subHDivide: { marginTop: 24, paddingTop: 14, borderTop: "1px solid rgba(3,22,50,0.08)" },
+  subHSpaced: { marginTop: 24 },
 
   list: { margin: "0 0 16px", paddingLeft: 16 },
   li: { fontSize: 12.5, lineHeight: 1.55, color: T.color.onSurface, marginBottom: 7 },
@@ -316,10 +318,10 @@ const S = {
   forms: { fontSize: 13, lineHeight: 1.7, color: T.color.onSurface, fontWeight: 600, margin: "0 0 16px", paddingLeft: 11, borderLeft: "2px solid rgba(156,66,52,0.34)" },
   formsDot: { color: T.color.onSurfaceVariant, fontWeight: 400, padding: "0 3px" },
 
-  // A table is its own object: space around it and a hairline closing it off,
-  // so it does not bleed into the block below. The paradigms are the widest
+  // A table is its own object: space around it, so it does not bleed into the
+  // block below. No closing line (see Block). The paradigms are the widest
   // thing in the panel, so they scroll inside this rather than push the panel.
-  tableWrap: { overflowX: "auto", margin: "16px 0 18px", paddingBottom: 4, borderBottom: "1px solid rgba(3,22,50,0.08)" },
+  tableWrap: { overflowX: "auto", margin: "16px 0 18px", paddingBottom: 4 },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
   tableDense: { fontSize: 12 },
   // The caption names the table, the headers name its columns. They sit one

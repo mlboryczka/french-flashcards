@@ -1189,6 +1189,14 @@ METHOD sheets) and Adjectif ou adverbe ? (81 cards, written for the app).
   down under Lessons in the sidebar, and leave it with Cards. The lesson's name in the top bar is a label, not a control.
 - The notes (`LESSON.notes`, shown by `LessonPanel.jsx`) are for glancing at
   mid-card: tables, two-column contrasts, and the common mistakes called out.
+  How to write them is in the lesson-building skill
+  (`.claude/skills/building-lessons/SKILL.md`).
+- The only line inside the notes is the one under a table's column names; a
+  subheading is set off by space alone (owner, 2026-10-04: there were too
+  many lines). The `lessons` suite checks this.
+- Under the title the panel credits whose materials the lesson is from. A
+  lesson written for the app sets `creditInNotes: false` and shows no line
+  there (owner, 2026-10-04); the Lessons page still shows its `source`.
 - Only the notes panel's ✕ and the Lesson notes button close it, because it
   stays open while you answer. It also closes when you leave the lesson, and
   reopens on its first tab.
@@ -1271,6 +1279,10 @@ card, shown in French.
   answer.
 - The notes leave out the spelling asides (gai → gaiement, the circumflex in
   assidûment, fou / mou / nouveau), at the owner's request (2026-09-25).
+- The notes were rebuilt on the impératif's model and reviewed by the owner
+  line by line (2026-10-04): four tabs, Use · Forms · Expressions · False
+  friends, each opening with its rule in one sentence. The vowel rule is put
+  as "drop the -e after a vowel", so fou → follement no longer contradicts it.
 
 ---
 

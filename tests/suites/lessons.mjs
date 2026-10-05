@@ -164,7 +164,10 @@ for (let i = 0; i < tabs.length; i++) {
       const gap = ys[j][0] - ys[j - 1][0];
       if (gap > 2 && gap < 34) stacked.push(`${ys[j - 1][1]}+${ys[j][1]} @${gap}px`);
     }
-    return { chars: text.length, stacked };
+    // The only line a section draws is the one under a table's column names
+    // (owner, 2026-10-04): no line above a subheading, none closing a table.
+    const stray = ys.filter(([, w]) => w !== "th:bottom").map(([y, w]) => `${w} @${y}`);
+    return { chars: text.length, stacked, stray };
   });
 
   ck(`${tabs[i]} renders its content`, probe.chars > 120, `${probe.chars} chars`);
@@ -172,6 +175,11 @@ for (let i = 0; i < tabs.length; i++) {
     `${tabs[i]} draws no two rules on top of each other`,
     probe.stacked.length === 0,
     probe.stacked.join(", ") || "none"
+  );
+  ck(
+    `${tabs[i]} draws no line except under column names`,
+    probe.stray.length === 0,
+    probe.stray.join(", ") || "none"
   );
 }
 
