@@ -41,7 +41,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 
-import { requireUser } from "./_lib/auth.js";
+import { requireUser, isAdmin } from "./_lib/auth.js";
+import { handleNotesChecks, supabaseNotesStore } from "./_lib/notesChecks.js";
 import { sameCardKey, findSameCard } from "../src/lib/sameCard.js";
 import { isArchived } from "../src/lib/archive.js";
 import {
@@ -93,6 +94,27 @@ export default async function handler(req, res) {
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  // The owner's test of how Claude reads a class, against their own
+  // corrections (api/_lib/notesChecks.js). Here because of the 12-route
+  // limit, and because this is the route that reads classes.
+  if (req.body?.notesChecks) {
+    try {
+      const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+      const { status, json } = await handleNotesChecks({
+        body: req.body.notesChecks,
+        isAdmin: isAdmin(user),
+        store: supabaseNotesStore(admin),
+        readDoc: fetchGoogleDoc,
+        blocksOf: sliceIntoBlocks,
+        read: async (block) => cardsFromExtracted(await extractCardsFromBlock(anthropic, block)),
+      });
+      return res.status(status).json(json);
+    } catch (err) {
+      console.error("[cahier-sync] notes checks failed:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
 
   try {
     const result = await syncUser({
@@ -188,13 +210,7 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     return { ok: false, linked: true, error: errors[0]?.error || "Could not read that class", errors };
   }
 
-  const cleaned = raw.map((c) => (c && c.front && c.back ? { ...c, front: cleanFrenchFront(c.front, c.back) } : c));
-  const { expanded } = expandConjugations(splitSlashPairs(cleaned));
-  // The same steps as an upload's commit, in the same order: a class's grammar
-  // rules and pronunciation notes never become cards (a card must be answerable
-  // by typing), and a plain word the model filed under G becomes V. This path
-  // matters most for it — it runs unattended, and nobody reviews what it adds.
-  const { deduped } = dedupeWithPolysemy(keepAnswerable(expanded));
+  const deduped = cardsFromExtracted(raw);
 
   const written = await writeCards(admin, userId, deduped);
 
@@ -218,6 +234,19 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     dateRange: dates.length ? [dates[0], dates[dates.length - 1]] : null,
     errors,
   };
+}
+
+// What Claude extracted from a class, made into the cards that are written.
+// The same steps as an upload's commit, in the same order: a class's grammar
+// rules and pronunciation notes never become cards (a card must be answerable
+// by typing), and a plain word the model filed under G becomes V. This path
+// matters most for it — it runs unattended, and nobody reviews what it adds.
+// Also what the notes-to-cards test judges (api/_lib/notesChecks.js), so the
+// test is of exactly what a sync writes.
+export function cardsFromExtracted(raw) {
+  const cleaned = raw.map((c) => (c && c.front && c.back ? { ...c, front: cleanFrenchFront(c.front, c.back) } : c));
+  const { expanded } = expandConjugations(splitSlashPairs(cleaned));
+  return dedupeWithPolysemy(keepAnswerable(expanded)).deduped;
 }
 
 async function loadLink(admin, userId) {

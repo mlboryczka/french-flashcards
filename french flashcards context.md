@@ -632,7 +632,7 @@ one. `api/_lib/` is shared code, not a route.
 |---|---|
 | `parse-cahier.js` | Upload: splits a notebook into dated classes, then saves the cards |
 | `cahier-parse.js` | Upload: turns the classes into cards |
-| `cahier-sync.js` | Linked cahier: turns the doc's unread classes into cards |
+| `cahier-sync.js` | Linked cahier: turns the doc's unread classes into cards. A body with `notesChecks` is instead the owner's test of how Claude reads a class (`api/_lib/notesChecks.js`) |
 | `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs. A second schedule, 14:00 UTC, runs the status check on every student instead (`api/_lib/statusDaily.js`); Vercel's `x-vercel-cron-schedule` header says which |
 | `chat.js` | The tutor. Gives hints, not the answer, until the card's answer is shown. Never writes cards |
 | `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude. A body with `feedback` is instead Claude's review of a piece of feedback and the owner's Apply and Dismiss (`api/_lib/feedbackReview.js`), here because of the 12-route limit. Every verdict is saved to `answer_reviews` (migration_015); a body with `answerChecks` is the owner's list of them and the test made from them (`api/_lib/answerChecks.js`) |
@@ -1633,6 +1633,15 @@ tab for each:
   question and model, and saves the run in `eval_runs`: agreed every time,
   some of the time, never. The question carries a version (a hash of its
   wording and the model), so runs before and after a change can be compared.
+- **Notes to cards.** Every card the owner fixes or deletes is logged to
+  `parse_corrections`, and each one is a case: its class is found in the
+  linked notebook (by the card's own dates, or by the class before the
+  correction whose text holds it), read again three times the way the
+  morning sync reads it (`extractCardsFromBlock`, then `cardsFromExtracted`,
+  now shared with `syncUser`), and judged on whether the mistake came back.
+  Reached through `cahier-sync` with a `notesChecks` body. On 2026-10-06 the
+  48 corrections made 46 cases (two edits changed nothing) from 36 classes,
+  all found. Runs are kept in `eval_runs` as kind `notes`.
 - **Tests on GitHub.** `.github/workflows/tests.yml` builds the app, runs the
   simulated students and every test suite on each push to `main`. A failure
   marks the commit and emails whoever pushed. A browser suite that fails gets
@@ -1641,6 +1650,12 @@ tab for each:
 Known about the question Claude is asked, and left as it is so the first
 test measures it unchanged: for an English-side card it says "The card showed
 the English side" followed by the French text.
+
+Found while building the notes test, 2026-10-06, and not changed: the full
+notebook upload of 2026-09-04 made again some cards the owner had deleted or
+corrected in April and May. Three are in the deck now ("Naza", "les registres
+de langues : familier, courant, …", "Je parle jamais de Pierre." with its
+full stop); five more came back and were archived since.
 
 ### The simulations (`tests/simulate/`)
 

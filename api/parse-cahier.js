@@ -562,7 +562,7 @@ or for conjugation tables:
 
 If the block has no extractable cards, return [].`;
 
-const EXTRACTION_PROMPT = `You are extracting flashcards from a French student's daily lesson notes.
+export const EXTRACTION_PROMPT = `You are extracting flashcards from a French student's daily lesson notes.
 
 The text below is one lesson day from a cahier (notebook) kept by a French teacher, organized under two headers:
 - "Vocabulaire Expressions" — vocabulary words AND expressions/phrases, mixed together
@@ -601,6 +601,8 @@ Here is the lesson text:
 {BLOCK_TEXT}
 ---`;
 
+export const EXTRACTION_MODEL = "claude-haiku-4-5";
+
 export async function extractCardsFromBlock(anthropic, block) {
   const prompt = EXTRACTION_PROMPT.replace("{BLOCK_TEXT}", block.text);
 
@@ -608,7 +610,7 @@ export async function extractCardsFromBlock(anthropic, block) {
     // Haiku is ~3-5× faster than Sonnet and just as accurate on this task,
     // since the cahier format is very regular and Claude is just doing
     // structured extraction, not reasoning. Sonnet was overkill.
-    model: "claude-haiku-4-5",
+    model: EXTRACTION_MODEL,
     max_tokens: 4000,
     messages: [{ role: "user", content: prompt }],
   });

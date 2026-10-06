@@ -4,6 +4,7 @@ import { T } from "./theme";
 import { statusText } from "./lib/statusChecks";
 import StatusAnswers from "./StatusAnswers";
 import StatusStudents from "./StatusStudents";
+import StatusNotes from "./StatusNotes";
 
 // "Status": whether the student's cards are being shown the way FSRS and the
 // app's own rules say (lib/statusChecks.js, run by useStatusCheck). The
@@ -11,8 +12,9 @@ import StatusStudents from "./StatusStudents";
 // while anything here has failed.
 //
 // Since 2026-10-06 it is where every check of the app lives, one tab each:
-// your own cards (above), every student's (StatusStudents.jsx), and Claude's
-// marking of disputed answers (StatusAnswers.jsx).
+// your own cards (above), every student's (StatusStudents.jsx), Claude's
+// marking of disputed answers (StatusAnswers.jsx), and Claude turning class
+// notes into cards, against your corrections (StatusNotes.jsx).
 
 const GROUPS = [
   ["Following FSRS", ["fsrs", "one-a-day", "kept"]],
@@ -24,6 +26,7 @@ const TABS = [
   ["cards", "Your cards"],
   ["students", "All students"],
   ["answers", "Claude's marking"],
+  ["notes", "Notes to cards"],
 ];
 
 const day = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "long" });
@@ -75,6 +78,7 @@ export default function StatusModal({ open, onClose, status }) {
 
         {tab === "students" && <StatusStudents students={status.students} onChecked={status.setStudents} />}
         {tab === "answers" && <StatusAnswers />}
+        {tab === "notes" && <StatusNotes />}
 
         {tab === "cards" && (<>
         <p style={S.body}>
