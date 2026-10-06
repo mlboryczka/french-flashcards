@@ -11,7 +11,7 @@
 // lesson sync fills it with every lesson's cards, unanswered, and with no
 // lesson switched on Cards has nothing to deal.
 
-import { openApp, finish, checker, MOCK } from "../harness.mjs";
+import { openApp, finish, checker } from "../harness.mjs";
 import { LESSONS } from "../../src/data/lessons/index.js";
 import { TOUR_LESSON } from "../../src/lib/tourSteps.js";
 
@@ -105,7 +105,7 @@ let { browser, page } = await openApp({
   studyMode: null, tour: true, route: student.install, ready: "[data-tour-box]",
 });
 ck("the tour comes up by itself", (await waitForTitle(page, "Welcome to Déjà Review")) === "Welcome to Déjà Review");
-ck("that it was shown is saved to the account", student.userWrites.some((w) => w.tour_seen === true),
+ck("that it was shown is saved to the account", student.userWrites.some((w) => w.tour_shown === true),
   JSON.stringify(student.userWrites));
 ck("nothing is lit on the first box", await page.evaluate(() => {
   const h = document.querySelector("[data-tour-hole]").getBoundingClientRect();
@@ -263,13 +263,22 @@ ck("Not now closes it", (await page.$("[data-tour-root]")) === null);
 await browser.close();
 
 // ── A student who has studied before ──────────────────────────────────
+// Every student sees it once, not only new ones (owner, 2026-10-06), even
+// one the tour's first version marked with tour_seen without showing it.
 console.log("\n  A student who already has answers");
-({ browser, page } = await openApp({ tour: true }));
-await page.waitForTimeout(3000);
-ck("never sees it", (await page.$("[data-tour-root]")) === null);
-const mockUser = await fetch(`${MOCK}/auth/v1/user`).then((r) => r.json()).catch(() => ({}));
-ck("and is noted as having seen it, so Reset all progress later doesn't bring it", mockUser.user_metadata?.tour_seen === true,
-  JSON.stringify(mockUser.user_metadata));
+const studied = makeStudent({ metadata: { tour_seen: true } });
+studied.rows.push({
+  id: 999, user_id: USER_ID, front: "la maison", back: "the house", category: "vocab", dates: [],
+  flagged_for_review: false, batch_id: null, box: 1, lapses: 0, stability: 4, difficulty: 5,
+  fsrs_state: 2, reps: 2, last_answer_correct: true,
+  next_due_at: new Date(Date.now() + 3 * 86400000).toISOString(),
+  last_review: new Date(Date.now() - 86400000).toISOString(),
+});
+({ browser, page } = await openApp({ tour: true, route: studied.install, ready: "[data-tour-box]" }));
+ck("sees it too", (await waitForTitle(page, "Welcome to Déjà Review")) === "Welcome to Déjà Review");
+ck("and that it was shown is saved to the account", studied.userWrites.some((w) => w.tour_shown === true),
+  JSON.stringify(studied.userWrites));
+ck("their answered card is untouched", studied.rows.find((r) => r.id === 999)?.reps === 2);
 await browser.close();
 
 // ── Keys during a step, for a student who flips ───────────────────────

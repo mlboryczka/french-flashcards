@@ -1061,17 +1061,15 @@ Asked for by the owner on 2026-10-06, designed in a clickable mockup first
 It walks a new student through the app one part at a time: everything is
 dimmed but that part, and a caption beside it says what to do there.
 
-- **It comes up once per account, on the first sign-in** (owner): for a student
-  with nothing answered either way round, once the deck has come from the
-  server and the lesson sync has put Lesson 1's cards in it. A brand-new
-  student lands on Cards with "You're all caught up", since lessons start
-  switched off, so the tour starts there. Existing students, who have answers,
-  never see it: the first time the app finds one, it notes them as having
-  seen it, so "Reset all progress" later doesn't make them look new. An
-  account made before the tour that has never answered a card gets it once.
-- **That it was shown is kept on the account** (`user_metadata.tour_seen`,
+- **It comes up once for every student, new or not** (owner, 2026-10-06): the
+  next time they open the app, once the deck has come from the server and the
+  lesson sync has put Lesson 1's cards in it. Students who have answered cards
+  get it too. The tour's first version only showed it to students with
+  nothing answered, and marked the rest with `tour_seen` without showing it,
+  so that marker is no longer read.
+- **That it was shown is kept on the account** (`user_metadata.tour_shown`,
   saved the way the lesson switches are, and read from the server on opening)
-  **and on the browser** (`localStorage["tour-seen:<user id>"]`), so another
+  **and on the browser** (`localStorage["tour-shown:<user id>"]`), so another
   computer or a failed save doesn't bring it back. It counts as shown as soon
   as it appears, "Not now" and "Skip tour" included. "Take the tour again" in
   the profile menu, between "How much to remember" and Sign out, opens it any
@@ -2228,8 +2226,9 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
 
 - **The first-visit tour** (2026-10-06). Sign up with a new address and the
   tour should come up once the app opens; sign out and in again, or open it on
-  another computer, and it shouldn't. Saving `tour_seen` to the account has
-  only been tested against the mock.
+  another computer, and it shouldn't. An existing student should get it once
+  too. Saving `tour_shown` to the account has only been tested against the
+  mock.
 
 - **The used sign-in link message** (2026-10-04). Ask for a link, open it,
   sign out, and open the same link again: the sign-in page should say it has

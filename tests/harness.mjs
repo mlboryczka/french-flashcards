@@ -44,12 +44,11 @@ const SESSION = {
 // stored.
 // `app`: another build of the app to open (the statusline suite runs one with
 // the test account as admin).
-// `tour`: the first-visit tour comes up for a student with nothing answered,
-// which several fixtures are. Every suite opens as a student who has seen it
-// unless it passes `tour: true`.
+// `tour`: the first-visit tour comes up once for every student. Every suite
+// opens as a student who has seen it unless it passes `tour: true`.
 // `ready`: what to wait for before handing the page over; a new student's
 // Cards page has no "Previous card".
-export const TOUR_SEEN_KEY = "tour-seen:00000000-0000-0000-0000-000000000001";
+export const TOUR_SEEN_KEY = "tour-shown:00000000-0000-0000-0000-000000000001";
 export async function openApp({ width = 1400, height = 900, route, studyMode = "flip", app = APP, tour = false, ready = 'button:has-text("Previous card")' } = {}) {
   const browser = await chromium.launch({
     executablePath: CHROME,

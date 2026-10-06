@@ -763,10 +763,10 @@ export default function FlashcardApp({ user, onSignOut }) {
       .then(({ data }) => {
         if (!live || data?.user?.id !== user.id) return;
         setLessonChoices(choicesOf(data.user));
-        setAccountTourSeen(!!data.user.user_metadata?.tour_seen);
+        setAccountTourSeen(!!data.user.user_metadata?.tour_shown);
       })
       .catch(() => { /* the session's copy stands */ })
-      .finally(() => { if (live) setAccountTourSeen((v) => v ?? !!user?.user_metadata?.tour_seen); });
+      .finally(() => { if (live) setAccountTourSeen((v) => v ?? !!user?.user_metadata?.tour_shown); });
     return () => { live = false; };
   }, [user?.id]);
   // The lesson whose switch failed to save, to say so beside it.
@@ -1217,24 +1217,26 @@ export default function FlashcardApp({ user, onSignOut }) {
   const answerSeen = !!card && (flipped || !!typeResult || revealedSlot === cardSlot);
 
   // ── The first-visit tour (src/Tour.jsx; its steps are lib/tourSteps.js) ──
-  // It comes up once per account, on the first sign-in (owner, 2026-10-06):
-  // for a student with nothing answered yet, once the deck has come from the
-  // server and the lesson sync has put Lesson 1's cards in it. That it was
-  // shown is kept on the account (user_metadata.tour_seen, like the lesson
-  // switches), so it doesn't come back on another computer, and on this
-  // browser, so a failed save doesn't bring it back here. The account's copy
-  // is the server's, read on opening: a session signed in before the tour
-  // was shown elsewhere still holds the old one. Skipping the tour counts as
-  // shown. "Take the tour again" in the profile menu opens it any time.
+  // Every student sees it once, new or not (owner, 2026-10-06): the next time
+  // they open the app, once the deck has come from the server and the lesson
+  // sync has put Lesson 1's cards in it. That it was shown is kept on the
+  // account (user_metadata.tour_shown, like the lesson switches), so it
+  // doesn't come back on another computer, and on this browser, so a failed
+  // save doesn't bring it back here. The account's copy is the server's, read
+  // on opening: a session signed in before the tour was shown elsewhere still
+  // holds the old one. Skipping the tour counts as shown. "Take the tour
+  // again" in the profile menu opens it any time. (The tour's first version
+  // saved tour_seen, and also set it, without showing the tour, for students
+  // who had answered cards; so it is no longer read.)
   const tourLesson = LESSONS.find((l) => l.id === TOUR_LESSON) || null;
-  const tourSeenKey = `tour-seen:${user?.id}`;
+  const tourSeenKey = `tour-shown:${user?.id}`;
   const [tourOpen, setTourOpen] = useState(false);
   const [tourRun, setTourRun] = useState(0);
   const tourChecked = useRef(false);
   const markTourSeen = useCallback(() => {
     try { localStorage.setItem(tourSeenKey, "1"); } catch {}
-    if (!user?.user_metadata?.tour_seen) {
-      supabase.auth.updateUser({ data: { tour_seen: true } }).then(({ error }) => {
+    if (!user?.user_metadata?.tour_shown) {
+      supabase.auth.updateUser({ data: { tour_shown: true } }).then(({ error }) => {
         if (error) console.error("Saving that the tour was shown failed:", error);
       });
     }
@@ -1252,18 +1254,12 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (tourChecked.current || !user || !loaded || !deckFreshSeq || !tourLesson || accountTourSeen === null) return;
     let seenHere = false;
     try { seenHere = !!localStorage.getItem(tourSeenKey); } catch {}
-    if (accountTourSeen || user.user_metadata?.tour_seen || seenHere) { tourChecked.current = true; return; }
-    const answered = userCards.some((c) =>
-      directionsOf(c).some((d) => (sideOf(c, d).fsrs_state ?? State.New) !== State.New)
-    );
-    // A student who has studied already is no new student: noted as such, so
-    // that "Reset all progress" later doesn't make them look like one.
-    if (answered) { tourChecked.current = true; markTourSeen(); return; }
-    // A new student: once the lesson sync has put Lesson 1 in the deck.
+    if (accountTourSeen || user.user_metadata?.tour_shown || seenHere) { tourChecked.current = true; return; }
+    // Once the lesson sync has put Lesson 1 in the deck.
     if (!userCards.some((c) => lessonIdOf(c) === TOUR_LESSON)) return;
     tourChecked.current = true;
     startTour();
-  }, [user, loaded, deckFreshSeq, userCards, tourLesson, tourSeenKey, accountTourSeen, markTourSeen, startTour]);
+  }, [user, loaded, deckFreshSeq, userCards, tourLesson, tourSeenKey, accountTourSeen, startTour]);
   // What the steps do to set the page up. Read through a ref, so the steps
   // are made once and still act on the page as it is now.
   const tourActsRef = useRef(null);
