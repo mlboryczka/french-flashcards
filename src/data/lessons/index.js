@@ -31,9 +31,19 @@ export {
   lessonCardKey,
 } from "../../lib/lessonSource.js";
 
-// New lessons go at the end: a lesson's place here is part of every one of its
-// cards' rank (lessonRank), so inserting one would reorder the lessons before it.
+// New lessons go at the end. Where a lesson's cards come in the order a
+// student meets them is MEETING_ORDER, below, not its place here.
 export const LESSONS = [imperatif, adverbes, lecon2, lecon3, lecon4, lecon5, lecon1];
+
+// The order a student meets the lessons' new cards in on Cards: part of every
+// lesson card's rank (lessonRank). Leçon 1 comes before Leçons 2 to 5, though
+// it was added after them (owner, 2026-10-06). L'impératif and the adverbs
+// keep their place ahead, so a student studying them saw no change. A lesson
+// not named here comes after, in catalogue order.
+const MEETING_ORDER = (() => {
+  const named = ["imperatif", "adverbes", "lecon1", "lecon2", "lecon3", "lecon4", "lecon5"];
+  return [...named, ...LESSONS.map((l) => l.id).filter((id) => !named.includes(id))];
+})();
 
 export const lessonById = (id) => LESSONS.find((l) => l.id === id) || null;
 
@@ -60,7 +70,7 @@ export const LESSONS_SHOWN = LESSON_GROUPS.flatMap((g) => g.lessons);
 
 // Where a lesson card sits in the order a student should meet it, or null for
 // a card that isn't a lesson card (or no longer matches one). Lower comes
-// first: lessons in catalogue order, then each lesson's `teachingOrder` of
+// first: lessons in MEETING_ORDER, then each lesson's `teachingOrder` of
 // sections, then the card's place in the lesson's array.
 //
 // A row written before lesson keys existed is matched by its front, the same
@@ -71,7 +81,8 @@ const SECTIONS = new Map();
 // And the lesson's current answer, so one the lesson has since widened
 // ("N'en parlons pas / N'en parlons plus") is accepted on rows synced before.
 const BACKS = new Map();
-LESSONS.forEach((lesson, li) => {
+LESSONS.forEach((lesson) => {
+  const li = MEETING_ORDER.indexOf(lesson.id);
   const order = lesson.teachingOrder || [];
   // Keyed by the card's identity, which is its FIRST front: a reworded card
   // carries that as its fifth element, and the sync keys its rows by it.

@@ -206,8 +206,10 @@ lesson's `teachingOrder` of sections, then each card's place in the lesson
 (`lessonRank`). Otherwise: cards from classes in the last 14 days (*Last two
 weeks of class*), newest class first; then *Older classes*, the words from the
 most classes first (`dates.length`); then undated cards; then unseen lesson
-cards. A card added from the tutor is dated by its `created_at`. Ties come in
-random order.
+cards, lesson by lesson in `MEETING_ORDER` (`src/data/lessons/index.js`):
+L'impératif, the adverbs, then Leçons 1 to 5 in number order, though Leçon 1
+was added last (owner, 2026-10-06). A card added from the tutor is dated by
+its `created_at`. Ties come in random order.
 
 **Then the block is shuffled,** because runs of one kind are blocked practice,
 which tests worse than mixed. A lesson's block is shuffled too (owner,
