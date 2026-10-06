@@ -1148,10 +1148,17 @@ From this project's history:
 
 A lesson is a fixed set of cards made from a teacher's materials, the same for
 every student. Lessons are in `src/data/lessons/`; `LESSONS` in `index.js` is
-the catalogue. There are six: L'impératif (108 cards, from Laura Caufour's
+the catalogue. There are seven: L'impératif (108 cards, from Laura Caufour's
 LFL METHOD sheets), Adjectif ou adverbe ? (81 cards, written for the app), and
-her beginner Leçons 2 to 5: Aller (63), Avoir (62), Verbes en -er (78) and
-Vouloir et pouvoir (58).
+her beginner Leçons 1 to 5: Être (57), Aller (63), Avoir (62), Verbes en -er
+(78) and Vouloir et pouvoir (58).
+
+- **The Lessons page, the sidebar and Stats show `LESSON_GROUPS`**, not
+  `LESSONS`: Leçons 1 to 5 sit under the heading "Basic Lessons", in number
+  order (owner, 2026-10-06), though Leçon 1 was added after Leçons 2 to 5.
+  `LESSONS` keeps the order lessons were added in, because a lesson's place
+  there is part of every one of its cards' rank. In the sidebar the heading
+  has its own arrow and folds its five away, never over the lesson open.
 
 - A card is `[front, back, category, section, previousFront?]`. The front is
   always the French, because the app reads it aloud and cleans it as French.
@@ -1286,13 +1293,15 @@ card, shown in French.
   friends, each opening with its rule in one sentence. The vowel rule is put
   as "drop the -e after a vowel", so fou → follement no longer contradicts it.
 
-### Leçons 2 to 5
+### Leçons 1 to 5
 
-`lecon2.js` to `lecon5.js` are the first lessons of Laura's beginner course,
+`lecon1.js` to `lecon5.js` are the first lessons of Laura's beginner course,
 from her Google Drive folder Français → Leçons 1 à 20 (lesson, exercises,
 answer key; Leçon 4's key only exists in her Spanish-speaker version, with
-the same French answers). Built 2026-10-04; notes reviewed by the owner tab
-by tab and released 2026-10-05.
+the same French answers). Leçons 2 to 5 were built 2026-10-04, their notes
+reviewed by the owner tab by tab and released 2026-10-05; Leçon 1 was built
+and released 2026-10-06. Leçon 1's silent-letters section has no cards and no
+tab: no typed card can check pronunciation.
 
 - Her answers stand where her key gives one; each header comment lists every
   departure. Her vocabulary lists became word cards. Dictation, oral answers

@@ -10,8 +10,9 @@ A lesson is a fixed set of cards plus notes, the same for every student, in
 There are two kinds:
 
 - **From Laura's materials**: L'impératif (built 2026-09-08 from her lesson and
-  exercise PDFs); Leçons 2 to 5 (built 2026-10-04 from her Google folder, notes
-  reviewed by the owner tab by tab and released 2026-10-05).
+  exercise PDFs); Leçons 1 to 5 of her beginner course (2 to 5 built
+  2026-10-04 from her Google folder, notes reviewed by the owner tab by tab
+  and released 2026-10-05; Leçon 1 built and released 2026-10-06).
 - **Written for the app**: Adjectif ou adverbe ? (built 2026-09-24, notes
   rebuilt 2026-10-04).
 
@@ -301,6 +302,11 @@ and confirm no `*` survives; `notescheck.mjs` (below) does this.
   for every student, so nobody's daily cards change until they switch it on
   (owner, 2026-10-04). Inserting one earlier would change the order of every
   later lesson's new cards.
+- **Where a lesson shows is `LESSON_GROUPS`, not `LESSONS`** (both in
+  `src/data/lessons/index.js`). The Lessons page, the sidebar and Stats list
+  Laura's numbered beginner lessons under "Basic Lessons", in number order
+  (owner, 2026-10-06). Add a new one of hers to that group's `ids` in its
+  place by number, and to the end of `LESSONS`.
 - **Lessons can go live one at a time.** Keep a lesson out of `LESSONS` until
   the owner approves it, and run the release script only then: the script
   records every card in `LESSONS`, and the `logic` suite then holds those

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
-import { LESSONS, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } from "./data/lessons";
+import { LESSONS, LESSON_GROUPS, LESSONS_SHOWN, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } from "./data/lessons";
 import { reconcileLessons } from "./lib/lessonSync";
 import { archivedSource } from "./lib/archive";
 import { readPlace, writePlace, dropSets, packSet, unpackEntries } from "./lib/studyPlace";
@@ -754,6 +754,14 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [user?.id]);
   // The lesson whose switch failed to save, to say so beside it.
   const [choiceFailed, setChoiceFailed] = useState(null);
+  // A heading among the lessons (Basic Lessons) folds its own list away. Open
+  // unless the student folded it, and never folded over the lesson they're in.
+  const [closedGroups, setClosedGroups] = useState(() => new Set());
+  const toggleGroup = (title) => setClosedGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(title)) next.delete(title); else next.add(title);
+    return next;
+  });
   const setLessonChoice = useCallback(async (id, on) => {
     const was = lessonChoicesRef.current[id];
     const next = { ...lessonChoicesRef.current, [id]: on };
@@ -2526,17 +2534,39 @@ export default function FlashcardApp({ user, onSignOut }) {
                   under it as a sub-item, so picking one is a single click
                   rather than a trip through the catalogue. Not on the rail,
                   which has no room to nest anything. */}
-              {m === "lessons" && !sidebarMin && lessonsOpen && LESSONS.map((lesson) => {
-                const on = mode === "study" && lessonFilter === lesson.id;
+              {m === "lessons" && !sidebarMin && lessonsOpen && LESSON_GROUPS.map((group) => {
+                const inside = group.lessons.some((l) => mode === "study" && lessonFilter === l.id);
+                const closed = group.title && closedGroups.has(group.title) && !inside;
+                const base = group.title ? { ...S.sideSubItem, ...S.sideSubItemNested } : S.sideSubItem;
                 return (
-                  <button
-                    key={lesson.id}
-                    style={on ? {...S.sideSubItem, ...S.sideSubItemActive} : S.sideSubItem}
-                    onClick={() => enterLesson(lesson.id)}
-                    title={`Study ${lesson.title}`}
-                  >
-                    {lesson.title}
-                  </button>
+                  <Fragment key={group.title || "lessons"}>
+                    {group.title && (
+                      <button
+                        style={S.sideGroup}
+                        onClick={() => toggleGroup(group.title)}
+                        aria-expanded={!closed}
+                        data-lesson-group={group.title}
+                      >
+                        {group.title}
+                        <span style={closed ? S.sideChevron : { ...S.sideChevron, ...S.sideChevronOpen }} aria-hidden="true">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                        </span>
+                      </button>
+                    )}
+                    {!closed && group.lessons.map((lesson) => {
+                      const on = mode === "study" && lessonFilter === lesson.id;
+                      return (
+                        <button
+                          key={lesson.id}
+                          style={on ? {...base, ...S.sideSubItemActive} : base}
+                          onClick={() => enterLesson(lesson.id)}
+                          title={`Study ${lesson.title}`}
+                        >
+                          {lesson.title}
+                        </button>
+                      );
+                    })}
+                  </Fragment>
                 );
               })}
             </Fragment>
@@ -2812,7 +2842,10 @@ export default function FlashcardApp({ user, onSignOut }) {
         <main style={mainStyle}>
           <div style={S.mainInnerScroll}>
             <h1 style={S.statsHeading}>Lessons</h1>
-            {LESSONS.map((lesson) => {
+            {LESSON_GROUPS.map((group) => (
+              <Fragment key={group.title || "lessons"}>
+              {group.title && <h2 style={S.lessonGroupHeading} data-lesson-group-heading>{group.title}</h2>}
+              {group.lessons.map((lesson) => {
               const owned = userCards.filter((c) => lessonIdOf(c) === lesson.id);
               const added = owned.length > 0;
               // A lesson card whose front the deck already had as its own is
@@ -2884,6 +2917,8 @@ export default function FlashcardApp({ user, onSignOut }) {
                 </div>
               );
             })}
+              </Fragment>
+            ))}
           </div>
         </main>
         {modals}
@@ -2968,7 +3003,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       };
     })();
     const areaRows = [
-      ...LESSONS.filter((l) => areas.lessons[l.id]?.total > 0)
+      ...LESSONS_SHOWN.filter((l) => areas.lessons[l.id]?.total > 0)
         .map((l) => ({ key: `lesson:${l.id}`, label: l.title, sub: "Lesson", summary: areas.lessons[l.id] })),
       { key: "recent", label: AREA_LABEL.recent, sub: areaSpan.recent, summary: areas.recent },
       { key: "earlier", label: AREA_LABEL.earlier, sub: areaSpan.earlier, summary: areas.earlier },
@@ -4761,6 +4796,9 @@ const S = {
   // shorthand base plus a longhand override strands the old value when the
   // item deactivates.
   sideSubItem: { display:"block", width:"100%", padding:"7px 32px 7px 64px", border:"none", borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:500, color:"rgba(3,22,50,0.55)", textAlign:"left", boxSizing:"border-box" },
+  // A lesson under a heading (Basic Lessons) sits one step further in.
+  sideSubItemNested: { paddingLeft:80 },
+  sideGroup: { display:"flex", alignItems:"center", width:"100%", padding:"9px 32px 5px 64px", border:"none", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.7)", textAlign:"left", boxSizing:"border-box" },
   sideSubItemActive: { color:T.color.secondary, fontWeight:700, borderRightColor:T.color.secondary, background:"rgba(255,255,255,0.5)" },
   sideItem: { display:"flex", alignItems:"center", gap:14, padding:"14px 32px", border:"none", borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRightWidth:4, borderRightStyle:"solid", borderRightColor:"transparent", background:"transparent", cursor:"pointer", fontFamily:T.font.sans, fontSize:13, fontWeight:600, color:"rgba(3,22,50,0.6)", textTransform:"uppercase", letterSpacing:"0.1em", textAlign:"left", transition:"all 0.2s" },
   // Minimized: the item is just its icon, centred in the rail. The right-edge
@@ -5092,6 +5130,7 @@ const S = {
   // The lesson you are in, set as a title rather than a pill: it names where
   // you are, and the only pill-shaped things in this row are controls.
   lessonName: { fontFamily:T.font.serif, fontSize:15, fontWeight:600, color:T.color.primary, whiteSpace:"nowrap", letterSpacing:"-0.01em", flexShrink:0 },
+  lessonGroupHeading: { fontSize:20, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, margin:"32px 0 14px" },
   lessonCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card, maxWidth:720 },
   lessonHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16 },
   lessonTitle: { fontSize:18, fontFamily:T.font.serif, color:T.color.onSurface, marginBottom:4 },

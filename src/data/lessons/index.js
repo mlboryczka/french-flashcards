@@ -12,6 +12,7 @@
 
 import imperatif from "./imperatif.js";
 import adverbes from "./adverbes.js";
+import lecon1 from "./lecon1.js";
 import lecon2 from "./lecon2.js";
 import lecon3 from "./lecon3.js";
 import lecon4 from "./lecon4.js";
@@ -32,9 +33,27 @@ export {
 
 // New lessons go at the end: a lesson's place here is part of every one of its
 // cards' rank (lessonRank), so inserting one would reorder the lessons before it.
-export const LESSONS = [imperatif, adverbes, lecon2, lecon3, lecon4, lecon5];
+export const LESSONS = [imperatif, adverbes, lecon2, lecon3, lecon4, lecon5, lecon1];
 
 export const lessonById = (id) => LESSONS.find((l) => l.id === id) || null;
+
+// How the catalogue is shown: on the Lessons page, in the sidebar and on
+// Stats. Separate from LESSONS, whose order is part of every card's rank
+// (lessonRank), so that list only ever grows at the end. Laura's numbered
+// beginner lessons sit together under one heading, in number order, though
+// Leçon 1 was added after Leçons 2 to 5 (owner, 2026-10-06). A lesson in no
+// group comes first, without a heading.
+const GROUPS = [
+  { title: "Basic Lessons", ids: ["lecon1", "lecon2", "lecon3", "lecon4", "lecon5"] },
+];
+export const LESSON_GROUPS = (() => {
+  const grouped = new Set(GROUPS.flatMap((g) => g.ids));
+  return [
+    { title: null, lessons: LESSONS.filter((l) => !grouped.has(l.id)) },
+    ...GROUPS.map((g) => ({ title: g.title, lessons: g.ids.map(lessonById).filter(Boolean) })),
+  ].filter((g) => g.lessons.length > 0);
+})();
+export const LESSONS_SHOWN = LESSON_GROUPS.flatMap((g) => g.lessons);
 
 // Where a lesson card sits in the order a student should meet it, or null for
 // a card that isn't a lesson card (or no longer matches one). Lower comes
