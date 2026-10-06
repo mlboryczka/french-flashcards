@@ -7,6 +7,11 @@
 // taught again keeps the card it has; nothing is ever deleted. The checks are
 // written from those, and the money one — how many Claude calls a run makes —
 // is counted at the wire, because that is what a student's teacher pays for.
+//
+// This suite's stand-in database is the one before migration_016: classes are
+// known by date, in the link row, as they always were. The record of lines
+// read that migration_016 adds, and everything the notes can do to it, is
+// tests/suites/repeats.mjs.
 
 import { createServer } from "node:http";
 import { checker } from "../check.mjs";
@@ -23,12 +28,31 @@ let claudeFails = false;
 // When set, the stand-in answers with exactly these cards instead — for
 // replaying what the real model does with a class's grammar section.
 let claudeReply = null;
+// Claude's same-or-different question about look-alike cards
+// (api/_lib/sameCardQuestion.js): the same French word is one card, and so
+// are these pairs; any other pair is two.
+const ONE_CARD = new Set(["le cas | un cas"]);
+const oneCard = (a, b) => a === b || ONE_CARD.has([a, b].sort().join(" | "));
+let questions = 0;
 const claude = createServer((req, res) => {
   claudeCalls++;
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     if (claudeFails) { res.writeHead(500, { "content-type": "application/json" }); return res.end('{"error":"nope"}'); }
+    const json = JSON.parse(body || "{}");
+    if (String(json.system || "").includes("keep one flashcard for each thing they learn")) {
+      claudeCalls--;
+      questions++;
+      const pairs = [...json.messages[0].content.matchAll(/Pair (\d+)\n {2}A: (".*?") = ".*?"\n {2}B: (".*?") = /g)]
+        .map((m) => ({ pair: Number(m[1]), a: JSON.parse(m[2]), b: JSON.parse(m[3]) }));
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({
+        id: "msg", type: "message", role: "assistant", model: "test",
+        content: [{ type: "text", text: JSON.stringify({ verdicts: pairs.map((p) => ({ pair: p.pair, verdict: oneCard(p.a, p.b) ? "same" : "different" })) }) }],
+        stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 },
+      }));
+    }
     // The shape the real model is asked for: a bare JSON array of cards.
     // The block text arrives inside a JSON string, so stop at the first thing
     // that isn't a letter rather than at whitespace.
@@ -95,13 +119,20 @@ function fakeAdmin(tables) {
       q.range = (a, b) => { q._range = [a, b]; return q; };
       q.maybeSingle = async () => { const { data } = await run(); return { data: data[0] || null, error: null }; };
       q.then = (resolve, reject) => run().then(resolve, reject);
-      q.update = (patch) => ({
-        eq: async (col, val) => {
-          const hit = rows().filter((r) => r[col] === val);
-          for (const r of hit) Object.assign(r, patch);
-          return { error: null, count: hit.length };
-        },
-      });
+      // An update takes any number of filters, and runs when awaited.
+      q.update = (patch) => {
+        const filters = [];
+        const u = {
+          eq: (col, val) => { filters.push([col, val]); return u; },
+          in: (col, val) => { filters.push([col, val, "in"]); return u; },
+          then: (resolve, reject) => {
+            const hit = rows().filter((r) => match(r, filters));
+            for (const r of hit) Object.assign(r, patch);
+            return Promise.resolve({ error: null, count: hit.length }).then(resolve, reject);
+          },
+        };
+        return u;
+      };
       q.upsert = (payload, opts = {}) => {
         const list = Array.isArray(payload) ? payload : [payload];
         const keys = (opts.onConflict || "id").split(",");
@@ -116,6 +147,7 @@ function fakeAdmin(tables) {
           const absent = (REQUIRED[name] || []).find((k) => row[k] === undefined || row[k] === null);
           if (absent) { missing.push(`null value in column "${absent}" of relation "${name}" violates not-null constraint`); continue; }
           const found = rows().find((r) => keys.every((k) => r[k] === row[k]));
+          if (found && opts.ignoreDuplicates) continue;
           if (found) { Object.assign(found, row); written.push(found); continue; }
           rows().push({ id: rows().length + 1000, ...row });
           written.push(rows()[rows().length - 1]);
@@ -131,6 +163,8 @@ function fakeAdmin(tables) {
       };
       return q;
     },
+    // The database before migration_016 has neither of its functions.
+    rpc: async (name) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } }),
   };
 }
 
@@ -207,7 +241,7 @@ console.log("\n  a word taught again keeps the card the student has");
   doc.text = cahier([[12, "septembre", "alpha"]]);
   const r = await run(admin);
   const card = deck(admin).find((c) => c.front === "alpha");
-  ck("no second card for the same word", deck(admin).filter((c) => c.front === "alpha").length === 1, `${deck(admin).length} cards`);
+  ck("no second card for the same word, under any spelling or label", deck(admin).length === 1, deck(admin).map((c) => c.front).join(" | "));
   ck("its answer is left exactly as it was", card.back === "an answer the student edited", card.back);
   ck("but the new class is added to the classes it came up in",
      JSON.stringify(card.dates) === '["2026-01-10","2026-09-12"]', JSON.stringify(card.dates));
@@ -232,6 +266,7 @@ console.log("\n  a word the deck has written another way is not added again");
     cahier_links: [{ user_id: USER, doc_id: "DOC1", doc_url: URL_1, classes: {} }],
   });
   doc.text = cahier([[14, "septembre", "sosies"]]);
+  questions = 0;
   claudeReply = [
     { front: "gratuit (adj)", back: "free; complimentary", category: "V" },
     { front: "un cas", back: "a case", category: "V" },
@@ -252,10 +287,17 @@ console.log("\n  a word the deck has written another way is not added again");
   ck("a different meaning behind a tag still arrives: planter (fam)", fronts.includes("planter (fam)"));
   ck("a different gender still arrives: la poste beside le poste", fronts.includes("la poste"));
   ck("the same spelling with a different English still arrives: fin (adj) beside fin (the end)", fronts.includes("fin (adj)"));
-  ck("a card taken out of study is not what a new one joins", fronts.includes("occupé (adj)"));
+  // Since 2026-10-06 a card out of study is still a card the student has: a
+  // later class with the word adds its date, and the card stays out. It used
+  // to be skipped, so "occupé (adj)" arrived beside the archived "occupé",
+  // and a card the student had deleted came back the same way.
+  ck("a card taken out of study is still the card: no new one beside it", !fronts.includes("occupé (adj)"), fronts.join(" | "));
+  ck("it gains the class date and stays out of study",
+     dates("occupé").includes("2026-09-14") && deck(admin).find((c) => c.front === "occupé").source === "archived:cahier-upload", dates("occupé"));
   ck("two spellings in the same class make one card", fronts.filter((f) => f === "un souci" || f === "le souci").length === 1,
      fronts.filter((f) => /souci/.test(f)).join(" | "));
-  ck("and they are counted as seen again, not as new", r.cardsSeenAgain === 2 && r.cardsAdded === 5, JSON.stringify({ added: r.cardsAdded, again: r.cardsSeenAgain }));
+  ck("the look-alikes that differ were put to Claude, and kept", questions === 1, `${questions} questions`);
+  ck("and they are counted as seen again, not as new", r.cardsSeenAgain === 3 && r.cardsAdded === 4, JSON.stringify({ added: r.cardsAdded, again: r.cardsSeenAgain }));
 }
 
 console.log("\n  a class's grammar rules and sound notes never reach the deck");

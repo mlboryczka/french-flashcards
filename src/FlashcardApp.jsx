@@ -293,11 +293,27 @@ function uploadDoneText({ cardsInserted = 0, datesCovered = 0 }) {
 }
 
 // Cards an upload couldn't save. Said plainly: the upload once reported
-// success with 500 of its cards missing.
+// success with 500 of its cards missing. A line is read once, so uploading
+// the same notes again doesn't retry it; changing the line does.
 function uploadFailedText({ cardsFailed = 0, failedFronts = [] } = {}) {
   if (!cardsFailed) return "";
   const example = failedFronts[0] ? ` (for example "${failedFronts[0]}")` : "";
-  return `\n\n${cardsFailed} ${cardsFailed === 1 ? "card" : "cards"} couldn't be saved${example}. Uploading the same cahier again retries them, and keeps your progress.`;
+  return `\n\n${cardsFailed} ${cardsFailed === 1 ? "card" : "cards"} couldn't be saved${example}. Check that line in your notes: once it is changed, the next upload reads it again.`;
+}
+
+// What an upload did, in classes, said plainly (2026-10-06). An upload reads
+// only lines it hasn't read before, so an unchanged one adds nothing.
+function uploadResultText(r = {}) {
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const lines = [];
+  if (r.cardsInserted) lines.push(`${n(r.cardsInserted, "new card", "new cards")} added to your deck.`);
+  else lines.push("No new cards: everything in these notes is already in your deck.");
+  if (r.classesUnchanged) lines.push(`${n(r.classesUnchanged, "class was", "classes were")} already read and left as they are.`);
+  if (r.cardsSeenAgain) lines.push(`${n(r.cardsSeenAgain, "word you already have", "words you already have")} got the new class date.`);
+  if (r.cardsWaiting) lines.push(`${n(r.cardsWaiting, "card waits", "cards wait")} until your next upload: they look like cards you have, and that couldn't be checked this time.`);
+  if (r.keptOutOfStudy) lines.push(`${n(r.keptOutOfStudy, "card is", "cards are")} from classes not in this upload: out of study now, with their progress kept.`);
+  if (r.broughtBack) lines.push(`${n(r.broughtBack, "card", "cards")} taken out by an earlier replace came back.`);
+  return `Done!\n\n${lines.join("\n")}${uploadFailedText(r)}`;
 }
 
 function cahierArrivalText({ dates = [], cards = 0 } = {}) {
@@ -2439,10 +2455,27 @@ export default function FlashcardApp({ user, onSignOut }) {
     return true;
   };
 
+  // Removing a card takes it out of study and remembers why; it never erases
+  // it (api/_lib/removeCard.js, 2026-10-06). Deleting the row used to delete
+  // every answer on it too, and nothing then stopped the next upload, or a
+  // later class with the same word, from making the card again.
   const deleteCard = async (rowId) => {
-    const { error } = await supabase.from("user_cards").delete().eq("id", rowId);
-    if (error) {
-      console.error("Card delete failed:", error);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin-update-card", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || ""}` },
+        body: JSON.stringify({ action: "remove", row_id: rowId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        console.error("Card removal failed:", body);
+        alert(body.error || `The card couldn't be removed (HTTP ${res.status}).`);
+        return false;
+      }
+    } catch (e) {
+      console.error("Card removal failed:", e);
+      alert(`The card couldn't be removed: ${e.message || e}`);
       return false;
     }
     // Reset answer state so the card that slides into this idx position on
@@ -2597,12 +2630,7 @@ export default function FlashcardApp({ user, onSignOut }) {
             setShowUpload(false);
             reloadDeck();
             if (result.linked) return alert(uploadDoneText(result));
-            alert(
-              `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
-              (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
-              (result.polysemySplits ? `${result.polysemySplits} polysemy splits.\n` : "") +
-              uploadFailedText(result)
-            );
+            alert(uploadResultText(result));
           }}
         />
       </div>
@@ -2971,14 +2999,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           setShowUpload(false);
           reloadDeck();
           if (result.linked) return alert(uploadDoneText(result));
-          alert(
-            `Done!\n\n${result.cardsInserted} cards across ${result.datesCovered} lessons.\n` +
-            (result.conjugationDrillsGenerated ? `${result.conjugationDrillsGenerated} conjugation drills generated.\n` : "") +
-            (result.polysemySplits ? `${result.polysemySplits} polysemy splits.\n` : "") +
-            (result.keptOutOfStudy ? `\n${result.keptOutOfStudy} cards you'd studied weren't in this upload: they're out of study, with their progress kept.` : "") +
-            (result.removed ? `\n${result.removed} cards you'd never studied weren't in this upload and were removed.` : "") +
-            uploadFailedText(result)
-          );
+          alert(uploadResultText(result));
         }}
       />
       {showFeedbackModal && (
@@ -3009,7 +3030,7 @@ export default function FlashcardApp({ user, onSignOut }) {
             return ok;
           }}
           onDelete={async () => {
-            if (!confirm("Delete this card? This cannot be undone.")) return;
+            if (!confirm("Remove this card from your deck? Your answers on it are kept, and the same word in your notes won't bring it back.")) return;
 
             // Prompt admin for a correction category. Default to
             // duplicate_detected since that's by far the most common
@@ -3037,8 +3058,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               ? categoryInput.trim()
               : "duplicate_detected";
 
-            // Log BEFORE deleting — the original front/back are lost once
-            // the row is gone.
+            // Logged first, as the removal is a correction of Claude's reading.
             logCorrection({
               category,
               action: CORRECTION_ACTIONS.DELETE,
@@ -4485,7 +4505,7 @@ function EditCardModal({ card, onClose, onSave, onDelete }) {
         />
         {error && <div style={EM.error}>{error}</div>}
         <div style={EM.footer}>
-          <button style={EM.deleteBtn} onClick={onDelete} disabled={saving}>Delete card</button>
+          <button style={EM.deleteBtn} onClick={onDelete} disabled={saving}>Remove card</button>
           <div style={{flex:1}} />
           <button style={EM.cancelBtn} onClick={onClose} disabled={saving}>Cancel</button>
           <button style={EM.saveBtn} onClick={handleSave} disabled={saving}>

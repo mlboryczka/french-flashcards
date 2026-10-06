@@ -393,29 +393,36 @@ console.log("\n  lessons — every released card still matches its lesson");
 }
 
 // "Replace my existing deck" deleted the whole deck before adding the upload,
-// and every answer with it: one tick wiped a student's history. The deck
-// still becomes the upload, but nothing answered is ever deleted.
-console.log("\n  replacing the deck never deletes a card the student has answered");
+// and every answer with it: one tick wiped a student's history. Then it
+// matched cards by their exact French and deleted those never answered. Since
+// 2026-10-06 it works by class and deletes nothing: a card with none of its
+// classes in the upload leaves study, marked "replaced", and comes back when a
+// later Replace has its class again.
+console.log("\n  replacing the deck works by class and never deletes a card");
 {
-  const row = (id, front, extra = {}) => ({ id, front, source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0, ...extra });
+  const row = (id, front, dates, extra = {}) => ({ id, front, dates, source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0, ...extra });
   const existing = [
-    row(1, "une colline"),                                         // in the upload
-    row(2, "le vélo", { fsrs_state: 2 }),                          // answered, in the upload
-    row(3, "chercher", { en_fsrs_state: 2 }),                      // answered one way, not in the upload
-    row(4, "ouvrir"),                                              // never answered, not in the upload
-    row(5, "parler → tu", { source: lessonSource("imperatif", "k"), fsrs_state: 2 }),
-    row(6, "fermer", { source: "lesson:adverbes" }),
-    row(7, "occupé", { source: "archived:cahier-upload", fsrs_state: 2 }),
-    row(8, "grimper", { source: "tutor-chat" }),
+    row(1, "une colline", ["2026-01-05"]),                                   // its class is in the upload
+    row(2, "le vélo", ["2026-01-05", "2026-02-05"], { fsrs_state: 2 }),        // one of its classes is
+    row(3, "chercher", ["2026-02-05"], { en_fsrs_state: 2 }),                 // answered, its class isn't
+    row(4, "ouvrir", ["2026-02-05"]),                                        // never answered, its class isn't
+    row(5, "parler → tu", [], { source: lessonSource("imperatif", "k"), fsrs_state: 2 }),
+    row(6, "grimper", [], { source: "tutor-chat" }),
+    row(7, "occupé", ["2026-02-05"], { source: "archived:cahier-upload", archived_reason: "removed" }),
+    row(8, "fermer", ["2026-01-05"], { source: "archived:cahier-upload", archived_reason: "replaced" }),
+    row(9, "partir", ["2026-03-05"], { source: "archived:cahier-upload", archived_reason: "replaced" }),
   ];
-  const plan = planReplace(existing, ["une colline", "le vélo", "un mot nouveau"]);
-  ck("a card the upload also has is left for the upload to update", !plan.remove.includes(1) && !plan.archive.some((r) => r.id === 1) && !plan.archive.some((r) => r.id === 2));
-  ck("an answered card the upload doesn't have is kept, out of study", plan.archive.map((r) => r.id).join(",") === "3", plan.archive.map((r) => r.id).join(","));
-  ck("a never-answered card the upload doesn't have is removed", plan.remove.join(",") === "4,8", plan.remove.join(","));
-  ck("lesson cards and cards already archived are left alone", ![5, 6, 7].some((id) => plan.remove.includes(id) || plan.archive.some((r) => r.id === id)));
-  const afterReset = planReplace(existing, ["une colline"], new Set([4]));
-  ck("a card reset to never answered but with answers on record is kept, not deleted with them",
-     afterReset.archive.some((r) => r.id === 4) && !afterReset.remove.includes(4), `remove ${afterReset.remove.join(",")}`);
+  const plan = planReplace(existing, ["2026-01-05"]);
+  const out = plan.archive.map((r) => r.id).join(",");
+  ck("a card with a class in the upload stays", !plan.archive.some((r) => r.id === 1 || r.id === 2));
+  ck("a card with none of its classes in the upload leaves study, answered or not", out === "3,4", out);
+  ck("nothing is ever deleted", !("remove" in plan));
+  ck("lesson and tutor cards are left alone", !plan.archive.some((r) => r.id === 5 || r.id === 6));
+  ck("a card a Replace took out comes back when its class is in the upload", plan.restore.map((r) => r.id).join(",") === "8",
+     plan.restore.map((r) => r.id).join(","));
+  ck("a card the student removed never does", !plan.restore.some((r) => r.id === 7));
+  const blind = planReplace(existing, ["2026-01-05"], { reasons: false });
+  ck("before migration_016, when the reason isn't known, nothing comes back", blind.restore.length === 0);
 }
 
 // A lesson may reword a card. The reworded card must keep its row — and its
@@ -569,44 +576,49 @@ console.log("\n  archive — out of circulation, recoverable");
   }
 }
 
-// ── Cahier parser: one card per front ──────────────────────────────────────
+// ── Cahier parser: one card per thing to learn, inside one reading ──────────
 // The deck holds one card per front, and a save holding two is refused whole.
 // On 2026-09-25 "pas aussi … que" ("not as … as"), taught in three classes,
-// became three identical cards — a gloss made only of small words scored 0%
-// alike even against itself — and the upload lost the 499 cards saved
-// alongside them while reporting success. Self-contained, like the block above.
+// became three identical cards and the upload lost the 499 cards saved
+// alongside them. Since 2026-10-06 the merge inside one reading is the rule
+// every card-writer uses (src/lib/sameCard.js); what it can't settle is put
+// to Claude by the matcher, and only a "different" answer makes a label
+// (src/lib/cardMatch.js, tested with a stand-in Claude in the repeats suite).
 {
-  const { dedupeWithPolysemy } = await import("../../api/parse-cahier.js");
+  const { mergeRepeats } = await import("../../api/parse-cahier.js");
+  const { matchNewCards, plannedWrites } = await import("../../src/lib/cardMatch.js");
   const V = (front, back, date) => ({ front, back, category: "V", dates: [date] });
-  const fronts = (r) => r.deduped.map((c) => c.front);
-  const unique = (r) => new Set(fronts(r).map((f) => f.toLowerCase())).size === r.deduped.length;
 
-  console.log("\n  cahier parser — one card per front");
-  const same = dedupeWithPolysemy([
+  console.log("\n  cahier parser — one card per thing to learn");
+  const same = mergeRepeats([
     V("pas aussi … que", "not as … as", "2026-02-11"),
     V("pas aussi … que", "not as … as", "2026-03-02"),
     V("pas aussi … que", "not as … as", "2026-03-20"),
   ]);
   ck("a word taught in three classes, glossed only in small words, is one card with all three dates",
-     same.deduped.length === 1 && same.deduped[0].front === "pas aussi … que" &&
-       same.deduped[0].dates.length === 3 && same.splits === 0,
-     JSON.stringify(same));
+     same.length === 1 && same[0].front === "pas aussi … que" && same[0].dates.length === 3, JSON.stringify(same));
 
-  const little = dedupeWithPolysemy([V("alors", "so", "2026-01-05"), V("alors", "then", "2026-02-05")]);
-  ck("two small-word glosses of one little word are one card, not two senses",
-     little.deduped.length === 1 && little.splits === 0, JSON.stringify(little));
+  const spelt = mergeRepeats([V("soulagé (adj)", "relieved", "2026-01-05"), V("Soulagé", "relieved", "2026-02-05"), V("Je pars.", "I'm leaving", "2026-01-05"), V("je pars", "I'm leaving", "2026-02-05")]);
+  ck("the same word spelt two ways in two classes is one card, the first spelling kept",
+     spelt.length === 2 && spelt[0].front === "soulagé (adj)" && spelt[0].dates.length === 2 && spelt[1].front === "Je pars.", JSON.stringify(spelt.map((c) => c.front)));
 
-  const senses = dedupeWithPolysemy([V("si", "if", "2026-01-05"), V("si", "yes, contradicting a negative question", "2026-02-05")]);
-  ck("a small-word gloss against a real one is still two senses, on two different fronts",
-     senses.deduped.length === 2 && senses.splits === 1 && unique(senses), JSON.stringify(fronts(senses)));
+  const assis = mergeRepeats([V("être assis", "to be seated", "2026-01-05"), V("être assis", "to be sitting", "2026-02-05")]);
+  ck("the same word with English worded differently is not split into labelled cards by the merge", assis.every((c) => c.front === "être assis"),
+     JSON.stringify(assis.map((c) => c.front)));
+  const asked = [];
+  const sameAnswer = await matchNewCards({ incoming: assis, deck: [], ask: async (pairs) => { asked.push(...pairs); return pairs.map(() => "same"); } });
+  const one = plannedWrites(sameAnswer.decisions);
+  ck("Claude is asked, and \"same\" makes one card with both dates", asked.length === 1 && one.inserts.length === 1 && one.inserts[0].dates.length === 2,
+     JSON.stringify(one.inserts));
 
-  const sameLabel = dedupeWithPolysemy([
-    V("mener", "to run a business or an organisation", "2026-01-05"),
-    V("mener", "to run a race across the whole park", "2026-02-05"),
-  ]);
-  ck("two senses whose labels come out the same are one card, never two with one front",
-     sameLabel.deduped.length === 1 && unique(sameLabel) && sameLabel.deduped[0].dates.length === 2,
-     JSON.stringify(sameLabel));
+  const senses = [V("voler", "to steal", "2026-01-05"), V("voler", "to fly", "2026-02-05")];
+  const apart = plannedWrites((await matchNewCards({ incoming: senses, deck: [], ask: async (pairs) => pairs.map(() => "different") })).decisions);
+  ck("\"different\" makes two cards, and never two with one front", apart.inserts.map((c) => c.front).join(" | ") === "voler | voler (to fly)",
+     apart.inserts.map((c) => c.front).join(" | "));
+
+  const failed = await matchNewCards({ incoming: senses, deck: [], ask: async () => { throw new Error("down"); } });
+  ck("no answer: the card waits rather than being added on a guess", failed.decisions.filter((d) => d.action === "wait").length === 1,
+     JSON.stringify(failed.decisions.map((d) => d.action)));
 }
 
 // ── Which lessons come up on Cards ─────────────────────────────────────────

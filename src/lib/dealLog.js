@@ -19,6 +19,11 @@ const cardIdOf = (c) => c.row_id ?? c.id;
 // cache": the database hasn't had migration_013 yet.
 export const missingTable = (error) => !!error && (error.code === "42P01" || error.code === "PGRST205");
 
+// The same for a database function: PostgREST's "not in the schema cache", or
+// Postgres's "no such function". The reading of notes is saved through one
+// (migration_016), and the app keeps working before it is run.
+export const missingFunction = (error) => !!error && (error.code === "PGRST202" || error.code === "42883");
+
 // One entry dealt: the card, the way round, why it was dealt, and the card's
 // state that way round as the app read it.
 function dealtItem(c) {

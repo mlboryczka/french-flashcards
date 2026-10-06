@@ -3,10 +3,12 @@
 // Keeps a student's deck in step with the cahier they and Laura actually
 // write in: a Google Doc, one dated block per class, newest at the top.
 //
-// The upload flow parses a whole notebook once. This reads the same doc
-// repeatedly and turns ONLY the classes it has not seen before into cards.
-// What it has seen is remembered per class in cahier_links.classes
-// (migration_011), as a fingerprint of that class's text.
+// It reads the same doc again and again and turns ONLY lines it has not read
+// before into cards. What a student's notes have had read is one record per
+// student, line by line (notes_read, migration_016; src/lib/notesLines.js),
+// shared with the upload, so neither reads a line the other already read.
+// Before migration_016 it is remembered per class, by date, in
+// cahier_links.classes (migration_011), as it always was.
 //
 // Request body (all optional):
 //   { url }      link or relink a doc, then sync it
@@ -22,16 +24,22 @@
 //   1. New classes become cards immediately. They enter the deck as new cards
 //      and the scheduler deals with them like any other: due work first, new
 //      cards in the room that is left, most recent class first.
-//   2. A class already read is never read again. Editing or deleting a line in
-//      an old class changes nothing — those cards carry the student's own
-//      history, and rewriting them behind their back is worse than a stale
-//      card. A class is fingerprinted so a change is *noticed*, but nothing is
-//      done about it.
+//   2. A line already read is never read again, and no card the student has
+//      is ever rewritten: those cards carry their own history. Since
+//      2026-10-06 (the plan the owner approved: "there should be NO duplicates
+//      from reuploading an updated cahier") a line added to an old class, or a
+//      corrected one, is read once, on its own; its card then goes through the
+//      matching rule below, so a fixed typo adds nothing. Deleting a line
+//      changes nothing.
 //   3. A word taught again in a later class keeps the card it already has.
 //      Only its class dates are added to (the deck's own record of how often a
 //      word came up, which orders new cards). The existing front and back are
-//      left exactly as they are, edits included — this is the one place the
-//      upload path differs, since a re-upload deliberately rewrites them.
+//      left exactly as they are, edits included. The upload does the same
+//      since 2026-10-06; it used to rewrite them.
+//
+// What counts as "the card it already has" is src/lib/sameCard.js's rule,
+// against every card the student has, archived, removed and lesson cards
+// included, with near look-alikes put to Claude (src/lib/cardMatch.js).
 //
 // The Anthropic key is the deploy owner's, not the student's: a class is a few
 // hundred words and this runs unattended, including from the daily check,
@@ -43,8 +51,9 @@ import { createHash } from "node:crypto";
 
 import { requireUser, isAdmin } from "./_lib/auth.js";
 import { handleNotesChecks, supabaseNotesStore } from "./_lib/notesChecks.js";
-import { sameCardKey, findSameCard } from "../src/lib/sameCard.js";
-import { isArchived } from "../src/lib/archive.js";
+import { planReading, readDatesFrom } from "../src/lib/notesLines.js";
+import { claimReading, releaseReading, readDeck, saveRun } from "./_lib/notesReading.js";
+import { askSameCard } from "./_lib/sameCardQuestion.js";
 import {
   fetchGoogleDoc,
   sliceIntoBlocks,
@@ -129,7 +138,9 @@ export default async function handler(req, res) {
 
 // The whole sync for one student. Exported so the daily check can call it for
 // every linked doc without going back through HTTP.
-export async function syncUser({ admin, apiKey, userId, url, limit, force = false, now = new Date() }) {
+//
+// `ask` replaces Claude's same-or-different question; only tests pass it.
+export async function syncUser({ admin, apiKey, userId, url, limit, force = false, now = new Date(), ask = null }) {
   const take = Math.min(Math.max(1, Number(limit) || DEFAULT_LIMIT), MAX_LIMIT);
 
   let link = await loadLink(admin, userId);
@@ -138,8 +149,9 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     if (!docId) {
       return { ok: false, error: "That isn't a Google Doc link. It should look like https://docs.google.com/document/d/..." };
     }
-    // A different doc starts again: what was read from the old one says
-    // nothing about this one.
+    // A different doc starts again from the classes the deck has. After
+    // migration_016 this matters little: what was read is the student's
+    // record (notes_read), whichever doc it came from.
     const classes = link && link.doc_id === docId ? link.classes || {} : await classesAlreadyInDeck(admin, userId);
     link = await linkDoc(admin, {
       user_id: userId, doc_id: docId, doc_url: url, classes, last_error: null,
@@ -172,63 +184,112 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     return { ok: false, linked: true, error: message };
   }
 
-  const seen = link.classes || {};
-  // Newest first: the class you were taught yesterday is worth more than one
-  // from last spring, and it is the one you expect to see.
-  const unseen = blocks.filter((b) => !(b.date in seen)).sort((a, b) => (a.date < b.date ? 1 : -1));
-  const batch = unseen.slice(0, take);
-
-  if (batch.length === 0) {
-    await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: null });
+  // One reading of a student's notes at a time: the daily check and opening
+  // the app, or two devices, used to read the same new class at once.
+  const reading = await claimReading(admin, { userId, kind: "sync" });
+  if (reading.busy) {
     return {
-      ok: true, linked: true, checkedAt: now.toISOString(), newClasses: [],
-      cardsAdded: 0, remaining: 0, lastResult: link.last_result || null,
+      ok: true, linked: true, skipped: "your notes are being read already",
+      checkedAt: link.last_checked_at || null, newClasses: [], cardsAdded: 0,
+      remaining: null, lastResult: link.last_result || null,
     };
   }
+  try {
+    const seen = link.classes || {};
+    // What counts as read where the record has no lines for a class: after
+    // migration_016, a class whose date is on any card or that this link read;
+    // before it, only what this link read, as it always was. The deck is read
+    // only when that question comes up or there is something to read: on most
+    // days the daily check finds every class in the record and stops there.
+    const unknown = blocks.some((b) => !Array.isArray(reading.classes?.[b.date]) && !(b.date in seen));
+    let deck = reading.mode === "lines" && unknown ? await readDeck(admin, userId) : null;
+    const readDates = reading.mode === "lines" ? readDatesFrom(deck?.rows || [], seen) : new Set(Object.keys(seen));
+    const plan = planReading({ blocks, classes: reading.classes, readDates });
+    // Newest first: the class you were taught yesterday is worth more than one
+    // from last spring, and it is the one you expect to see.
+    const unread = plan.filter((p) => p.needsReading).sort((a, b) => (a.date < b.date ? 1 : -1));
+    const batch = unread.slice(0, take);
 
-  const anthropic = new Anthropic({ apiKey });
-  const errors = [];
-  const raw = [];
-  const results = await Promise.all(
-    batch.map((b) => extractCardsFromBlock(anthropic, b).catch((e) => ({ error: e.message, block: b })))
-  );
-  const parsed = [];
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (r && r.error) errors.push({ date: batch[i].date, error: r.error });
-    else { raw.push(...r); parsed.push(batch[i]); }
+    if (batch.length === 0) {
+      // Nothing to read, but the record may have filled itself in.
+      if (reading.mode === "lines") {
+        const saved = await saveRun({
+          admin, userId, reading, deck: deck || { rows: [], hasReasons: false }, plan, incoming: [], read: new Set(), ask: async () => [], source: "sync",
+        });
+        if (!saved.ok) throw new Error(`Couldn't save which lines were read: ${saved.error}`);
+      }
+      await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: null });
+      return {
+        ok: true, linked: true, checkedAt: now.toISOString(), newClasses: [],
+        cardsAdded: 0, remaining: 0, lastResult: link.last_result || null,
+      };
+    }
+
+    const anthropic = new Anthropic({ apiKey });
+    const errors = [];
+    const raw = [];
+    const results = await Promise.all(
+      batch.map((p) =>
+        extractCardsFromBlock(anthropic, { date: p.date, text: p.text, newLines: p.partial ? p.newLines : null })
+          .catch((e) => ({ error: e.message }))
+      )
+    );
+    const parsed = [];
+    const failedDates = [];
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r && r.error) { errors.push({ date: batch[i].date, error: r.error }); failedDates.push(batch[i].date); }
+      else { raw.push(...r); parsed.push(batch[i]); }
+    }
+    // A class Claude could not read is left unread, so the next run tries it
+    // again rather than losing it silently.
+    if (parsed.length === 0) {
+      await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: errors[0]?.error || "Could not read that class" });
+      return { ok: false, linked: true, error: errors[0]?.error || "Could not read that class", errors };
+    }
+
+    const incoming = cardsFromExtracted(raw);
+    deck ||= await readDeck(admin, userId);
+    const result = await saveRun({
+      admin, userId, reading, deck, plan, incoming,
+      read: new Set(parsed.map((p) => p.date)), failedDates,
+      ask: ask || ((pairs) => askSameCard({ apiKey, pairs })),
+      source: "sync",
+    });
+    if (!result.ok) throw new Error(`Couldn't save the new cards: ${result.error}`);
+
+    // The classes read and saved, kept on the link as well: before
+    // migration_016 this is the only record, and after it the record is kept
+    // per line in notes_read.
+    const waiting = new Set(result.waitingDates);
+    const done = parsed.filter((p) => !waiting.has(p.date));
+    const classes = { ...seen };
+    for (const p of done) classes[p.date] = fingerprint(p.text);
+    const dates = done.map((p) => p.date).sort();
+    const lastResult = { at: now.toISOString(), dates, cards: result.added, updated: result.seenAgain };
+    await updateLink(admin, userId, {
+      classes,
+      last_checked_at: now.toISOString(),
+      last_synced_at: now.toISOString(),
+      last_error: null,
+      last_result: lastResult,
+    });
+
+    const remaining = unread.length - done.length;
+    console.log(`[cahier-sync] ${userId}: ${parsed.length} classes read (${reading.mode}) → ${result.added} new cards, ${result.seenAgain} seen again, ${result.waiting} waiting, ${result.questions} questions (${remaining} classes left)`);
+    return {
+      ok: true, linked: true, checkedAt: now.toISOString(),
+      newClasses: dates, cardsAdded: result.added, cardsSeenAgain: result.seenAgain,
+      cardsWaiting: result.waiting, cardsFailed: result.failed.length,
+      // Classes left waiting are tried again on the next run, not now: the
+      // question that failed would most likely fail again at once.
+      remaining: unread.length - parsed.length,
+      dateRange: dates.length ? [dates[0], dates[dates.length - 1]] : null,
+      errors,
+    };
+  } finally {
+    await releaseReading(admin, userId, reading.runId);
   }
-  // A class Claude could not read is left unseen, so the next run tries it
-  // again rather than losing it silently.
-  if (parsed.length === 0) {
-    await updateLink(admin, userId, { last_checked_at: now.toISOString(), last_error: errors[0]?.error || "Could not read that class" });
-    return { ok: false, linked: true, error: errors[0]?.error || "Could not read that class", errors };
-  }
-
-  const deduped = cardsFromExtracted(raw);
-
-  const written = await writeCards(admin, userId, deduped);
-
-  const classes = { ...seen };
-  for (const b of parsed) classes[b.date] = fingerprint(b.text);
-  const dates = parsed.map((b) => b.date).sort();
-  const lastResult = { at: now.toISOString(), dates, cards: written.added, updated: written.updated };
-  await updateLink(admin, userId, {
-    classes,
-    last_checked_at: now.toISOString(),
-    last_synced_at: now.toISOString(),
-    last_error: null,
-    last_result: lastResult,
-  });
-
-  console.log(`[cahier-sync] ${userId}: ${parsed.length} classes → ${written.added} new cards, ${written.updated} seen again (${unseen.length - parsed.length} classes left)`);
-  return {
-    ok: true, linked: true, checkedAt: now.toISOString(),
-    newClasses: dates, cardsAdded: written.added, cardsSeenAgain: written.updated,
-    remaining: unseen.length - parsed.length,
-    dateRange: dates.length ? [dates[0], dates[dates.length - 1]] : null,
-    errors,
-  };
 }
 
 async function loadLink(admin, userId) {
@@ -278,94 +339,4 @@ async function classesAlreadyInDeck(admin, userId) {
     if (!data || data.length < PAGE) break;
   }
   return classes;
-}
-
-// The deck's cards in study, by sameCardKey, for spotting a word the student
-// already has written another way.
-async function deckByKey(admin, userId) {
-  const byKey = new Map();
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await admin
-      .from("user_cards").select("id, front, back, dates, source").eq("user_id", userId)
-      .order("id", { ascending: true }).range(from, from + PAGE - 1);
-    if (error) throw new Error(`Couldn't read the deck: ${error.message}`);
-    for (const row of data || []) {
-      if (isArchived(row)) continue;
-      const k = sameCardKey(row.front);
-      if (!byKey.has(k)) byKey.set(k, []);
-      byKey.get(k).push(row);
-    }
-    if (!data || data.length < PAGE) break;
-  }
-  return byKey;
-}
-
-// Insert what is new; for a word the student already has, add the class date
-// and nothing else (rule 3 above).
-//
-// "Already has" includes the same word written another way: "gratuit (adj)"
-// when the deck has "gratuit", "un cas" when it has "le cas". Matching on the
-// exact front alone let a cahier sync add 18 such copies to the owner's deck
-// on 2026-09-25. What counts as the same card is narrow on purpose — see
-// src/lib/sameCard.js.
-async function writeCards(admin, userId, cards) {
-  const wanted = cards.filter((c) => c?.front && c?.back);
-  if (wanted.length === 0) return { added: 0, updated: 0 };
-
-  const existing = new Map();
-  const fronts = wanted.map((c) => c.front);
-  for (let i = 0; i < fronts.length; i += 200) {
-    const { data, error } = await admin
-      .from("user_cards").select("id, front, dates, source").eq("user_id", userId).in("front", fronts.slice(i, i + 200));
-    if (error) throw new Error(`Couldn't read the deck: ${error.message}`);
-    for (const row of data || []) existing.set(row.front, row);
-  }
-
-  // An exact match that is out of study (archived) gives way to a look-alike
-  // that is in it, so the class date lands on the card being studied.
-  const liveExact = (c) => { const r = existing.get(c.front); return r && !isArchived(r) ? r : null; };
-  const byKey = wanted.some((c) => !liveExact(c)) ? await deckByKey(admin, userId) : new Map();
-  const inserts = [];
-  const pending = new Set();
-  let updated = 0;
-  for (const c of wanted) {
-    const dates = Array.isArray(c.dates) ? c.dates : [];
-    const row = liveExact(c) || findSameCard(c, byKey) || existing.get(c.front);
-    if (!row) {
-      const insert = {
-        user_id: userId, front: c.front, back: c.back, category: c.category,
-        dates, source: c.source || "cahier-upload",
-      };
-      inserts.push(insert);
-      pending.add(insert);
-      // A second spelling later in the same run joins this one.
-      const k = sameCardKey(c.front);
-      if (!byKey.has(k)) byKey.set(k, []);
-      byKey.get(k).push(insert);
-      continue;
-    }
-    if (pending.has(row)) {
-      // One of this run's own inserts: it takes the class date too.
-      row.dates = [...new Set([...row.dates, ...dates])].sort();
-      continue;
-    }
-    const merged = [...new Set([...(Array.isArray(row.dates) ? row.dates : []), ...dates])].sort();
-    if (merged.length === (row.dates || []).length) continue;
-    const { error } = await admin.from("user_cards").update({ dates: merged }).eq("id", row.id);
-    if (error) throw new Error(`Couldn't update a card: ${error.message}`);
-    // Kept in step, in case another spelling in this run lands on it too.
-    row.dates = merged;
-    updated++;
-  }
-
-  let added = 0;
-  for (let i = 0; i < inserts.length; i += 500) {
-    const chunk = inserts.slice(i, i + 500);
-    const { error, count } = await admin
-      .from("user_cards").upsert(chunk, { onConflict: "user_id,front", count: "exact" });
-    if (error) throw new Error(`Couldn't add the new cards: ${error.message}`);
-    added += count || chunk.length;
-  }
-  return { added, updated };
 }

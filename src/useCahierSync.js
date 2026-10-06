@@ -109,6 +109,14 @@ export function useCahierSync(user) {
     sync();
   }, [loaded, link, userId, sync]);
 
+  // Unlinking removes only the link. What the student's notes have had read,
+  // line by line, is their own record (notes_read, migration_016), shared
+  // with uploads, so relinking, or linking a copy of the doc, reads only what
+  // is new. Unlink used to erase that record with the link row, and the next
+  // link read again any class none of whose cards were left (2026-10-06).
+  // Before migration_016 the link row is still the only record; since a
+  // removed card now stays in the deck, out of study, with its dates, its
+  // class still counts as read when the doc is linked again.
   const unlink = useCallback(async () => {
     if (!userId) return;
     const { error: err } = await supabase.from("cahier_links").delete().eq("user_id", userId);

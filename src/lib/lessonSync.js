@@ -13,6 +13,7 @@
 
 import { lessonSource, lessonIdOf, lessonCardKeyOf, lessonCardKey } from "./lessonSource.js";
 import { DIRECTIONS, sideOf } from "./directions.js";
+import { cardIndex } from "./sameCard.js";
 
 // Answered at least once, either way round: the card carries the student's
 // history, and nothing a lesson does may delete it.
@@ -48,7 +49,8 @@ const studied = (card) => DIRECTIONS.some((d) => (sideOf(card, d).fsrs_state ?? 
  *             deleting a card someone corrected is worse than leaving one the
  *             lesson has retired. Returned so the caller can say so.
  *   taken   — lesson cards NOT inserted because the deck already has a card of
- *             its own with that exact front. The insert is an upsert on
+ *             its own with that front, or the same card written another way
+ *             (src/lib/sameCard.js's sure rule). The insert is an upsert on
  *             (user_id, front), so it would have turned the student's card
  *             into the lesson's — new back, new category, and its class dates
  *             replaced by none. A single-word lesson front ("actuellement",
@@ -63,8 +65,14 @@ export function reconcileLessons(lessons, deckCards) {
   const archive = [];
   const unkeyed = [];
   const taken = [];
-  // Fronts the deck holds as its own cards, not a lesson's.
-  const own = new Set((deckCards || []).filter((card) => !lessonIdOf(card)).map((card) => card.f));
+  // The deck's own cards, not a lesson's. "Already has this card" is the same
+  // rule every card-writer uses (src/lib/sameCard.js), not the exact front:
+  // the owner had "rends-moi mon livre" from their notes, and the lesson added
+  // "Rends-moi mon livre !" beside it (2026-10-06).
+  const ownCards = (deckCards || []).filter((card) => !lessonIdOf(card));
+  const own = new Set(ownCards.map((card) => card.f));
+  const ownIndex = cardIndex(ownCards.map((card) => ({ front: card.f, back: card.b, source: card.source })));
+  const ownHas = (c) => own.has(c.f) || !!ownIndex.sure({ front: c.f, back: c.b });
 
   for (const lesson of lessons) {
     const want = new Map(
@@ -105,7 +113,7 @@ export function reconcileLessons(lessons, deckCards) {
 
     for (const [key, c] of want) {
       if (claimed.has(key)) continue;
-      if (own.has(c.f)) { taken.push({ lesson: lesson.id, front: c.f }); continue; }
+      if (ownHas(c)) { taken.push({ lesson: lesson.id, front: c.f }); continue; }
       missing.push({
         front: c.f,
         back: c.b,

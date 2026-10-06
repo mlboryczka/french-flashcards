@@ -1,44 +1,54 @@
 // What "Replace my existing deck" does to the cards a deck already has.
 // Pure, so it can be tested without a database.
 //
-// It used to delete every card before adding the upload's — and deleting a
+// It used to delete every card before adding the upload's, and deleting a
 // card deletes every answer recorded against it, so one tick wiped a
-// student's whole history: every schedule, every answer, the lessons' cards
-// too (the owner, 2026-09-25: "this should not reset the user's progress").
-// Now the deck still ends up as the upload, but nothing studied is lost:
+// student's whole history (the owner, 2026-09-25: "this should not reset the
+// user's progress"). Then it archived the answered cards the upload didn't
+// have and deleted the rest, matching cards by their exact French, so a card
+// the upload merely spelt differently was archived and its new spelling
+// started from zero.
 //
-//   • a card the upload also has is left for the upload to update, progress
-//     and all (the insert is an upsert on the front);
-//   • a card the student has answered, either way round, that the upload
-//     doesn't have is taken out of study (archived), row and answers kept. If
-//     a later upload has the word again, it lands on this row and brings it
-//     back, history and all;
-//   • a card never answered that the upload doesn't have is deleted — there
-//     is nothing to lose;
-//   • lesson cards belong to their lesson, not to the notebook, and are left
-//     alone, as are cards already archived.
+// Since 2026-10-06 it works by class, and never deletes:
+//
+//   • a card from a class that is in the upload stays as it is. The upload
+//     reads only the lines of it not read before (src/lib/notesLines.js), and
+//     a word it has again only adds the class date;
+//   • a card with none of its classes in the upload is taken out of study,
+//     marked "replaced", and kept with its schedule and answers;
+//   • a card an earlier Replace took out comes back into study when a Replace
+//     upload has its class again. No other card out of study comes back: one
+//     the student removed, or one put away as a repeat, stays out;
+//   • lesson cards belong to their lesson and tutor cards to the student, so
+//     both are left alone.
+//
+// It no longer depends on every card saving: a card the database refused
+// used to turn the whole Replace into an ordinary add.
 
 import { isArchived } from "./archive.js";
 import { LESSON_SOURCE_PREFIX } from "./lessonSource.js";
 
-const answered = (row) => (row.fsrs_state ?? 0) !== 0 || (row.en_fsrs_state ?? 0) !== 0;
+const leftAlone = (row) =>
+  typeof row.source === "string" && (row.source.startsWith(LESSON_SOURCE_PREFIX) || row.source === "tutor-chat");
 
-// `existing`: rows with id, front, source, fsrs_state, en_fsrs_state.
-// `incomingFronts`: the fronts the upload writes.
-// `withHistory`: ids of cards with any answer on record. "Reset all progress"
-// puts a card back to never answered but keeps its answers, and deleting the
-// card would delete them, so such a card counts as answered here.
-// Returns { remove: ids, archive: rows }.
-export function planReplace(existing, incomingFronts, withHistory = new Set()) {
-  const incoming = new Set(incomingFronts);
-  const remove = [];
+// `existing`: rows with id, dates, source (and archived_reason after
+// migration_016). `uploadDates`: the classes in the upload. `reasons`: whether
+// the deck says why each card is out of study; without that, no card can be
+// told to have come out by a Replace, so none comes back.
+// Returns { archive: rows, restore: rows }.
+export function planReplace(existing, uploadDates, { reasons = true } = {}) {
+  const inUpload = new Set(uploadDates || []);
   const archive = [];
+  const restore = [];
   for (const row of existing || []) {
-    if (isArchived(row)) continue;
-    if (typeof row.source === "string" && row.source.startsWith(LESSON_SOURCE_PREFIX)) continue;
-    if (incoming.has(row.front)) continue;
-    if (answered(row) || withHistory.has(row.id)) archive.push(row);
-    else remove.push(row.id);
+    const dates = Array.isArray(row.dates) ? row.dates : [];
+    const covered = dates.some((d) => inUpload.has(d));
+    if (isArchived(row)) {
+      if (reasons && row.archived_reason === "replaced" && covered) restore.push(row);
+      continue;
+    }
+    if (leftAlone(row)) continue;
+    if (!covered) archive.push(row);
   }
-  return { remove, archive };
+  return { archive, restore };
 }
