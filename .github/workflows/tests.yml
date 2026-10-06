@@ -1,0 +1,46 @@
+# Every test, on every change pushed to GitHub (2026-10-06).
+#
+# A failure marks the change with a red cross on GitHub and emails whoever
+# pushed it (GitHub's default for a failed run). The job's name, "tests", is
+# what Vercel's Deployment Checks would look for if the site is ever set to
+# wait for it before updating: renaming it means updating that setting too.
+#
+# Nothing here reaches the live database or Claude: the browser suites run the
+# app against tests/mock-supabase.mjs, and the suites that exercise Claude's
+# endpoints use a stand-in for it. No secrets are needed or set.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Chromium for the browser suites
+        run: |
+          npx playwright-core install --with-deps chromium
+          echo "CHROME_PATH=$(node -e "import('playwright-core').then((p) => console.log(p.chromium.executablePath()))")" >> "$GITHUB_ENV"
+
+      - name: The app builds
+        run: npm run build
+
+      - name: Simulated students through the status check
+        run: npm run simulate
+
+      - name: Every test suite
+        run: npm test

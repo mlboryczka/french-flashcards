@@ -139,7 +139,12 @@ function shareOfPageMove(frames, key) {
   const { browser, page } = await openApp({ width: 1400, height: 700 });
   console.log("\n  the chrome above the card holds still through a reflow");
 
-  const open = await record(page, () => page.click('aside button:has-text("Tutor")'));
+  // Two seconds, not the usual 0.7: this is the first thing done after the
+  // page loads, and while the app is still busy with its first loads the
+  // reflow can start up to ~1.5s after the click (2026-10-06, seen on the
+  // owner's Mac on unchanged code). Frames before it starts are still and
+  // count for nothing below; the movement itself is what's judged.
+  const open = await record(page, () => page.click('aside button:has-text("Tutor")'), 2000);
   ck("the tutor reflow actually ran", reflowed(open), `${Math.round(travelled(open, "pad"))}px of padding`);
   ck(
     "the card area does not lurch while the column narrows",
@@ -259,7 +264,16 @@ function shareOfPageMove(frames, key) {
   await settled(page);
   for (const W of [1600, 1100, 900, 1600]) {
     await page.setViewportSize({ width: W, height: 900 });
-    await page.waitForTimeout(600);
+    // Until the page has stopped moving. 600ms is enough on a quiet machine,
+    // but the padding's slide can start late (see the first check) and was
+    // once read mid-slide, 452px of 460 (2026-10-06).
+    let last = null;
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(i ? 100 : 600);
+      const pad = await page.evaluate(() => getComputedStyle(document.querySelector("main")).paddingRight);
+      if (pad === last) break;
+      last = pad;
+    }
     const m = await page.evaluate(() => {
       const main = document.querySelector("main");
       const panel = document.querySelector('aside[aria-label="Ask the tutor"]');

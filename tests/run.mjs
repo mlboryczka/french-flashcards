@@ -93,13 +93,28 @@ if (suites.some(NEEDS_BROWSER)) {
   await waitFor("http://localhost:5173/", "vite dev server");
 }
 
+// A browser suite that fails gets one more try. Their timing checks can fail
+// on a busy machine and pass on unchanged code (reflow's first check does, on
+// the owner's Mac): one more go keeps a hiccup from emailing
+// the owner about a fault that isn't there, and the summary still names the
+// suite, so one that fails now and then is seen rather than lost. A suite that
+// fails twice fails.
 const failed = [];
+const secondTry = [];
 for (const name of suites) {
   console.log(`\n\x1b[1m▸ ${name}\x1b[0m`);
-  if (!(await runSuite(name))) failed.push(name);
+  if (await runSuite(name)) continue;
+  if (NEEDS_BROWSER(name)) {
+    console.log(`\n\x1b[1m▸ ${name}, second try\x1b[0m`);
+    if (await runSuite(name)) { secondTry.push(name); continue; }
+  }
+  failed.push(name);
 }
 
 console.log("");
+if (secondTry.length) {
+  console.log(`\x1b[33mPassed on a second try: ${secondTry.join(", ")}\x1b[0m`);
+}
 if (failed.length) {
   console.log(`\x1b[31m${failed.length} of ${suites.length} suites failed: ${failed.join(", ")}\x1b[0m`);
   process.exit(1);

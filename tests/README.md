@@ -18,9 +18,18 @@ Set `CHROME_PATH` if your Chromium isn't at the default
 `/opt/pw-browsers/chromium-1194/chrome-linux/chrome` (the Linux container's).
 On the owner's Mac it is Playwright's own:
 `~/Library/Caches/ms-playwright/chromium-*/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`
-(`chromium-1208` at present). On that Mac, `reflow`'s first check ("the tutor
-reflow actually ran") also fails on and off on unchanged code — a timing flake,
-not a regression.
+(`chromium-1208` at present).
+
+GitHub runs all of this on every push to `main` (`.github/workflows/tests.yml`:
+the build, `npm run simulate`, then `npm test`, on Linux with Playwright's
+Chromium). A failure marks the commit with a red cross and emails whoever
+pushed. A browser suite that fails gets one second try, and the summary names
+any suite that needed it, so one that fails now and then is still seen.
+
+`reflow`'s timing checks used to fail on and off on unchanged code: just after
+the page loads, the app can be busy for ~1.5s before the tutor's slide starts,
+and the checks stopped watching at 0.7s. They now watch the first opening for
+2s and wait for the page to stop moving after a resize (2026-10-06).
 
 | Suite | Covers | Browser |
 |---|---|---|
