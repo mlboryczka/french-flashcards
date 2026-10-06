@@ -508,6 +508,40 @@ console.log("\n  the counter and Stats follow what was actually answered");
   await t.browser.close();
 }
 
+console.log("\n  Mark for review: a right answer saved as a miss, and the student told so");
+{
+  const deck = frenchSideDeck();
+  const t = await open({ rows: deck, studyMode: "type" });
+  const notice = () => t.page.evaluate(() => document.querySelector("[data-review-mark]")?.innerText || "");
+  const first = await rowOnScreen(t.page, deck);
+  await t.typeCheck(first.back);
+  ck("the right answer is accepted, and Mark for review is offered", /^✓/.test(await t.result()) && await t.has(/Mark for review/), `"${await t.result()}"`);
+  await t.click("Mark for review"); await t.wait(600);
+  ck("it is saved as a miss", JSON.stringify(writesFor(t, first.id)) === "[false]" && recordsFor(t, first.id).length === 1 && recordsFor(t, first.id).every((b) => b.correct === false),
+     JSON.stringify(writesFor(t, first.id)));
+  ck("the next card is on screen", (await rowOnScreen(t.page, deck))?.id !== first.id);
+  ck("the student is told it comes back later in this set", (await notice()) === "Marked for review: counted as wrong, back later in this set", `"${await notice()}"`);
+  ck("and it does: a retry is lined up", /1 retry to come/i.test(await t.counter()), `"${await t.counter()}"`);
+  await t.wait(5000);
+  ck("the message goes after a few seconds", (await notice()) === "", `"${await notice()}"`);
+  // Cards 2 to 4 right; card 5 is one of the last two, where a miss gets no retry.
+  for (let i = 0; i < 3; i++) {
+    const row = await rowOnScreen(t.page, deck);
+    await t.typeCheck(row.back);
+    await t.click("Continue →"); await t.wait(400);
+  }
+  const fifth = await rowOnScreen(t.page, deck);
+  await t.typeCheck(fifth.back);
+  await t.click("Mark for review"); await t.wait(600);
+  ck("near the end of the set it is still saved as a miss", JSON.stringify(writesFor(t, fifth.id)) === "[false]", JSON.stringify(writesFor(t, fifth.id)));
+  ck("and the student is told it comes back tomorrow", (await notice()) === "Marked for review: counted as wrong, back tomorrow", `"${await notice()}"`);
+  const row = await rowOnScreen(t.page, deck);
+  await t.typeCheck(row.back);
+  await t.click("Continue →"); await t.wait(400);
+  ck("the next answer clears the message", (await notice()) === "", `"${await notice()}"`);
+  await t.browser.close();
+}
+
 console.log("\n  typing is the default, and the last choice is remembered");
 {
   const t = await open({ studyMode: null });

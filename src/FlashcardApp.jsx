@@ -1485,12 +1485,22 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [unsavedCount]);
   useEffect(() => () => clearTimeout(retryTimerRef.current), []);
 
+  // What "Mark for review" did to the card it was pressed on, shown beside the
+  // counter for a few seconds. The card moves on at once, so without this
+  // nothing on screen said the press had worked.
+  const [reviewMark, setReviewMark] = useState(null);
+  const reviewMarkTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(reviewMarkTimerRef.current), []);
+
+  // Returns the schedule written for the way round shown, or null when the
+  // answer wasn't counted (a retry, or a card already answered today).
   const answer = (got, source = "flip") => {
-    if (!card) return;
+    if (!card) return null;
     // Once the queue is worked out the last card stays on screen behind the
     // completion panel. Grading it again would write a second FSRS review for
     // a card that was answered once, so the session end is a hard stop.
-    if (sessionDone) return;
+    if (sessionDone) return null;
+    setReviewMark(null);
     // Whether this answer empties the queue. Read BEFORE the wrong-answer
     // splice below, which grows the deck by one and would hide the end.
     const wasLastCard = idx >= deck.length - 1;
@@ -1654,6 +1664,37 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (wasLastCard) setSessionDone(true);
     // Re-enable the flip animation on the next frame
     requestAnimationFrame(() => { skipFlipAnim.current = false; });
+    return sr;
+  };
+
+  // "Mark for review": a typed answer the app accepted, recorded as a miss
+  // instead. Says when the card comes back: later in this set when there is
+  // room for a retry (see placeRetry), otherwise the day it is next due.
+  const markForReview = () => {
+    if (!card || sessionDone) return;
+    const dir = card.shownDir ?? "fr";
+    const key = itemKey(card);
+    // The same test answer() makes: a miss already recorded in this set gets
+    // no second retry.
+    const missedBefore = blockAnswersRef.current.get(slotKeyOf(card))?.got === false;
+    const comesBackInSet =
+      deck.slice(idx + 1).some((c) => c._retry && itemKey(c) === key) ||
+      (!missedBefore && placeRetry(deck, idx, card, RE_QUEUE_OFFSET) !== deck);
+    const sr = answer(false, "typed");
+    let when = "later in this set";
+    if (!comesBackInSet) {
+      const due = Date.parse((sr ? sr[dir === "en" ? "en_next_due_at" : "next_due_at"] : null) ?? sideOf(card, dir).next_due_at);
+      const now = new Date();
+      const tomorrowEnds = endOfLocalDay(new Date(endOfLocalDay(now) + 1));
+      when = !Number.isFinite(due) || due <= endOfLocalDay(now) ? "in your next set"
+        : due <= tomorrowEnds ? "tomorrow"
+        : `on ${new Date(due).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}`;
+    }
+    // No card name: the student has just pressed the button on it, and a long
+    // front ran the message off the top bar on a narrow window.
+    setReviewMark(`Marked for review: counted as wrong, back ${when}`);
+    clearTimeout(reviewMarkTimerRef.current);
+    reviewMarkTimerRef.current = setTimeout(() => setReviewMark(null), 5000);
   };
 
   // Submit typed answer
@@ -1699,6 +1740,7 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const goBack = () => {
     if (idx === 0) return;
+    setReviewMark(null);
     // Stepping back puts an answerable card on screen again, so the session
     // is no longer over.
     setSessionDone(false);
@@ -3425,6 +3467,9 @@ export default function FlashcardApp({ user, onSignOut }) {
                       {unsavedCount === 1 ? "1 answer not saved yet" : `${unsavedCount} answers not saved yet`} — retrying
                     </span>
                   )}
+                  {reviewMark && (
+                    <span style={S.reviewMarkNotice} data-review-mark role="status">{reviewMark}</span>
+                  )}
                   {!sessionDone && <span style={S.counter}>
                     {`Card ${idx+1} of ${deck.length}`}
                     {card._retry && (
@@ -3636,7 +3681,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                                 {gotIt && (
                                   <button
                                     style={{ ...S.typeLink, ...S.typeLinkMuted }}
-                                    onClick={() => answer(false, "typed")}
+                                    onClick={markForReview}
                                     title="Record as incorrect and keep this card near the top of the queue"
                                   >
                                     Mark for review
@@ -4959,6 +5004,8 @@ const S = {
   // box wraps the SVG, and the uppercase label sits below it.
   // ── Rectangular action buttons: AGAIN / GOT IT ─────────────────────
   unsavedNotice: { fontSize:11, fontFamily:T.font.sans, fontWeight:600, color:T.color.secondary, whiteSpace:"nowrap", marginRight:12 },
+  // In the error red: the answer was right but now counts as a miss.
+  reviewMarkNotice: { fontSize:11, fontFamily:T.font.sans, fontWeight:600, color:T.color.error, whiteSpace:"nowrap", marginRight:12 },
   flipHint: { fontSize:11.5, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:"10px 0 0", textAlign:"center" },
   actionRow: { display:"flex", gap:12, justifyContent:"center", marginTop:0, marginBottom:0, width:"100%", maxWidth:420, alignSelf:"center", flexShrink:0 },
   actionAgainRect: { flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"13px 24px", border:"1px solid rgba(3,22,50,0.1)", borderRadius:T.radius.md, background:"transparent", color:T.color.onSurfaceVariant, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:T.font.sans, letterSpacing:"-0.01em", transition:"all 0.15s" },

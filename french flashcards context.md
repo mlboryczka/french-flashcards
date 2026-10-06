@@ -223,6 +223,12 @@ could have been dealt from.
 - A miss changed to right with Previous card withdraws its retry
   (`withdrawRetry`) and puts back, at the end, the card that retry replaced
   (`_displaced`).
+- **Mark for review**, offered under a typed answer the app accepted, saves it
+  as a miss (`markForReview`). The card moves on at once, so for five seconds
+  the toolbar says, in red, that it now counts as wrong and when it comes
+  back: "Marked for review: counted as wrong, back later in this set", or
+  "back tomorrow" when there is no room for a retry (owner, 2026-10-05 and
+  2026-10-06). It names no card: a long front ran it off the top bar.
 - The counter reads "Card N of 50". On a retry it adds "· retry"; otherwise it
   adds the block's relearning, review and new counts as they are now
   (`countBuckets`). Then comes "· N retries to come".
@@ -1100,7 +1106,8 @@ Sixteen drive the app in a browser:
 - `regressions`: bugs found by driving the app, each with the check that would
   have caught it.
 - `answering`: answers off the happy path (accepted answers, Previous card,
-  failed saves, the way round, Reset), judged by what is written.
+  failed saves, the way round, Reset, Mark for review), judged by what is
+  written.
 - `cards`: the prompt hides its English gloss, and the banner shows what you
   typed.
 - `session`: a set worked to its checkpoint, Continue, the keyboard, and one
