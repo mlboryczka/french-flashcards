@@ -13,6 +13,9 @@
 import imperatif from "./imperatif.js";
 import adverbes from "./adverbes.js";
 import lecon2 from "./lecon2.js";
+import lecon3 from "./lecon3.js";
+import lecon4 from "./lecon4.js";
+import lecon5 from "./lecon5.js";
 import { drillInstruction } from "../../lib/cardInstruction.js";
 import { lessonIdOf, lessonCardKeyOf, lessonCardKey } from "../../lib/lessonSource.js";
 
@@ -29,7 +32,7 @@ export {
 
 // New lessons go at the end: a lesson's place here is part of every one of its
 // cards' rank (lessonRank), so inserting one would reorder the lessons before it.
-export const LESSONS = [imperatif, adverbes, lecon2];
+export const LESSONS = [imperatif, adverbes, lecon2, lecon3, lecon4, lecon5];
 
 export const lessonById = (id) => LESSONS.find((l) => l.id === id) || null;
 

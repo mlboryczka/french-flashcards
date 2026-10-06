@@ -1148,9 +1148,10 @@ From this project's history:
 
 A lesson is a fixed set of cards made from a teacher's materials, the same for
 every student. Lessons are in `src/data/lessons/`; `LESSONS` in `index.js` is
-the catalogue. There are three: L'impératif (108 cards, from Laura Caufour's
-LFL METHOD sheets), Adjectif ou adverbe ? (81 cards, written for the app) and
-Leçon 2 · Aller (63 cards, from her LFL METHOD Leçon 2).
+the catalogue. There are six: L'impératif (108 cards, from Laura Caufour's
+LFL METHOD sheets), Adjectif ou adverbe ? (81 cards, written for the app), and
+her beginner Leçons 2 to 5: Aller (63), Avoir (62), Verbes en -er (78) and
+Vouloir et pouvoir (58).
 
 - A card is `[front, back, category, section, previousFront?]`. The front is
   always the French, because the app reads it aloud and cleans it as French.
@@ -1285,22 +1286,24 @@ card, shown in French.
   friends, each opening with its rule in one sentence. The vowel rule is put
   as "drop the -e after a vowel", so fou → follement no longer contradicts it.
 
-### Leçon 2 · Aller
+### Leçons 2 to 5
 
-`lecon2.js` is the first of Laura's beginner course in the app, from her
-Google Drive folder Français → Leçons 1 à 20 (lesson, exercises, answer key),
-built 2026-10-04. Leçons 3 to 5 were built with it and wait on the owner's
-review, outside `LESSONS`.
+`lecon2.js` to `lecon5.js` are the first lessons of Laura's beginner course,
+from her Google Drive folder Français → Leçons 1 à 20 (lesson, exercises,
+answer key; Leçon 4's key only exists in her Spanish-speaker version, with
+the same French answers). Built 2026-10-04; notes reviewed by the owner tab
+by tab and released 2026-10-05.
 
-- Her answers stand where her key gives one; the header comment lists every
-  departure. Her vocabulary list became word cards. Dictation, oral answers
+- Her answers stand where her key gives one; each header comment lists every
+  departure. Her vocabulary lists became word cards. Dictation, oral answers
   and the true/false and story questions were left out: none can be a typed
   card.
-- The notes are on the impératif's model: Use · Forms · Future · Être ·
-  Numbers · Plural. No word list: the cards are how the words are learned
-  (owner, 2026-10-05).
+- The notes follow the building-lessons skill. No word lists: the cards are
+  how the words are learned (owner, 2026-10-05). Leçon 4 has no Use tab: her
+  section on verb groups was dropped, and regular or irregular is said in two
+  lines under Forms (owner, 2026-10-05).
 - A phrase card's typo tolerance lets "Je suis bien" pass for "Je vais bien",
-  the être / aller mistake her lesson warns about. Cards marked exactly carry
+  the être / aller mistake Leçon 2 warns about. Cards marked exactly carry
   that contrast instead; a real fix is a marking change, not proposed yet.
 
 ---
