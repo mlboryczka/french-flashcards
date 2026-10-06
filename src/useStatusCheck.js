@@ -16,8 +16,10 @@ import { fetchStudentReports } from "./StatusStudents";
 // alert shows: a check failed, or the check itself couldn't run.
 //
 // `students` is the latest kept check on every student (api/_lib/statusDaily.js,
-// each morning on the server), read at the same moments. A student's failed
-// check lights the alert too; not being able to read them doesn't.
+// each morning on the server), read at the same moments, with how the tests of
+// Claude's work last went (`students.evals`, api/_lib/evalStatus.js). A
+// student's failed check lights the alert too, and so does a mistake Claude
+// had stopped making coming back; not being able to read them doesn't.
 
 const PAGE = 1000;
 const STALE_MS = 60 * 60 * 1000;
@@ -98,8 +100,10 @@ export function useStatusCheck(user, { enabled, ready }) {
   }, [enabled, ready, userId, run]);
 
   const studentFailing = (students?.reports || []).some((r) => !r.ok);
+  const evals = students?.evals || {};
+  const claudeSlipped = (evals.answers?.regressions || []).length > 0 || (evals.notes?.regressions || []).length > 0;
   return {
     report, error, running, run, students, setStudents,
-    amiss: !!error || (!!report && !report.ok) || studentFailing,
+    amiss: !!error || (!!report && !report.ok) || studentFailing || claudeSlipped,
   };
 }

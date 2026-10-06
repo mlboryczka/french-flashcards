@@ -49,11 +49,7 @@ import {
   fetchGoogleDoc,
   sliceIntoBlocks,
   extractCardsFromBlock,
-  splitSlashPairs,
-  expandConjugations,
-  keepAnswerable,
-  dedupeWithPolysemy,
-  cleanFrenchFront,
+  cardsFromExtracted,
 } from "./parse-cahier.js";
 
 export const config = { maxDuration: 300 };
@@ -95,19 +91,18 @@ export default async function handler(req, res) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // The owner's test of how Claude reads a class, against their own
-  // corrections (api/_lib/notesChecks.js). Here because of the 12-route
-  // limit, and because this is the route that reads classes.
+  // The list behind the owner's test of how Claude reads a class, against
+  // their own corrections (api/_lib/notesChecks.js; the test itself runs from
+  // /api/cahier-daily). Here because of the 12-route limit, and because this
+  // is the route that reads classes.
   if (req.body?.notesChecks) {
     try {
-      const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
       const { status, json } = await handleNotesChecks({
         body: req.body.notesChecks,
         isAdmin: isAdmin(user),
         store: supabaseNotesStore(admin),
         readDoc: fetchGoogleDoc,
         blocksOf: sliceIntoBlocks,
-        read: async (block) => cardsFromExtracted(await extractCardsFromBlock(anthropic, block)),
       });
       return res.status(status).json(json);
     } catch (err) {
@@ -234,19 +229,6 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     dateRange: dates.length ? [dates[0], dates[dates.length - 1]] : null,
     errors,
   };
-}
-
-// What Claude extracted from a class, made into the cards that are written.
-// The same steps as an upload's commit, in the same order: a class's grammar
-// rules and pronunciation notes never become cards (a card must be answerable
-// by typing), and a plain word the model filed under G becomes V. This path
-// matters most for it — it runs unattended, and nobody reviews what it adds.
-// Also what the notes-to-cards test judges (api/_lib/notesChecks.js), so the
-// test is of exactly what a sync writes.
-export function cardsFromExtracted(raw) {
-  const cleaned = raw.map((c) => (c && c.front && c.back ? { ...c, front: cleanFrenchFront(c.front, c.back) } : c));
-  const { expanded } = expandConjugations(splitSlashPairs(cleaned));
-  return dedupeWithPolysemy(keepAnswerable(expanded)).deduped;
 }
 
 async function loadLink(admin, userId) {

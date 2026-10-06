@@ -1628,20 +1628,41 @@ tab for each:
   accepted" is saved, accept or not, in `answer_reviews`, with both sides of
   the card, what was typed, Claude's reason and whether the student pressed
   "Accept anyway". The accepted answers kept before then are copied in as
-  `kept`. The owner marks what Claude should have said; "Test Claude" asks
-  Claude about every marked answer again, three times each, with the app's own
-  question and model, and saves the run in `eval_runs`: agreed every time,
-  some of the time, never. The question carries a version (a hash of its
-  wording and the model), so runs before and after a change can be compared.
+  `kept`. What Claude should have said comes from what the owner already did
+  (`ownerCall`): on their own disputes, "Accept anyway" means accept, asking
+  means accept when Claude accepted, moving on means refuse. Another
+  student's dispute counts only if the owner marks it; nothing waits on it.
+  The server asks Claude about every answer with a call again, three times
+  each, with the app's own question and model, and saves the run in
+  `eval_runs`. The question carries a version (a hash of its wording and the
+  model), so runs before and after a change can be compared.
 - **Notes to cards.** Every card the owner fixes or deletes is logged to
   `parse_corrections`, and each one is a case: its class is found in the
   linked notebook (by the card's own dates, or by the class before the
   correction whose text holds it), read again three times the way the
   morning sync reads it (`extractCardsFromBlock`, then `cardsFromExtracted`,
   now shared with `syncUser`), and judged on whether the mistake came back.
-  Reached through `cahier-sync` with a `notesChecks` body. On 2026-10-06 the
-  48 corrections made 46 cases (two edits changed nothing) from 36 classes,
-  all found. Runs are kept in `eval_runs` as kind `notes`.
+  Reached through `cahier-sync` with a `notesChecks` body (the list only). On
+  2026-10-06 the 48 corrections made 46 cases (two edits changed nothing)
+  from 36 classes, all found. Runs are kept in `eval_runs` as kind `notes`.
+  Its version hashes the whole of `api/parse-cahier.js` (the question, the
+  model and every step that tidies Claude's reply into cards;
+  `cardsFromExtracted` moved there for it) and the two app files it uses.
+- **Both run by themselves** (owner, 2026-10-06: "make both run
+  automatically", after being asked to mark and press buttons for decisions
+  they had already made). Two daily schedules on `cahier-daily` (15:00 and
+  16:00 UTC) run a test only when it is due (`api/_lib/evalRuns.js`): never
+  run, the version changed, or a week since the last run (less half a day).
+  There is no button. Each case is asked three times and comes out pass,
+  mixed, fail (wrong more often than right) or untried (no usable answer;
+  counts for nothing). The red dot lights only for a case that passed in the
+  run before a change of version and fails in the run after it, against the
+  same right answer (`api/_lib/evalStatus.js`, through
+  `admin-users?view=status`), named in the tab. Between two runs of the same
+  version nothing lights it: Claude answers differently by chance, and a
+  review found a few borderline cases would otherwise light it most weeks.
+  Cases Claude gets wrong are listed in the tab either way. The same answer
+  disputed more than once is one case, judged by the strongest call.
 - **Tests on GitHub.** `.github/workflows/tests.yml` builds the app, runs the
   simulated students and every test suite on each push to `main`. A failure
   marks the commit and emails whoever pushed. A browser suite that fails gets

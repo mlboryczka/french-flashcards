@@ -15,29 +15,50 @@
 // whose text holds the card's French. A case whose class can't be found is
 // listed and not tested.
 //
+// The owner's corrections are the right answers, so nobody is asked
+// anything: the server runs the test on its own (runNotesTest, from
+// /api/cahier-daily when evalRuns.isDue says so) and keeps the run.
+//
 // Reached through /api/cahier-sync with a `notesChecks` body, because the
 // Hobby plan deploys at most 12 routes and there are 12. Admin only:
 //
-//   list      every case, the class each was found in, the last test runs
-//   test      { ids } those cases, their classes read NOTES_RUNS times each
-//             (at most TEST_CLASSES classes per request); nothing is saved
-//   save-run  { cases: [{ id, repeated: [bool...], made: [bool|null...] }] }
+//   list      every case, the class each was found in, the last runs
 //
 // The store, the notebook and the reading are passed in, so the rules can be
 // tested without a database, Google or Claude (tests/suites/notes-checks.mjs).
 
 import { createHash } from "node:crypto";
-import { EXTRACTION_PROMPT, EXTRACTION_MODEL } from "../parse-cahier.js";
+import { readFileSync } from "node:fs";
+import * as cardMaking from "../parse-cahier.js";
 import { missingTable } from "../../src/lib/dealLog.js";
+import { pooled, outcome, tally } from "./evalRuns.js";
+
+const { EXTRACTION_PROMPT, EXTRACTION_MODEL } = cardMaking;
 
 export const NOTES_RUNS = 3;
-export const TEST_CLASSES = 4;
+const AT_ONCE = 20;
 
-// Seven characters that change whenever the question Claude is asked, or the
-// model, does. (The steps after it, cardsFromExtracted, are code: a change
-// there shows in the results but not here.)
+// The code a class goes through to become cards: the whole of
+// api/parse-cahier.js (the question, the model, cutting the cahier into
+// classes, and every step that tidies Claude's reply, cardsFromExtracted
+// included) and the two app files it leans on. Read as text so that a change
+// to any helper counts, not only to the functions it exports; a change
+// anywhere else in parse-cahier.js counts too, and costs one extra run.
+const SOURCES = ["../parse-cahier.js", "../../src/lib/cardInstruction.js", "../../src/lib/cardTypes.js"];
+function sourceText() {
+  try {
+    return SOURCES.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
+  } catch {
+    // Wherever the files can't be read, the exported functions' own text.
+    return Object.values(cardMaking).map((v) => (typeof v === "function" ? v.toString() : String(v))).join("\n");
+  }
+}
+
+// Seven characters that change whenever the way a class becomes cards does.
+// A change makes the test due again the next morning.
 export const NOTES_PROMPT_VERSION = createHash("sha1")
-  .update(EXTRACTION_MODEL).update(EXTRACTION_PROMPT).digest("hex").slice(0, 7);
+  .update(EXTRACTION_MODEL).update(EXTRACTION_PROMPT).update(sourceText())
+  .digest("hex").slice(0, 7);
 
 const tidy = (s) => String(s ?? "").normalize("NFC").replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
 // For finding text in a class, and for deleted cards: case, punctuation and
@@ -127,30 +148,23 @@ export function buildCases(corrections, cardsById, blocks) {
   return out;
 }
 
-// A test run's cases, counted. A case passes when the mistake never came back.
-export function summarize(cases) {
-  let every = 0, sometimes = 0, never = 0;
-  for (const c of cases) {
-    const reads = (c.repeated || []).filter((v) => v !== null);
-    const clean = reads.filter((v) => v === false).length;
-    if (reads.length && clean === reads.length) every++;
-    else if (clean > 0) sometimes++;
-    else never++;
-  }
-  return { cases: cases.length, every, sometimes, never };
+// One case's outcome (api/_lib/evalRuns.js): in how many of the readings that
+// worked the mistake stayed away. A reading that failed counts for nothing.
+export function notesJudge(c) {
+  const reads = (c.repeated || []).filter((v) => v !== null);
+  return outcome(reads.filter((v) => v === false).length, reads.length);
 }
+
+// A run's cases counted: no repeat in any reading, in some, in most, and not
+// read at all (left out of the rest).
+export const summarize = (cases) => tally(cases, notesJudge);
 
 const reply = (status, json) => ({ status, json });
 const WAITING = "Waiting for the database update (migration_015).";
 
 // `store`: corrections(), cards(ids), link(userId), runs(), saveRun(row).
 // `readDoc(url)`: the notebook's text. `blocksOf(text)`: its classes.
-// `read(block)`: one reading of a class, as cards.
-export async function handleNotesChecks({ body, isAdmin, store, readDoc, blocksOf, read }) {
-  if (!isAdmin) return reply(403, { error: "Admin only" });
-  const action = body?.action;
-
-  const loadCases = async () => {
+async function loadCases({ store, readDoc, blocksOf }) {
     const corrections = (await store.corrections()).rows || [];
     const users = [...new Set(corrections.map((c) => c.user_id))];
     const cards = (await store.cards(corrections.map((c) => c.card_id).filter(Boolean))).rows || [];
@@ -172,10 +186,14 @@ export async function handleNotesChecks({ body, isAdmin, store, readDoc, blocksO
       for (const c of buildCases(corrections.filter((x) => x.user_id === user), cardsById, blocks)) cases.push({ ...c, user_id: user });
     }
     return { cases, blocksByUser, problems };
-  };
+}
+
+export async function handleNotesChecks({ body, isAdmin, store, readDoc, blocksOf }) {
+  if (!isAdmin) return reply(403, { error: "Admin only" });
+  const action = body?.action;
 
   if (action === "list") {
-    const { cases, problems } = await loadCases();
+    const { cases, problems } = await loadCases({ store, readDoc, blocksOf });
     const runs = await store.runs();
     return reply(200, {
       cases: cases.map(({ user_id, ...c }) => c),
@@ -187,49 +205,48 @@ export async function handleNotesChecks({ body, isAdmin, store, readDoc, blocksO
     });
   }
 
-  if (action === "test") {
-    const ids = new Set(Array.isArray(body.ids) ? body.ids : []);
-    if (!ids.size) return reply(400, { error: "Nothing to test." });
-    const { cases, blocksByUser } = await loadCases();
-    const chosen = cases.filter((c) => ids.has(c.id) && c.date);
-    const classes = new Map();
-    for (const c of chosen) {
-      const key = `${c.user_id}|${c.date}`;
-      if (!classes.has(key)) classes.set(key, (blocksByUser.get(c.user_id) || []).find((b) => b.date === c.date));
-      if (classes.size > TEST_CLASSES) return reply(400, { error: `At most ${TEST_CLASSES} classes at a time.` });
-    }
-    const readings = new Map();
-    await Promise.all([...classes].map(async ([key, block]) => {
-      readings.set(key, await Promise.all(Array.from({ length: NOTES_RUNS }, () => read(block).catch(() => null))));
-    }));
-    const results = chosen.map((c) => {
-      const reads = readings.get(`${c.user_id}|${c.date}`) || [];
-      const judged = reads.map((cards) => (cards ? judge(c, cards) : null));
-      return { id: c.id, repeated: judged.map((j) => (j ? j.repeated : null)), made: judged.map((j) => (j ? j.made : null)) };
-    });
-    return reply(200, { results, version: NOTES_PROMPT_VERSION });
-  }
-
-  if (action === "save-run") {
-    const cases = (Array.isArray(body.cases) ? body.cases : [])
-      .filter((c) => c && c.id && Array.isArray(c.repeated))
-      .map((c) => ({
-        id: c.id,
-        repeated: c.repeated.map((v) => (v === true || v === false ? v : null)),
-        made: (Array.isArray(c.made) ? c.made : []).map((v) => (v === true || v === false ? v : null)),
-      }));
-    if (!cases.length) return reply(400, { error: "Nothing to save." });
-    const summary = summarize(cases);
-    const saved = await store.saveRun({
-      kind: "notes", version: NOTES_PROMPT_VERSION, model: EXTRACTION_MODEL,
-      cases: summary.cases, passed: summary.every, summary, results: cases,
-    });
-    if (saved.missing) return reply(409, { error: WAITING });
-    if (saved.error) return reply(500, { error: saved.error });
-    return reply(200, { ok: true, summary, run: saved.row });
-  }
-
   return reply(400, { error: "Unknown action" });
+}
+
+export const notesPass = (c) => notesJudge(c) === "pass";
+
+// The whole test, as the server runs it on its own: every case's class read
+// NOTES_RUNS times (classes shared by several cases are read once for all of
+// them), judged, and the run saved. Readings not started by `deadline` count
+// for nothing; a case with none is counted apart as untried. `read(block)` is
+// one reading of a class, as cards.
+export async function runNotesTest({ store, readDoc, blocksOf, read, deadline = Infinity }) {
+  const { cases, blocksByUser, problems } = await loadCases({ store, readDoc, blocksOf });
+  const testable = cases.filter((c) => c.date);
+  if (!testable.length) return { skipped: problems[0] || "No corrections to test yet." };
+  const keys = [...new Set(testable.map((c) => `${c.user_id}|${c.date}`))];
+  const blockOf = (key) => {
+    const [user, date] = key.split("|");
+    return (blocksByUser.get(user) || []).find((b) => b.date === date);
+  };
+  const reads = await pooled(
+    keys.flatMap((key) => Array.from({ length: NOTES_RUNS }, () => () => read(blockOf(key)))),
+    AT_ONCE,
+    deadline,
+  );
+  const readingsOf = new Map(keys.map((key, i) => [key, reads.slice(i * NOTES_RUNS, (i + 1) * NOTES_RUNS)
+    .map((r) => (Array.isArray(r) ? r : null))]));
+  const results = testable.map((c) => {
+    const judged = readingsOf.get(`${c.user_id}|${c.date}`).map((cards) => (cards ? judge(c, cards) : null));
+    return { id: c.id, date: c.date, repeated: judged.map((j) => (j ? j.repeated : null)), made: judged.map((j) => (j ? j.made : null)) };
+  });
+  const summary = { ...summarize(results), no_class: cases.length - testable.length };
+  if (!summary.cases) {
+    const reason = reads.find((r) => r && r.error)?.error?.message || "no reading";
+    return { skipped: `Claude couldn't read the classes: ${reason}` };
+  }
+  const saved = await store.saveRun({
+    kind: "notes", version: NOTES_PROMPT_VERSION, model: EXTRACTION_MODEL,
+    cases: summary.cases, passed: summary.every, summary, results,
+  });
+  if (saved.missing) return { skipped: WAITING };
+  if (saved.error) throw new Error(saved.error);
+  return { run: saved.row, summary };
 }
 
 export function supabaseNotesStore(db) {
@@ -247,10 +264,10 @@ export function supabaseNotesStore(db) {
       return error ? { error: error.message } : { row: data };
     },
     async runs() {
-      return out(await db.from("eval_runs").select("id, kind, ran_at, version, model, cases, passed, summary").eq("kind", "notes").order("ran_at", { ascending: false }).limit(20));
+      return out(await db.from("eval_runs").select("id, kind, ran_at, version, model, cases, passed, summary, results").eq("kind", "notes").order("ran_at", { ascending: false }).limit(10));
     },
     async saveRun(row) {
-      const { data, error } = await db.from("eval_runs").insert(row).select("id, kind, ran_at, version, model, cases, passed, summary").single();
+      const { data, error } = await db.from("eval_runs").insert(row).select("id, kind, ran_at, version, model, cases, passed, summary, results").single();
       return missingTable(error) ? { missing: true } : error ? { error: error.message } : { row: data };
     },
   };

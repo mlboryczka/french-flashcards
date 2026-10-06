@@ -47,6 +47,14 @@ export default function StatusModal({ open, onClose, status }) {
   if (!open) return null;
   const { report, error, running, run } = status;
   const byId = new Map((report?.results || []).map((r) => [r.id, r]));
+  // Which tabs have something failing, for a mark beside their name.
+  const evals = status.students?.evals || {};
+  const flagged = {
+    cards: !!error || (!!report && !report.ok),
+    students: (status.students?.reports || []).some((r) => !r.ok),
+    answers: (evals.answers?.regressions || []).length > 0,
+    notes: (evals.notes?.regressions || []).length > 0,
+  };
 
   const copy = async () => {
     try {
@@ -72,13 +80,14 @@ export default function StatusModal({ open, onClose, status }) {
               onClick={() => setTab(id)}
             >
               {label}
+              {flagged[id] && <span style={S.tabMark} data-status-tab-alert aria-label="needs checking">!</span>}
             </button>
           ))}
         </div>
 
         {tab === "students" && <StatusStudents students={status.students} onChecked={status.setStudents} />}
-        {tab === "answers" && <StatusAnswers />}
-        {tab === "notes" && <StatusNotes />}
+        {tab === "answers" && <StatusAnswers regressions={status.students?.evals?.answers?.regressions} />}
+        {tab === "notes" && <StatusNotes regressions={status.students?.evals?.notes?.regressions} />}
 
         {tab === "cards" && (<>
         <p style={S.body}>
@@ -155,6 +164,11 @@ const S = {
   title: { fontFamily: T.font.serif, fontSize: 19, fontWeight: 600, color: T.color.onSurface },
   body: { fontSize: 13, lineHeight: 1.6, color: T.color.onSurfaceVariant, margin: "8px 0 14px" },
   tabs: { display: "flex", flexWrap: "wrap", gap: 4, margin: "12px 0 12px", borderBottom: "1px solid rgba(3,22,50,0.08)" },
+  tabMark: {
+    display: "inline-flex", alignItems: "center", justifyContent: "center", marginLeft: 5,
+    width: 14, height: 14, borderRadius: "50%", background: T.color.error, color: T.color.onError,
+    fontSize: 10, fontWeight: 700, lineHeight: 1, verticalAlign: "1px",
+  },
   tab: {
     padding: "7px 10px", background: "transparent", border: "none", borderBottom: "2px solid transparent",
     fontFamily: T.font.sans, fontSize: 13, fontWeight: 600, color: T.color.onSurfaceVariant, cursor: "pointer", marginBottom: -1,

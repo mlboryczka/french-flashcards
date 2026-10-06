@@ -28,7 +28,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
-import { requireUser, isAdmin } from "./_lib/auth.js";
+import { requireUser, isAdmin, adminEmail } from "./_lib/auth.js";
 import { requireAnthropicKey } from "./_lib/anthropicKey.js";
 import { handleFeedbackRequest, supabaseFeedbackStore } from "./_lib/feedbackReview.js";
 import { askClaude, verdictRow, handleAnswerChecks, supabaseAnswerStore } from "./_lib/answerChecks.js";
@@ -162,7 +162,7 @@ async function answerChecks(req, res, user) {
       body: req.body.answerChecks,
       isAdmin: isAdmin(user),
       store: answerStore(),
-      apiKey: process.env.ANTHROPIC_API_KEY || null,
+      adminEmail: adminEmail(),
     });
     return res.status(status).json(json);
   } catch (err) {

@@ -7,6 +7,14 @@
     {
       "path": "/api/cahier-daily",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cahier-daily",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cahier-daily",
+      "schedule": "0 16 * * *"
     }
   ]
 }

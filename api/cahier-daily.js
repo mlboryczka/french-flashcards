@@ -9,11 +9,20 @@
 // sync the app calls (api/cahier-sync.js), so there is one set of rules about
 // what gets parsed and what gets written.
 //
-// A second schedule in vercel.json, STATUS_SCHEDULE, runs the status check on
-// every student instead (api/_lib/statusDaily.js) and keeps the results for
-// the Status window. Vercel says which schedule called in the
-// x-vercel-cron-schedule header. It lives here because the Hobby plan deploys
-// at most 12 routes and there are 12.
+// Three more schedules in vercel.json do other daily work instead. Vercel says
+// which schedule called in the x-vercel-cron-schedule header. They live here
+// because the Hobby plan deploys at most 12 routes and there are 12.
+//
+//   STATUS_SCHEDULE   the status check on every student, kept for the Status
+//                     window (api/_lib/statusDaily.js)
+//   ANSWERS_SCHEDULE  the test of Claude's verdicts on disputed answers
+//                     (api/_lib/answerChecks.js), when it is due
+//   NOTES_SCHEDULE    the test of Claude reading class notes, against the
+//                     owner's corrections (api/_lib/notesChecks.js), when due
+//
+// "Due" is api/_lib/evalRuns.js's: never run, the way Claude is asked has
+// changed since, or a week since the last run. Otherwise those two do
+// nothing and cost nothing.
 //
 // AUTHENTICATION. Vercel sends `Authorization: Bearer $CRON_SECRET` with every
 // cron request when that variable is set. Without CRON_SECRET this route
@@ -21,8 +30,20 @@
 // spend the deploy owner's Anthropic credit.
 
 import { createClient } from "@supabase/supabase-js";
+import Anthropic from "@anthropic-ai/sdk";
 import { syncUser } from "./cahier-sync.js";
+import { fetchGoogleDoc, sliceIntoBlocks, extractCardsFromBlock, cardsFromExtracted } from "./parse-cahier.js";
 import { STATUS_SCHEDULE, checkEveryone, saveReports } from "./_lib/statusDaily.js";
+import { adminEmail } from "./_lib/auth.js";
+import { isDue } from "./_lib/evalRuns.js";
+import { ANSWER_PROMPT_VERSION, runAnswerTest, supabaseAnswerStore } from "./_lib/answerChecks.js";
+import { NOTES_PROMPT_VERSION, runNotesTest, supabaseNotesStore } from "./_lib/notesChecks.js";
+
+export const ANSWERS_SCHEDULE = "0 15 * * *";
+export const NOTES_SCHEDULE = "0 16 * * *";
+// Stop starting new calls to Claude after this long, leaving the function's
+// five minutes room to save what was done.
+const TEST_TIME_MS = 230 * 1000;
 
 export const config = { maxDuration: 300 };
 
@@ -49,7 +70,35 @@ export default async function handler(req, res) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  if (req.headers["x-vercel-cron-schedule"] === STATUS_SCHEDULE) {
+  const schedule = req.headers["x-vercel-cron-schedule"];
+  if (schedule === ANSWERS_SCHEDULE || schedule === NOTES_SCHEDULE) {
+    const answers = schedule === ANSWERS_SCHEDULE;
+    const label = answers ? "answer-test" : "notes-test";
+    try {
+      const store = answers ? supabaseAnswerStore(admin) : supabaseNotesStore(admin);
+      const runs = await store.runs();
+      if (runs.missing) return res.status(200).json({ ok: true, skipped: "migration_015 not run" });
+      const latest = (runs.rows || [])[0] || null;
+      if (!isDue(latest, answers ? ANSWER_PROMPT_VERSION : NOTES_PROMPT_VERSION)) {
+        return res.status(200).json({ ok: true, skipped: "not due" });
+      }
+      const deadline = Date.now() + TEST_TIME_MS;
+      const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+      const result = answers
+        ? await runAnswerTest({ store, apiKey: ANTHROPIC_API_KEY, adminEmail: adminEmail(), deadline })
+        : await runNotesTest({
+            store, readDoc: fetchGoogleDoc, blocksOf: sliceIntoBlocks, deadline,
+            read: async (block) => cardsFromExtracted(await extractCardsFromBlock(anthropic, block)),
+          });
+      console.log(`[${label}] ${result.skipped ? `skipped: ${result.skipped}` : JSON.stringify(result.summary)}`);
+      return res.status(200).json({ ok: true, ...result, run: result.run?.id || null });
+    } catch (e) {
+      console.error(`[${label}] failed:`, e);
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  if (schedule === STATUS_SCHEDULE) {
     try {
       const reports = await checkEveryone(admin);
       const saved = await saveReports(admin, reports);

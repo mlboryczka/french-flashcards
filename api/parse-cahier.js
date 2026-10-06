@@ -653,6 +653,20 @@ export async function extractCardsFromBlock(anthropic, block) {
     .filter((c) => c.front.length > 0 && c.back.length > 0);
 }
 
+// What Claude extracted from a class, made into the cards that are written.
+// The same steps as an upload's commit, in the same order: a class's grammar
+// rules and pronunciation notes never become cards (a card must be answerable
+// by typing), and a plain word the model filed under G becomes V. This path
+// matters most for it — it runs unattended, and nobody reviews what it adds.
+// Also what the notes-to-cards test judges (api/_lib/notesChecks.js), so the
+// test is of exactly what a sync writes. It lives in this file so that the
+// test's version, a hash of this file, changes with it.
+export function cardsFromExtracted(raw) {
+  const cleaned = raw.map((c) => (c && c.front && c.back ? { ...c, front: cleanFrenchFront(c.front, c.back) } : c));
+  const { expanded } = expandConjugations(splitSlashPairs(cleaned));
+  return dedupeWithPolysemy(keepAnswerable(expanded)).deduped;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Slash-pair splitting: "léger // lourd (adj)" → two separate cards
 // ═══════════════════════════════════════════════════════════════════════════

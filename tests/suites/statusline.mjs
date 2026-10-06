@@ -41,7 +41,9 @@ for (let i = 0; i < 150; i++) {
 // /api/admin-users?view=status.
 // `notes`: the cases "Notes to cards" lists, from a stand-in /api/cahier-sync
 // that answers only its notesChecks requests, recorded in `notesCalls`.
-async function open({ admin = true, migrated = true, record = [], verdicts = [], students = [], notes = [] } = {}) {
+// `evals`: how the tests of Claude's work last went, as /api/admin-users
+// reports it; `answerRuns` / `notesRuns`: the runs the two tabs list.
+async function open({ admin = true, migrated = true, record = [], verdicts = [], students = [], notes = [], evals = {}, answerRuns = [], notesRuns = [] } = {}) {
   const reviews = [];   // every card_reviews write: { body, status }
   const deals = [];     // every dealt_sets write
   const checks = [];    // every answerChecks request
@@ -84,7 +86,7 @@ async function open({ admin = true, migrated = true, record = [], verdicts = [],
       await p.route("**/api/admin-users*", async (r) => {
         const url = new URL(r.request().url());
         studentCalls.push(url.search);
-        return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ reports: students }) });
+        return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ reports: students, evals }) });
       });
       await p.route("**/api/cahier-sync", async (r) => {
         const body = JSON.parse(r.request().postData() || "{}");
@@ -92,21 +94,15 @@ async function open({ admin = true, migrated = true, record = [], verdicts = [],
         const n = body.notesChecks;
         notesCalls.push(n);
         const json = (x) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(x) });
-        if (n.action === "list") return json({ cases: notes, runs: [], version: "def5678", problems: [] });
-        if (n.action === "test") return json({ results: n.ids.map((id) => ({ id, repeated: id === "n1" ? [false, true, false] : [false, false, false], made: [true, true, true] })) });
-        if (n.action === "save-run") return json({ ok: true, summary: { cases: n.cases.length, every: n.cases.length - 1, sometimes: 1, never: 0 } });
+        if (n.action === "list") return json({ cases: notes, runs: notesRuns, version: "def5678", problems: [] });
         return r.fulfill({ status: 400, body: "{}" });
       });
       await p.route("**/api/review-answer", async (r) => {
         const body = JSON.parse(r.request().postData() || "{}").answerChecks || {};
         checks.push(body);
         const json = (x) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(x) });
-        if (body.action === "list") return json({ reviews: verdicts, runs: [], version: "abc1234" });
+        if (body.action === "list") return json({ reviews: verdicts, runs: answerRuns, version: "abc1234" });
         if (body.action === "mark") return json({ ok: true });
-        if (body.action === "test") {
-          return json({ results: body.ids.map((id) => ({ id, says: verdicts.find((v) => v.id === id)?.owner_says, got: ["accept", "accept", "reject"] })) });
-        }
-        if (body.action === "save-run") return json({ ok: true, summary: { cases: body.cases.length, every: 0, sometimes: body.cases.length, never: 0 } });
         return r.fulfill({ status: 400, body: "{}" });
       });
     },
@@ -229,72 +225,68 @@ console.log("\n  All students: a student's failed check lights the alert, and th
   await t.browser.close();
 }
 
-console.log("\n  Claude's marking: every verdict listed, the owner's call saved, the test run in batches");
+console.log("\n  Claude's marking: judged by what the owner already did, checked by the server, nothing to press");
 {
+  const now = new Date().toISOString();
   const verdicts = [
-    { id: "v1", source: "asked", direction: "fr", front: "une grenouille", back: "a frog", expected: "a frog", typed: "a toad",
-      verdict: "accept", reasoning: "close enough", user_email: "student@example.com", created_at: new Date().toISOString(), owner_says: null },
+    { id: "v1", source: "asked", direction: "fr", front: "une grenouille", back: "a frog", expected: "a frog", typed: "the frog",
+      verdict: "reject", reasoning: "missing article", overridden: true, user_email: "test@example.com", created_at: now, owner_says: null,
+      call: { says: "accept", from: "accept-anyway" } },
     { id: "v2", source: "asked", direction: "en", front: "un crapaud", back: "a toad", expected: "un crapaud", typed: "une crapaud",
-      verdict: "reject", reasoning: "wrong gender", user_email: "student@example.com", created_at: new Date().toISOString(), owner_says: "reject" },
-    { id: "v3", source: "kept", direction: "fr", front: "le ménage", back: "housework", expected: "housework", typed: "the housework",
-      verdict: "accept", reasoning: null, user_email: "test@example.com", created_at: new Date().toISOString(), owner_says: null },
+      verdict: "accept", reasoning: "close enough", user_email: "student@example.com", created_at: now, owner_says: null, call: null },
   ];
-  const t = await open({ migrated: true, verdicts });
+  const answerRuns = [{ id: "run1", ran_at: now, version: "abc1234", cases: 1, passed: 0, summary: { left_out: 0 },
+    results: [{ id: "v1", says: "accept", from: "accept-anyway", got: ["reject", "accept", "reject"] }] }];
+  const evals = { answers: { regressions: ["Claude now gets “the frog” for “a frog” wrong, which it got right last time."] }, notes: { regressions: [] } };
+  const t = await open({ migrated: true, verdicts, answerRuns, evals });
+  await t.page.waitForSelector('[data-status-alert="avatar"]', { timeout: 12000 }).catch(() => null);
+  ck("a decision Claude got right before and wrong now lights the avatar", (await t.page.locator('[data-status-alert="avatar"]').count()) === 1);
   await t.menu();
   await t.page.locator("[data-status-toggle]").click();
   await t.page.waitForSelector("[data-status]", { timeout: 5000 });
   ck("the Status window opens on your cards", (await t.page.locator('[data-status-tab="cards"][aria-selected="true"]').count()) === 1);
+  ck("and the tab with the slip carries a mark", (await t.page.locator('[data-status-tab="answers"] [data-status-tab-alert]').count()) === 1);
   await t.page.locator('[data-status-tab="answers"]').click();
   await t.page.waitForSelector("[data-answer-review]", { timeout: 5000 }).catch(() => null);
-  ck("Claude's marking lists the verdicts not yet marked", (await t.page.locator("[data-answer-review]").count()) === 2,
-     String(await t.page.locator("[data-answer-review]").count()));
-  const first = (await t.page.locator('[data-answer-review="v1"]').innerText()).replace(/\s+/g, " ");
-  ck("each says what was asked, what the card says, what was typed and what Claude decided",
-     /Asked for the English of une grenouille/.test(first) && /The card says a frog/.test(first) && /Typed: a toad/.test(first) && /Claude: Accepted\. close enough/.test(first), first);
-  const kept = (await t.page.locator('[data-answer-review="v3"]').innerText()).replace(/\s+/g, " ");
-  ck("an answer accepted before verdicts were kept says so", /before verdicts were kept/.test(kept), kept);
-  await t.page.locator('[data-answer-review="v1"] [data-says="reject"]').click();
+  const box = (await t.page.locator("[data-status-answers]").innerText()).replace(/\s+/g, " ");
+  ck("the tab names the slip", /gets “the frog” for “a frog” wrong, which it got right last time/.test(box), box.slice(0, 200));
+  ck("and says what the last check found, naming the answer", /decided the way you did, every time, on 0 of 1/.test(box) && /“the frog” for “a frog”: you'd accept it; Claude agreed 1 of 3 times/.test(box), box);
+  ck("there is no button to start a test", (await t.page.locator("[data-status-answers] button", { hasText: /Test Claude/ }).count()) === 0);
+  const own = (await t.page.locator('[data-answer-review="v1"]').innerText()).replace(/\s+/g, " ");
+  ck("the owner's own dispute says what it is judged by, and asks nothing",
+     /Judged by: you pressed “Accept anyway”/.test(own) && (await t.page.locator('[data-answer-review="v1"] [data-says]').count()) === 0, own);
+  ck("another student's can be marked, if the owner ever wants to", (await t.page.locator('[data-answer-review="v2"] [data-says]').count()) === 2);
+  await t.page.locator('[data-answer-review="v2"] [data-says="reject"]').click();
   await t.wait(300);
-  ck("marking sends the owner's call", t.checks.some((c) => c.action === "mark" && c.id === "v1" && c.says === "reject"), JSON.stringify(t.checks.at(-1)));
-  ck("and the figures say how often Claude agreed with what's marked",
-     /agreed with you on 1 of the 2 you've marked/.test(await t.page.locator("[data-status-answers]").innerText()));
-  await t.page.locator("[data-answers-test] button").click();
-  await t.page.waitForSelector("[data-answers-result]", { timeout: 5000 }).catch(() => null);
-  const tested = t.checks.filter((c) => c.action === "test").flatMap((c) => c.ids);
-  ck("the test asks about the marked answers only", tested.sort().join() === "v1,v2", tested.join());
-  ck("and saves the run", t.checks.some((c) => c.action === "save-run" && c.cases.length === 2));
-  const result = (await t.page.locator("[data-answers-result]").innerText().catch(() => "")).replace(/\s+/g, " ");
-  ck("the result says how often Claude agreed, naming the answers it wavered on",
-     /agreed with you every time on 0 of 2/.test(result) && /“a toad” for “a frog”: you say refuse; Claude agreed 1 of 3 times/.test(result), result);
+  ck("and a mark is sent", t.checks.some((c) => c.action === "mark" && c.id === "v2" && c.says === "reject"));
   await t.browser.close();
 }
 
-console.log("\n  Notes to cards: the corrections tested class by class, and what came back named");
+console.log("\n  Notes to cards: what the last check found, and a mistake coming back lights the dot");
 {
+  const now = new Date().toISOString();
   const notes = [
     { id: "n1", kind: "front", date: "2025-09-22", original_front: "une propositiond", corrected_front: "une proposition" },
     { id: "n2", kind: "delete", date: "2025-10-21", original_front: "Naza" },
-    ...["2025-10-01", "2025-10-02", "2025-10-03", "2025-10-04"].map((d, i) => ({ id: `m${i}`, kind: "delete", date: d, original_front: `rule ${i}` })),
     { id: "n9", kind: "delete", date: null, original_front: "lost" },
   ];
-  const t = await open({ migrated: true, notes });
+  const notesRuns = [{ id: "nr1", ran_at: now, version: "def5678", cases: 2, passed: 1, summary: { unread: 0 },
+    results: [{ id: "n1", repeated: [false, false, false] }, { id: "n2", repeated: [true, true, true] }] }];
+  const evals = { answers: { regressions: [] }, notes: { regressions: ["Claude is making “une propositiond” again, which you corrected to “une proposition”."] } };
+  const t = await open({ migrated: true, notes, notesRuns, evals });
+  await t.page.waitForSelector('[data-status-alert="avatar"]', { timeout: 12000 }).catch(() => null);
+  ck("a mistake coming back lights the avatar", (await t.page.locator('[data-status-alert="avatar"]').count()) === 1);
   await t.menu();
   await t.page.locator("[data-status-toggle]").click();
   await t.page.locator('[data-status-tab="notes"]').click();
-  await t.page.waitForSelector("[data-notes-test] button", { timeout: 5000 }).catch(() => null);
-  const intro = (await t.page.locator("[data-status-notes]").innerText()).replace(/\s+/g, " ");
-  ck("it says how many corrections, from how many classes, and which couldn't be matched",
-     /7 corrections to test, from 6 classes\. 1 couldn't be matched/.test(intro) && /No class found for: you deleted “lost”/.test(intro), intro.slice(0, 300));
-  await t.page.locator("[data-notes-test] button").click();
-  await t.page.waitForSelector("[data-notes-result]", { timeout: 8000 }).catch(() => null);
-  const tests = t.notesCalls.filter((c) => c.action === "test");
-  ck("the classes go to the server four at a time, and the unmatched one not at all",
-     tests.length === 2 && tests.every((c) => new Set(c.ids.map((id) => notes.find((n) => n.id === id).date)).size <= 4) &&
-     !tests.some((c) => c.ids.includes("n9")), JSON.stringify(tests.map((c) => c.ids)));
-  ck("and the run is saved", t.notesCalls.some((c) => c.action === "save-run" && c.cases.length === 6));
-  const result = (await t.page.locator("[data-notes-result]").innerText().catch(() => "")).replace(/\s+/g, " ");
-  ck("the result names the mistake that came back, and how often",
-     /didn't come back in any reading on 5 of 6/.test(result) && /you changed “une propositiond” to “une proposition”\. It came back in 1 of 3 readings/.test(result), result);
+  await t.page.waitForSelector("[data-notes-last]", { timeout: 5000 }).catch(() => null);
+  const box = (await t.page.locator("[data-status-notes]").innerText()).replace(/\s+/g, " ");
+  ck("the tab names it", /making “une propositiond” again, which you corrected to “une proposition”/.test(box), box.slice(0, 200));
+  ck("says what the last check found and the mistakes Claude still makes",
+     /of 2 corrections, Claude didn't repeat the mistake on 1/.test(box) && /you deleted “Naza”, and it did it again in 3 of 3 readings/.test(box), box);
+  ck("and which correction isn't in the check, and why", /its class isn't in your cahier: you deleted “lost”/.test(box));
+  ck("there is no button to start it", (await t.page.locator("[data-status-notes] button").count()) === 0);
+  ck("nothing but the list was asked of the server", t.notesCalls.every((c) => c.action === "list"));
   await t.browser.close();
 }
 

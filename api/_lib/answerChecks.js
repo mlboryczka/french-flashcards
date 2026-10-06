@@ -9,22 +9,26 @@
 //   shown, what was typed, Claude's reasoning and whether the student then
 //   pressed "Accept anyway";
 //
-//   the owner marks what Claude should have said, in the Status window;
+//   what Claude should have said comes from what the owner already did
+//   (ownerCall): on their own answers, asking for it to be accepted means
+//   accept, and "Accept anyway" after a refusal means Claude was wrong. On
+//   another student's answer only the owner's mark counts, if they ever make
+//   one; nothing waits on it (owner, 2026-10-06: "i marked it right or
+//   wrong, why would i need to confirm that again?");
 //
-//   those marks are a test. Each marked answer is put to Claude again, the
-//   same way the app asks it, three times over (it can answer differently
-//   each time), and the run is saved: "agreed with you every time on 37 of
-//   40". Run it after any change to how Claude is asked, and compare.
+//   those calls are a test, run by the server on its own (runAnswerTest,
+//   from /api/cahier-daily when evalRuns.isDue says so). Each answer is put
+//   to Claude again, the same way the app asks it, three times over (it can
+//   answer differently each time), and the run is saved: "agreed every time
+//   on 37 of 40".
 //
 // Reached through /api/review-answer with an `answerChecks` body, because the
 // Hobby plan deploys at most 12 routes and there are 12. Admin only:
 //
-//   list      every saved verdict (all students, newest first), the last
-//             test runs, and the version of the question being asked now
-//   mark      { id, says: "accept" | "reject" | null } the owner's call
-//   test      { ids } (at most TEST_BATCH) marked verdicts put to Claude
-//             again, ASKS_PER_CASE times each; nothing is saved
-//   save-run  { cases: [{ id, says, got }] } a finished test run, saved
+//   list      every saved verdict (all students, newest first) with the call
+//             it is judged by, the last runs, and the question's version
+//   mark      { id, says: "accept" | "reject" | null } the owner's own call
+//             on another student's answer
 //
 // The store is passed in so the rules can be tested without a database
 // (tests/suites/answer-checks.mjs).
@@ -32,10 +36,14 @@
 import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { missingTable } from "../../src/lib/dealLog.js";
+import { pooled, outcome, tally } from "./evalRuns.js";
 
 export const ANSWER_MODEL = "claude-opus-5";
 export const ASKS_PER_CASE = 3;
-export const TEST_BATCH = 8;
+// A run asks about the most recent answers, at most this many, so it fits in
+// a function's five minutes. Any left out are counted in the run's summary.
+export const MAX_CASES = 120;
+const AT_ONCE = 12;
 
 // The question Claude is asked, word for word as /api/review-answer has asked
 // it since before verdicts were kept. Changing a word changes the version
@@ -103,6 +111,24 @@ export async function askClaude({ apiKey, direction, french, expected, typed }) 
 // marked wrong, as the app does, so it agrees with "reject".
 export const agrees = (says, verdict) => (says === "accept") === (verdict === "accept");
 
+// What Claude should have said about a saved verdict, and where that comes
+// from; null when nobody has said. `adminEmail` is the owner's.
+//   the owner's own mark, if they made one;
+//   on the owner's own answers: "Accept anyway" means accept (Claude was
+//   wrong to refuse); an answer accepted before verdicts were kept was
+//   accepted at their request; otherwise their asking for it to be accepted
+//   is their call when Claude accepted, and moving on without "Accept anyway"
+//   is their call when it refused.
+export function ownerCall(row, adminEmail) {
+  if (row.owner_says === "accept" || row.owner_says === "reject") return { says: row.owner_says, from: "marked" };
+  const own = !!adminEmail && String(row.user_email || "").toLowerCase() === adminEmail;
+  if (!own) return null;
+  if (row.overridden) return { says: "accept", from: "accept-anyway" };
+  if (row.source === "kept") return { says: "accept", from: "kept" };
+  if (row.verdict === "accept") return { says: "accept", from: "asked" };
+  return { says: "reject", from: "left" };
+}
+
 // The row saved for one verdict: both sides of the card and what Claude was
 // given as the expected answer, so a test can ask it exactly as the app did.
 export function verdictRow({ user, card_id, direction, french, english, expected, typed, verdict, reasoning }) {
@@ -122,25 +148,21 @@ export function verdictRow({ user, card_id, direction, french, english, expected
   };
 }
 
-// A test run's cases, counted. A case passes when Claude agreed with the owner
-// every time it was asked; "sometimes" is the ones it can't make its mind up
-// about, which are as much a problem as the ones it gets wrong.
-export function summarize(cases) {
-  let every = 0, sometimes = 0, never = 0;
-  for (const c of cases) {
-    const asked = (c.got || []).filter((v) => v !== "error");
-    const yes = asked.filter((v) => agrees(c.says, v)).length;
-    if (asked.length && yes === asked.length) every++;
-    else if (yes > 0) sometimes++;
-    else never++;
-  }
-  return { cases: cases.length, every, sometimes, never };
+// One case's outcome (api/_lib/evalRuns.js): how many of Claude's usable
+// answers agreed with the call. A failed ask counts for nothing either way.
+export function answerJudge(c) {
+  const asked = (c.got || []).filter((v) => v !== "error");
+  return outcome(asked.filter((v) => agrees(c.says, v)).length, asked.length);
 }
+
+// A run's cases counted: agreed every time, some of the time, mostly not,
+// and not asked at all (left out of the rest).
+export const summarize = (cases) => tally(cases, answerJudge);
 
 const reply = (status, json) => ({ status, json });
 const WAITING = "Waiting for the database update (migration_015).";
 
-export async function handleAnswerChecks({ body, isAdmin, store, apiKey }) {
+export async function handleAnswerChecks({ body, isAdmin, store, adminEmail }) {
   if (!isAdmin) return reply(403, { error: "Admin only" });
   const action = body?.action;
 
@@ -148,7 +170,12 @@ export async function handleAnswerChecks({ body, isAdmin, store, apiKey }) {
     const reviews = await store.list();
     if (reviews.missing) return reply(200, { waiting: WAITING, reviews: [], runs: [], version: ANSWER_PROMPT_VERSION });
     const runs = await store.runs();
-    return reply(200, { reviews: reviews.rows, runs: runs.rows || [], version: ANSWER_PROMPT_VERSION, model: ANSWER_MODEL });
+    return reply(200, {
+      reviews: reviews.rows.map((r) => ({ ...r, call: ownerCall(r, adminEmail) })),
+      runs: runs.rows || [],
+      version: ANSWER_PROMPT_VERSION,
+      model: ANSWER_MODEL,
+    });
   }
 
   if (action === "mark") {
@@ -160,48 +187,71 @@ export async function handleAnswerChecks({ body, isAdmin, store, apiKey }) {
     return reply(200, { ok: true, id: body.id, says });
   }
 
-  if (action === "test") {
-    const ids = Array.isArray(body.ids) ? body.ids.slice(0, TEST_BATCH) : [];
-    if (!ids.length) return reply(400, { error: "Nothing to test." });
-    if (!apiKey) return reply(500, { error: "The server has no Anthropic key." });
-    const rows = (await store.get(ids)).rows || [];
-    const marked = rows.filter((r) => r.owner_says === "accept" || r.owner_says === "reject");
-    const results = await Promise.all(marked.map(async (r) => {
-      const got = await Promise.all(Array.from({ length: ASKS_PER_CASE }, () =>
-        askClaude({ apiKey, direction: r.direction, french: r.front, expected: r.expected, typed: r.typed })
-          .then((v) => v.verdict)
-          .catch((e) => {
-            // A refusal of the key or a rate limit is the whole run's problem,
-            // not this case's: say so rather than score it.
-            if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.RateLimitError) throw e;
-            return "error";
-          })));
-      return { id: r.id, says: r.owner_says, got };
-    }));
-    return reply(200, { results, version: ANSWER_PROMPT_VERSION });
-  }
-
-  if (action === "save-run") {
-    const cases = (Array.isArray(body.cases) ? body.cases : [])
-      .filter((c) => c && (c.says === "accept" || c.says === "reject") && Array.isArray(c.got))
-      .map((c) => ({ id: c.id, says: c.says, got: c.got.map((v) => (["accept", "reject", "uncertain", "error"].includes(v) ? v : "error")) }));
-    if (!cases.length) return reply(400, { error: "Nothing to save." });
-    const summary = summarize(cases);
-    const saved = await store.saveRun({
-      kind: "answers",
-      version: ANSWER_PROMPT_VERSION,
-      model: ANSWER_MODEL,
-      cases: summary.cases,
-      passed: summary.every,
-      summary,
-      results: cases,
-    });
-    if (saved.missing) return reply(409, { error: WAITING });
-    if (saved.error) return reply(500, { error: saved.error });
-    return reply(200, { ok: true, summary, run: saved.row });
-  }
-
   return reply(400, { error: "Unknown action" });
+}
+
+export const answerPasses = (c) => answerJudge(c) === "pass";
+
+// The same answer disputed more than once on the same card is one case: the
+// first row's id, so it stays the same case from run to run, and the
+// strongest call among the rows (a mark, then an accept, then a refusal the
+// owner moved on from), so a later "Accept anyway" isn't outvoted by an
+// earlier time they moved on.
+const STRENGTH = { marked: 3, "accept-anyway": 2, kept: 2, asked: 2, left: 1 };
+function cases(rows, adminEmail) {
+  const groups = new Map();
+  for (const r of rows) {
+    const call = ownerCall(r, adminEmail);
+    if (!call) continue;
+    const key = [r.user_id, r.card_id, r.direction, String(r.typed).trim().toLowerCase()].join("|");
+    const g = groups.get(key);
+    const newer = !g || Date.parse(r.created_at) >= Date.parse(g.latest);
+    if (!g) groups.set(key, { r, call, first: r, latest: r.created_at });
+    else {
+      if (Date.parse(r.created_at) < Date.parse(g.first.created_at)) g.first = r;
+      if (STRENGTH[call.from] > STRENGTH[g.call.from] || (STRENGTH[call.from] === STRENGTH[g.call.from] && newer)) g.call = call;
+      if (newer) { g.r = r; g.latest = r.created_at; }
+    }
+  }
+  return [...groups.values()]
+    .sort((a, b) => Date.parse(b.latest) - Date.parse(a.latest))
+    .map((g) => ({ id: g.first.id, r: g.r, call: g.call }));
+}
+
+// The whole test, as the server runs it on its own: every disputed answer with
+// a call (the most recent MAX_CASES), each asked ASKS_PER_CASE times, and the
+// run saved. Returns the run, or { skipped } when there is nothing to test or
+// Claude couldn't be asked at all.
+export async function runAnswerTest({ store, apiKey, adminEmail, deadline = Infinity }) {
+  const listed = await store.list();
+  if (listed.missing) return { skipped: WAITING };
+  const all = cases(listed.rows || [], adminEmail);
+  const chosen = all.slice(0, MAX_CASES);
+  if (!chosen.length) return { skipped: "No answers to test yet." };
+  const asks = await pooled(
+    chosen.flatMap(({ r }) => Array.from({ length: ASKS_PER_CASE }, () => () =>
+      askClaude({ apiKey, direction: r.direction, french: r.front, expected: r.expected, typed: r.typed }).then((v) => v.verdict))),
+    AT_ONCE,
+    deadline,
+  );
+  const results = chosen.map(({ id, call }, i) => ({
+    id,
+    says: call.says,
+    from: call.from,
+    got: asks.slice(i * ASKS_PER_CASE, (i + 1) * ASKS_PER_CASE).map((v) => (typeof v === "string" ? v : "error")),
+  }));
+  const summary = { ...summarize(results), left_out: all.length - chosen.length };
+  if (!summary.cases) {
+    const reason = asks.find((v) => v && v.error)?.error?.message || "no answer";
+    return { skipped: `Claude couldn't be asked: ${reason}` };
+  }
+  const saved = await store.saveRun({
+    kind: "answers", version: ANSWER_PROMPT_VERSION, model: ANSWER_MODEL,
+    cases: summary.cases, passed: summary.every, summary, results,
+  });
+  if (saved.missing) return { skipped: WAITING };
+  if (saved.error) throw new Error(saved.error);
+  return { run: saved.row, summary };
 }
 
 // The store on Supabase, with the service role. Each call says `missing` when
@@ -231,10 +281,10 @@ export function supabaseAnswerStore(db) {
       return missingTable(r.error) ? { missing: true } : r.error ? { error: r.error.message } : { ok: true };
     },
     async runs() {
-      return out(await db.from("eval_runs").select("id, kind, ran_at, version, model, cases, passed, summary").eq("kind", "answers").order("ran_at", { ascending: false }).limit(20));
+      return out(await db.from("eval_runs").select("id, kind, ran_at, version, model, cases, passed, summary, results").eq("kind", "answers").order("ran_at", { ascending: false }).limit(10));
     },
     async saveRun(row) {
-      const { data, error } = await db.from("eval_runs").insert(row).select("id, kind, ran_at, version, model, cases, passed, summary").single();
+      const { data, error } = await db.from("eval_runs").insert(row).select("id, kind, ran_at, version, model, cases, passed, summary, results").single();
       return missingTable(error) ? { missing: true } : error ? { error: error.message } : { row: data };
     },
   };

@@ -1,15 +1,15 @@
 // Claude turning class notes into cards, tested against the owner's
 // corrections (api/_lib/notesChecks.js): what each correction makes a case of,
-// finding its class in the notebook, judging a reading of the class, only the
-// admin testing, every case's class read three times, and a run counted on
-// the server. With a stand-in store, notebook and reading. No browser,
-// nothing leaves the machine.
+// finding its class in the cahier, judging a reading of the class, only the
+// admin seeing the list, and the test the server runs on its own: every
+// case's class read three times, counted and kept. With a stand-in store,
+// cahier and reading. No browser, nothing leaves the machine.
 
 import { checker } from "../check.mjs";
 
 const ck = checker();
 const {
-  handleNotesChecks, buildCases, judge, caseKind, summarize, NOTES_RUNS, TEST_CLASSES, NOTES_PROMPT_VERSION,
+  handleNotesChecks, buildCases, judge, caseKind, summarize, runNotesTest, notesPass, NOTES_RUNS, NOTES_PROMPT_VERSION,
 } = await import("../../api/_lib/notesChecks.js");
 
 const OWNER = "owner";
@@ -85,7 +85,7 @@ console.log("\n  judging one reading of a class");
   ck("a deletion is never 'made'", judge(c("c3"), []).made === null);
 }
 
-console.log("\n  the test, through the handler");
+console.log("\n  the test, as the server runs it on its own");
 {
   const store = {
     saved: [],
@@ -96,7 +96,8 @@ console.log("\n  the test, through the handler");
     async saveRun(row) { const run = { id: `run${this.saved.length + 1}`, ...row }; this.saved.push(run); return { row: run }; },
   };
   let reads = [];
-  // The stand-in Claude: repeats the stray letter in one reading out of three.
+  // The stand-in Claude: repeats the stray letter in one reading out of three,
+  // and makes "Naza" into a card every time.
   const read = async (block) => {
     reads.push(block.date);
     const n = reads.filter((d) => d === block.date).length;
@@ -104,39 +105,45 @@ console.log("\n  the test, through the handler");
     if (block.date === "2025-10-21") return [{ front: "Naza", back: "a brand" }];
     return [{ front: "autre chose", back: "something else" }];
   };
-  const ask = (body, admin = true) => handleNotesChecks({
-    body, isAdmin: admin, store, readDoc: async () => "the notebook", blocksOf: () => blocks, read,
-  });
+  const env = { store, readDoc: async () => "the cahier", blocksOf: () => blocks };
 
-  for (const action of ["list", "test", "save-run"]) {
-    const r = await ask({ action, ids: ["c1"], cases: [] }, false);
+  for (const action of ["list"]) {
+    const r = await handleNotesChecks({ body: { action }, isAdmin: false, ...env });
     ck(`a student can't ${action}`, r.status === 403);
   }
-  ck("and nothing was read", reads.length === 0);
-
-  const list = await ask({ action: "list" });
-  ck("the list gives every case with its class, and the question's version",
+  const list = await handleNotesChecks({ body: { action: "list" }, isAdmin: true, ...env });
+  ck("the list gives every case with its class, and the version of how a class is read",
      list.status === 200 && list.json.cases.length === 6 && list.json.cases.every((c) => c.date) && list.json.version === NOTES_PROMPT_VERSION &&
      !("user_id" in list.json.cases[0]));
+  const gone = await handleNotesChecks({ body: { action: "test", ids: ["c1"] }, isAdmin: true, ...env });
+  ck("there's no test to start by hand any more", gone.status === 400);
+  ck("and nothing was read for the list", reads.length === 0);
 
-  reads = [];
-  const t = await ask({ action: "test", ids: ["c1", "c3"] });
-  ck(`each case's class is read ${NOTES_RUNS} times`, t.status === 200 && reads.length === 2 * NOTES_RUNS, reads.join());
-  const by = Object.fromEntries(t.json.results.map((r) => [r.id, r]));
+  const done = await runNotesTest({ ...env, read });
+  const classes = new Set(buildCases(corrections, new Map(cards.map((c) => [c.id, c])), blocks).map((c) => c.date)).size;
+  ck(`every case's class read ${NOTES_RUNS} times, once for all the cases it holds`, reads.length === classes * NOTES_RUNS, `${reads.length} readings of ${classes} classes`);
+  const run = store.saved[0];
+  const by = Object.fromEntries(run.results.map((r) => [r.id, r]));
   ck("the stray letter came back in one reading of three", JSON.stringify(by.c1.repeated) === "[false,true,false]" && JSON.stringify(by.c1.made) === "[true,false,true]", JSON.stringify(by.c1));
   ck("the deleted card came back every time", by.c3.repeated.every(Boolean));
+  ck("the run is kept and counted: no repeat on four, sometimes on one, every time on one",
+     run.kind === "notes" && run.version === NOTES_PROMPT_VERSION && JSON.stringify([done.summary.every, done.summary.sometimes, done.summary.never]) === "[4,1,1]" && run.passed === 4,
+     JSON.stringify(done.summary));
+  ck("a case passes only when the mistake came back in none of the readings",
+     notesPass({ repeated: [false, null, false] }) && !notesPass({ repeated: [false, true, false] }) && !notesPass({ repeated: [null, null, null] }));
 
-  const many = await ask({ action: "test", ids: corrections.map((c) => c.id) });
-  ck(`at most ${TEST_CLASSES} classes in one go`, many.status === 400, JSON.stringify(many.json));
+  const before = store.saved.length;
+  const flaky = async (block) => { if (block.date === "2025-10-21") throw new Error("Claude returned non-JSON"); return read(block); };
+  const partly = await runNotesTest({ ...env, read: flaky });
+  const kept = store.saved.at(-1);
+  ck("a class Claude couldn't read leaves its cases untried: kept apart, not counted as mistakes",
+     store.saved.length === before + 1 && partly.summary.untried === 1 && partly.summary.cases === 5 &&
+     kept.results.find((r) => r.id === "c3").repeated.every((v) => v === null), JSON.stringify(partly.summary));
+  ck("and each case keeps the class it was judged on", kept.results.every((r) => typeof r.date === "string"));
 
-  const saved = await ask({ action: "save-run", cases: [
-    { id: "c1", repeated: [false, true, false], made: [true, false, true] },
-    { id: "c3", repeated: [true, true, true], made: [null, null, null] },
-    { id: "c2", repeated: [false, false, null], made: [true, true, null] },
-  ] });
-  ck("a run is counted on the server: no repeat every time, some of the time, never",
-     saved.status === 200 && JSON.stringify(saved.json.summary) === '{"cases":3,"every":1,"sometimes":1,"never":1}' &&
-     store.saved[0].kind === "notes" && store.saved[0].passed === 1, JSON.stringify(saved.json));
+  reads = [];
+  const late = await runNotesTest({ ...env, read, deadline: -1 });
+  ck("past the time limit nothing is read, and no run is kept", reads.length === 0 && !!late.skipped && store.saved.length === before + 1, JSON.stringify(late));
 }
 
 console.log("\n  counting");
