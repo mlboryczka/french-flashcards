@@ -132,6 +132,10 @@ export function fakeSupabase({ tables = {}, migrated = true, faults = {}, now = 
         if (f && f.table === name && f.times > 0) { f.times--; return { data: null, error: f.error || err("XX000", "the update failed") }; }
         const hit = matching();
         const after = hit.map((r) => ({ ...r, ...clone(q.payload) }));
+        // migration_016's trigger: a card back in study loses its reason.
+        if (name === "user_cards" && migrated && "source" in q.payload) {
+          for (const r of after) if (!(typeof r.source === "string" && r.source.startsWith("archived:"))) { r.archived_reason = null; r.archived_at = null; }
+        }
         if (name === "user_cards") {
           for (const r of after) {
             const bad = refuse(name, r);
@@ -170,7 +174,13 @@ export function fakeSupabase({ tables = {}, migrated = true, faults = {}, now = 
       }
       const written = [];
       for (const p of planned) {
-        if (p.kind === "insert") { rows.push(p.row); written.push(p.row); } else { Object.assign(p.target, p.patch); written.push(p.target); }
+        if (p.kind === "insert") { rows.push(p.row); written.push(p.row); continue; }
+        Object.assign(p.target, p.patch);
+        if (name === "user_cards" && migrated && "source" in p.patch && !String(p.target.source ?? "").startsWith("archived:")) {
+          p.target.archived_reason = null;
+          p.target.archived_at = null;
+        }
+        written.push(p.target);
       }
       if (q.single) return { ...shape(clone(written)), count: written.length };
       return { data: q.wantRows ? clone(written) : null, error: null, count: written.length };

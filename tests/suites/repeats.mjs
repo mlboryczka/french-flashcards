@@ -432,7 +432,8 @@ console.log("\n  two runs at once");
   ck("the upload finishes", r.ok !== false, JSON.stringify(r).slice(0, 160));
   headline("upload with a sync in the middle", admin, before);
   const both = await Promise.all([sync(admin), sync(admin)]);
-  ck("two syncs at once: neither reads anything already read", both.every((x) => x.ok) && claude.reads.length === 4 + 0, `${claude.reads.length} readings`);
+  // The upload's four readings, and not one more.
+  ck("two syncs at once after it: neither reads anything already read", both.every((x) => x.ok) && claude.reads.length === 4, `${claude.reads.length} readings`);
 
   // Two syncs started together on a deck with new classes: one reads, one waits.
   const admin2 = await usedDeck({ via: "sync" });

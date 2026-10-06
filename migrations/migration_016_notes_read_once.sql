@@ -52,6 +52,8 @@
 --                       cards archived before this, whose reason wasn't kept
 --      archived_at      when
 --      merged_into      for a 'duplicate', the card it repeats
+--    A card that comes back into study by any path loses its reason and time
+--    (a trigger), so no card in study says it was removed.
 --
 -- 4. card_pairs: every same-or-different question Claude answered about two
 --    look-alike cards (api/_lib/sameCardQuestion.js): the two cards (ids, and
@@ -86,6 +88,27 @@ alter table public.user_cards add column if not exists archived_reason text;
 alter table public.user_cards add column if not exists archived_at timestamptz;
 alter table public.user_cards add column if not exists merged_into bigint
   references public.user_cards(id) on delete set null;
+
+-- A reason belongs to a card out of study. A card that comes back by any
+-- path (the tutor adding the same French, Revert in View feedback, a lesson)
+-- loses it, so no card in study says it was removed.
+create or replace function public.user_cards_clear_archived_reason()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.source is null or new.source not like 'archived:%' then
+    new.archived_reason := null;
+    new.archived_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists user_cards_clear_archived_reason on public.user_cards;
+create trigger user_cards_clear_archived_reason
+  before update of source on public.user_cards
+  for each row execute function public.user_cards_clear_archived_reason();
 
 -- 4. Claude's verdicts on look-alike cards ----------------------------------
 
