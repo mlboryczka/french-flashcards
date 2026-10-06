@@ -44,7 +44,13 @@ const SESSION = {
 // stored.
 // `app`: another build of the app to open (the statusline suite runs one with
 // the test account as admin).
-export async function openApp({ width = 1400, height = 900, route, studyMode = "flip", app = APP } = {}) {
+// `tour`: the first-visit tour comes up for a student with nothing answered,
+// which several fixtures are. Every suite opens as a student who has seen it
+// unless it passes `tour: true`.
+// `ready`: what to wait for before handing the page over; a new student's
+// Cards page has no "Previous card".
+export const TOUR_SEEN_KEY = "tour-seen:00000000-0000-0000-0000-000000000001";
+export async function openApp({ width = 1400, height = 900, route, studyMode = "flip", app = APP, tour = false, ready = 'button:has-text("Previous card")' } = {}) {
   const browser = await chromium.launch({
     executablePath: CHROME,
     args: ["--no-sandbox"],
@@ -54,10 +60,12 @@ export async function openApp({ width = 1400, height = 900, route, studyMode = "
   page.on("dialog", (d) => d.accept());
 
   await page.goto(app);
-  await page.evaluate((mode) => {
+  await page.evaluate(([mode, tour, tourKey]) => {
     if (mode) localStorage.setItem("study-mode", mode);
     else localStorage.removeItem("study-mode");
-  }, studyMode);
+    if (tour) localStorage.removeItem(tourKey);
+    else localStorage.setItem(tourKey, "1");
+  }, [studyMode, tour, TOUR_SEEN_KEY]);
   await page.evaluate((s) => {
     localStorage.setItem(
       "sb-127-auth-token",
@@ -71,7 +79,7 @@ export async function openApp({ width = 1400, height = 900, route, studyMode = "
   // Routes must be registered before the reload that loads the deck.
   if (route) await route(page);
   await page.reload({ waitUntil: "commit" });
-  await page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
+  await page.waitForSelector(ready, { timeout: 20000 });
   await page.waitForTimeout(600);
   return { browser, page };
 }

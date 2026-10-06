@@ -179,3 +179,29 @@ textarea:focus-visible {
 .tutor-dot {
   animation: tutor-dot 1.25s ease-in-out infinite;
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   The first-visit tour (src/Tour.jsx)
+   ─────────────────────────────────────────────────────────────────────── */
+/* The outline on the thing a step asks the student to press. */
+@keyframes tour-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(156, 66, 52, 0.5); }
+  70%  { box-shadow: 0 0 0 12px rgba(156, 66, 52, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(156, 66, 52, 0); }
+}
+.tour-pulse { animation: tour-pulse 1.6s ease-out infinite; }
+
+/* A click on the dimmed part shakes the caption. */
+@keyframes tour-shake {
+  0%, 100% { translate: 0; }
+  25%      { translate: -6px 0; }
+  75%      { translate: 6px 0; }
+}
+.tour-shake { animation: tour-shake 0.35s; }
+
+/* The menu item a step points at, inside a menu it has opened. */
+[data-tour-mark] {
+  background: rgba(156, 66, 52, 0.1) !important;
+  color: #9c4234 !important;
+  font-weight: 700 !important;
+}

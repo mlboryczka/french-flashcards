@@ -6,6 +6,11 @@ student keep in a Google Doc. Claude turns each class into cards, and FSRS, a
 model of memory, decides which card comes up when. There are also built-in
 lessons with notes.
 
+The app is called **Déjà Review** (owner, 2026-10-06): a flashcard app that
+starts with French and is meant for other languages later. The sign-in page
+and the browser tab carry the name; the repo, the live address and this
+document keep the old one.
+
 Live at `french-flashcards-nine.vercel.app`, deployed by Vercel from `main`.
 Repo: `mlboryczka/french-flashcards`.
 
@@ -110,8 +115,8 @@ included: the app run with it, and every script in `scripts/`, works on live
 data. If Claude Code refuses to touch production, give the owner the command
 to run in their terminal (not the Supabase SQL editor).
 
-**`npm test` before every push.** It runs the 28 suites in `tests/suites` (12
-without a browser, 16 in headless Chromium) in about twenty minutes, so start
+**`npm test` before every push.** It runs the 30 suites in `tests/suites` (13
+without a browser, 17 in headless Chromium) in about twenty minutes, so start
 it early. `npm test -- <name>` runs only the suites whose names contain
 `<name>`. Don't edit `src/` while browser suites run: a save reloads the app
 under a running test. For a small change the owner wants the result in
@@ -1027,6 +1032,83 @@ Nothing changes until the owner presses a button.
   inside a lesson, where it means nothing; unlike the type filter it is not
   cleared on entering one, so Cards comes back as the student left it.
 
+### The first-visit tour
+
+Asked for by the owner on 2026-10-06, designed in a clickable mockup first
+(`.claude/mockups/walkthrough.html`, on the owner's Mac only, not in the repo).
+It walks a new student through the app one part at a time: everything is
+dimmed but that part, and a caption beside it says what to do there.
+
+- **It comes up once per account, on the first sign-in** (owner): for a student
+  with nothing answered either way round, once the deck has come from the
+  server and the lesson sync has put Lesson 1's cards in it. A brand-new
+  student lands on Cards with "You're all caught up", since lessons start
+  switched off, so the tour starts there. Existing students, who have answers,
+  never see it: the first time the app finds one, it notes them as having
+  seen it, so "Reset all progress" later doesn't make them look new. An
+  account made before the tour that has never answered a card gets it once.
+- **That it was shown is kept on the account** (`user_metadata.tour_seen`,
+  saved the way the lesson switches are, and read from the server on opening)
+  **and on the browser** (`localStorage["tour-seen:<user id>"]`), so another
+  computer or a failed save doesn't bring it back. It counts as shown as soon
+  as it appears, "Not now" and "Skip tour" included. "Take the tour again" in
+  the profile menu, between "How much to remember" and Sign out, opens it any
+  time.
+- **The steps** are in `src/lib/tourSteps.js`, in order: welcome; Lessons;
+  Study on Lesson 1; answering a card; the result and Continue; Show answer;
+  how cards come back; Lesson notes; the notes open; Settings; the lesson's
+  "In my daily cards" switch on the Lessons page; Cards ("Come back every
+  day"); Stats; the Tutor; uploading class notes from the menu under the user
+  icon; Send feedback; "You're ready", which puts the student back in Lesson 1.
+  Each caption says one thing plainly, with the card or button named (owner's
+  wording, approved in the mockup).
+- **Some steps ask the student to do something** (`until`): click Lessons,
+  press Study, answer, press Continue, press Show answer, open Lesson notes.
+  The thing to press gets a pulsing outline and the tour moves on by itself
+  once the app's state says it was done. Next still skips such a step. Back
+  onto one that is already done stays put rather than moving on again. A step
+  that doesn't apply once the page has settled (the result of a card nobody
+  answered; a card when the lesson has none to deal) is passed over in the
+  direction the student was going. The result step keeps the answer it is
+  about, so its caption doesn't change when Continue brings the next card.
+- **Highlights appear in place, never slide** (owner, 2026-10-06: "highlights
+  shouldn't fly in"). Between steps everything stays dimmed with nothing lit;
+  then the highlight and caption appear together where they belong. A step
+  whose page is still moving waits for it (`settle`: the notes sliding in, or
+  sliding out before Settings). Once shown, the highlight follows its part
+  every frame, so a panel reflowing the page or a resize doesn't leave it
+  behind.
+- **The dimmed part takes no clicks:** a click there only shakes the caption,
+  and nothing outside the tour hears it, so a menu a step has opened stays
+  open. On a step that asks the student to do something, the lit part works
+  as usual. On one that explains, it is only to look at (a click there shakes
+  the caption too), so the tutor or the upload window can't open under the
+  dimming; the settings, the notes and the lesson switch stay usable
+  (`touch`).
+- **Show answer is shown only on a card never answered that way round**, so a
+  student taking the tour again isn't led to record a miss on a card they
+  know. Back past an answered card goes to the lesson, not to a caption asking
+  for an answer already given.
+- **Keys:** only on the steps where the student works the card (answering,
+  the result, Show answer) do keys reach the app. On every other step the tour
+  has them (Enter or → for Next, ← for Back, Escape to close) and the app gets
+  none, so a key pressed to move the tour on can't turn or grade the card
+  behind the dimming (a flip-mode student's Enter is Got It). A key on one of
+  the caption's own buttons presses that button.
+- **In a window too narrow for the notes to sit beside the card** (see *The
+  side panels and the page*), they cover it, so the two notes captions say so
+  instead of "beside your cards".
+- **The caption** goes beside the lit part on the first side with room (each
+  step says which sides it prefers), with an arrow to it; with no room on any
+  side it overlaps on the roomiest side, without an arrow. It sits above every
+  panel and modal (`zIndex` 20000), rendered into `<body>` (`src/Tour.jsx`).
+- **What it points at** is found by `data-tour` markers (`nav-cards`,
+  `card`, `well`, `answer-row`, `continue`, `notes`, `avatar`, `upload`…),
+  `data-tour-lesson` / `data-tour-study` / `data-tour-include` on the Lessons
+  page, and the existing `data-lesson-toggle`, `data-settings-toggle`,
+  `data-settings-menu`, `data-feedback-toggle`. Changing one of those elements
+  means keeping its marker.
+
 ---
 
 ## Testing
@@ -1088,7 +1170,9 @@ Thirteen need no browser:
   stand-in store and Claude: who may ask, Apply changing only the card's text,
   and refusing a card that changed after the review.
 
-Sixteen drive the app in a browser:
+Seventeen drive the app in a browser. `openApp` opens every one as a student
+who has seen the first-visit tour, unless it passes `tour: true`; `ready`
+says what to wait for when a page has no "Previous card".
 
 - `layout`: the card fits the window; the tutor moves the content column, not
   the sidebar.
@@ -1119,6 +1203,13 @@ Sixteen drive the app in a browser:
 - `settings`: "How much to remember", including before `migration_012`.
 - `tutor`: the answer streaming in, the deck context sent, and editing a
   proposed card.
+- `tour`: the first-visit tour, as a brand-new student whose empty deck the
+  lesson sync fills: it comes up by itself and is saved as shown; every step
+  lights and outlines the right part; the steps the student does move on when
+  done; highlights appear in place (sampled every frame); clicks on the dimmed
+  part do nothing; Enter on a step that explains leaves the card alone;
+  Finish lands in Lesson 1; never again after a reload, on another computer,
+  or for a student with answers; "Take the tour again".
 
 ### Rules for writing checks
 
@@ -1845,6 +1936,18 @@ landing back on the sign-in page, so the page now says what happened. The
 owner confirmed Supabase's free email sender reaches students outside the
 project, since students already use it.
 
+### 2026-10-06 — The first-visit tour, and the name Déjà Review
+
+The owner asked for a walkthrough for new students that lights one part of the
+app at a time with a caption saying what to do. It was built first as a
+clickable mockup and refined with the owner: it starts from a brand-new
+student's first sign-in; highlights appear in place rather than sliding;
+captions name the button ("your user icon at the bottom left"); two steps were
+added, on how cards come back and on which lessons go into Cards; and it comes
+up only on the first sign-in. The app was renamed Déjà Review, and the sign-in
+page lost its tagline. See *The first-visit tour*. The new `tour` suite walks
+through it; the harness keeps it out of every other suite.
+
 ---
 
 ## Open items
@@ -1926,6 +2029,11 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 ### Not yet checked on the live app
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
+
+- **The first-visit tour** (2026-10-06). Sign up with a new address and the
+  tour should come up once the app opens; sign out and in again, or open it on
+  another computer, and it shouldn't. Saving `tour_seen` to the account has
+  only been tested against the mock.
 
 - **The used sign-in link message** (2026-10-04). Ask for a link, open it,
   sign out, and open the same link again: the sign-in page should say it has

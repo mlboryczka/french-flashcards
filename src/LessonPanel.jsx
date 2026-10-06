@@ -99,6 +99,7 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
       )}
       <div
         ref={panelRef}
+        data-tour="notes"
         style={{ ...S.panel, transform: entered ? "translateX(0)" : "translateX(100%)" }}
       >
         <div style={S.head}>

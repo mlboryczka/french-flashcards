@@ -39,10 +39,7 @@ export default function Auth() {
   return (
     <div style={styles.wrap}>
       <div style={styles.card}>
-        <h1 style={styles.title}>French Flashcards</h1>
-        <p style={styles.tagline}>
-          A spaced-repetition deck from a year of daily French lessons.
-        </p>
+        <h1 style={styles.title}>Déjà Review</h1>
         {sent ? (
           <div style={styles.sent}>
             <div style={styles.sentIcon}>✉</div>
@@ -101,18 +98,10 @@ const styles = {
   title: {
     fontSize: 28,
     fontWeight: 700,
-    margin: "0 0 8px",
+    margin: "0 0 28px",
     letterSpacing: "-0.5px",
     color: "#0a0a0a",
     textAlign: "center",
-  },
-  tagline: {
-    fontSize: 13,
-    color: "#888",
-    textAlign: "center",
-    margin: "0 0 28px",
-    fontFamily: "system-ui, sans-serif",
-    lineHeight: 1.5,
   },
   form: { display: "flex", flexDirection: "column", gap: 12 },
   label: {

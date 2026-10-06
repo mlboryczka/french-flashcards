@@ -8,6 +8,8 @@ import { readPlace, writePlace, dropSets, packSet, unpackEntries } from "./lib/s
 import { CHOICE_KEY, choicesOf, startedLessons, lessonsInCards, onCards, setKeyOf, dealScopeOf } from "./lib/lessonChoice";
 import { withdrawRetry } from "./lib/sessionQueue";
 import LessonPanel, { LESSON_PANEL_WIDTH } from "./LessonPanel";
+import Tour from "./Tour";
+import { tourSteps, TOUR_LESSON } from "./lib/tourSteps";
 import { useProgress } from "./useProgress";
 import { cleanFrenchPrompt, cleanEnglishPrompt, dropFinalPeriod } from "./lib/cardText";
 import { drillAlternates, isConjugationDrill } from "./lib/cardInstruction";
@@ -744,12 +746,20 @@ export default function FlashcardApp({ user, onSignOut }) {
   lessonChoicesRef.current = lessonChoices;
   const sessionChoices = JSON.stringify(choicesOf(user));
   useEffect(() => { setLessonChoices(JSON.parse(sessionChoices)); }, [sessionChoices]);
+  // Whether the account says the first-visit tour has been shown, read at the
+  // same time: null until the server has answered (see the tour, below).
+  const [accountTourSeen, setAccountTourSeen] = useState(null);
   useEffect(() => {
     if (!user?.id) return;
     let live = true;
     supabase.auth.getUser()
-      .then(({ data }) => { if (live && data?.user?.id === user.id) setLessonChoices(choicesOf(data.user)); })
-      .catch(() => { /* the session's copy stands */ });
+      .then(({ data }) => {
+        if (!live || data?.user?.id !== user.id) return;
+        setLessonChoices(choicesOf(data.user));
+        setAccountTourSeen(!!data.user.user_metadata?.tour_seen);
+      })
+      .catch(() => { /* the session's copy stands */ })
+      .finally(() => { if (live) setAccountTourSeen((v) => v ?? !!user?.user_metadata?.tour_seen); });
     return () => { live = false; };
   }, [user?.id]);
   // The lesson whose switch failed to save, to say so beside it.
@@ -1156,6 +1166,95 @@ export default function FlashcardApp({ user, onSignOut }) {
   // the answer is seen, the switch is immediate.
   const [pendingTypeMode, setPendingTypeMode] = useState(null);
   const answerSeen = !!card && (flipped || !!typeResult || revealedSlot === cardSlot);
+
+  // ── The first-visit tour (src/Tour.jsx; its steps are lib/tourSteps.js) ──
+  // It comes up once per account, on the first sign-in (owner, 2026-10-06):
+  // for a student with nothing answered yet, once the deck has come from the
+  // server and the lesson sync has put Lesson 1's cards in it. That it was
+  // shown is kept on the account (user_metadata.tour_seen, like the lesson
+  // switches), so it doesn't come back on another computer, and on this
+  // browser, so a failed save doesn't bring it back here. The account's copy
+  // is the server's, read on opening: a session signed in before the tour
+  // was shown elsewhere still holds the old one. Skipping the tour counts as
+  // shown. "Take the tour again" in the profile menu opens it any time.
+  const tourLesson = LESSONS.find((l) => l.id === TOUR_LESSON) || null;
+  const tourSeenKey = `tour-seen:${user?.id}`;
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourRun, setTourRun] = useState(0);
+  const tourChecked = useRef(false);
+  const markTourSeen = useCallback(() => {
+    try { localStorage.setItem(tourSeenKey, "1"); } catch {}
+    if (!user?.user_metadata?.tour_seen) {
+      supabase.auth.updateUser({ data: { tour_seen: true } }).then(({ error }) => {
+        if (error) console.error("Saving that the tour was shown failed:", error);
+      });
+    }
+  }, [tourSeenKey, user]);
+  const startTour = useCallback(() => {
+    markTourSeen();
+    setShowProfileMenu(false);
+    setShowSettings(false);
+    setShowChat(false);
+    setShowFeedback(false);
+    setTourRun((n) => n + 1);
+    setTourOpen(true);
+  }, [markTourSeen]);
+  useEffect(() => {
+    if (tourChecked.current || !user || !loaded || !deckFreshSeq || !tourLesson || accountTourSeen === null) return;
+    let seenHere = false;
+    try { seenHere = !!localStorage.getItem(tourSeenKey); } catch {}
+    if (accountTourSeen || user.user_metadata?.tour_seen || seenHere) { tourChecked.current = true; return; }
+    const answered = userCards.some((c) =>
+      directionsOf(c).some((d) => (sideOf(c, d).fsrs_state ?? State.New) !== State.New)
+    );
+    // A student who has studied already is no new student: noted as such, so
+    // that "Reset all progress" later doesn't make them look like one.
+    if (answered) { tourChecked.current = true; markTourSeen(); return; }
+    // A new student: once the lesson sync has put Lesson 1 in the deck.
+    if (!userCards.some((c) => lessonIdOf(c) === TOUR_LESSON)) return;
+    tourChecked.current = true;
+    startTour();
+  }, [user, loaded, deckFreshSeq, userCards, tourLesson, tourSeenKey, accountTourSeen, markTourSeen, startTour]);
+  // What the steps do to set the page up. Read through a ref, so the steps
+  // are made once and still act on the page as it is now.
+  const tourActsRef = useRef(null);
+  tourActsRef.current = {
+    goCards: () => { leaveLesson(); setMode("study"); },
+    goLessons: () => {
+      const group = LESSON_GROUPS.find((g) => g.lessons.some((l) => l.id === TOUR_LESSON));
+      if (group?.title) {
+        setPageClosedGroups((prev) => {
+          if (!prev.has(group.title)) return prev;
+          const next = new Set(prev);
+          next.delete(group.title);
+          return next;
+        });
+      }
+      setMode("lessons");
+    },
+    openLesson: (id) => { if (mode !== "study" || lessonFilter !== id) enterLesson(id); },
+    setNotes: (on) => {
+      if (on) { setShowChat(false); setShowFeedback(false); }
+      setShowLessonPanel(on);
+    },
+    setSettings: (on) => setShowSettings(on),
+    setProfileMenu: (on) => setShowProfileMenu(on),
+  };
+  const tourActions = useMemo(() => {
+    const call = (name) => (...args) => tourActsRef.current[name](...args);
+    return {
+      goCards: call("goCards"),
+      goLessons: call("goLessons"),
+      openLesson: call("openLesson"),
+      setNotes: call("setNotes"),
+      setSettings: call("setSettings"),
+      setProfileMenu: call("setProfileMenu"),
+    };
+  }, []);
+  const tourStepList = useMemo(
+    () => (tourLesson ? tourSteps(tourActions, tourLesson) : []),
+    [tourActions, tourLesson]
+  );
   // Whether a typed answer counts as recalled: the matcher's verdict, or a
   // "my answer should be accepted" dispute that was accepted. An accepted
   // dispute used to save the alternate for next time and still record today's
@@ -2559,6 +2658,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           return (
             <Fragment key={m}>
               <button
+                data-tour={`nav-${m === "study" ? "cards" : m}`}
                 style={navActive(m) ? {...baseStyle, ...activeStyle} : baseStyle}
                 onClick={() => {
                   // Cards means the whole deck, so it clears any lesson you
@@ -2628,6 +2728,7 @@ export default function FlashcardApp({ user, onSignOut }) {
             a primary action, and nobody finds it behind an avatar. */}
         <button
           data-tutor-toggle
+          data-tour="nav-tutor"
           style={sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem}
           onClick={toggleChat}
           title={sidebarMin ? "Tutor" : undefined}
@@ -2657,6 +2758,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           <div style={sidebarMin ? { ...S.sideBottomRow, ...S.sideBottomRowMin } : S.sideBottomRow}>
             <div style={S.sideProfileRow} ref={profileRef}>
               <button
+                data-tour="avatar"
                 style={S.profileBtn}
                 onClick={() => setShowProfileMenu(v => !v)}
               >
@@ -2664,7 +2766,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 {isAdmin && status.amiss && <span data-status-alert="avatar" style={S.avatarAlert} aria-label="Status needs checking" />}
               </button>
               {showProfileMenu && (
-                <div style={S.profileMenuBottom}>
+                <div style={S.profileMenuBottom} data-tour="profile-menu">
                   <button
                     data-tutor-toggle
                     style={S.profileMenuItem}
@@ -2673,6 +2775,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     Ask the tutor
                   </button>
                   <button
+                    data-tour="upload"
                     style={S.profileMenuItem}
                     onClick={() => { setUploadInitialTab("paste"); setShowUpload(true); setShowProfileMenu(false); }}
                   >
@@ -2691,6 +2794,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                   >
                     How much to remember
                   </button>
+                  {tourStepList.length > 0 && (
+                    <button data-tour-again style={S.profileMenuItem} onClick={startTour}>
+                      Take the tour again
+                    </button>
+                  )}
                   {isAdmin && (<>
                     <button
                       data-status-toggle
@@ -2745,6 +2853,25 @@ export default function FlashcardApp({ user, onSignOut }) {
   // ── SHARED MODALS ───────────────────────────────────────────────────
   // Mounted at the top level so they render regardless of active view —
   // they're triggered from the sidebar profile menu, which is global.
+  // What the steps read: where the student is and what the card is doing.
+  const tourState = {
+    mode,
+    lessonFilter,
+    typeMode: typeMode && !!card,
+    front: card && !sessionDone
+      ? dropFinalPeriod(card.shownDir === "fr" ? cleanFrenchPrompt(card.f, card.b) : cleanEnglishPrompt(card.b))
+      : "",
+    hasCard: !!card && !sessionDone,
+    // Never answered the way round it is shown.
+    cardNew: !!card && !sessionDone && (sideOf(card, card.shownDir ?? "fr").fsrs_state ?? State.New) === State.New,
+    graded: !!card && !sessionDone && (typeMode ? !!typeResult : answerSeen),
+    result: typeResult,
+    cardKey: sessionDone ? "done" : cardSlot,
+    notesOpen: showLessonPanel,
+    // Whether the notes sit beside the card or cover it (the window's width).
+    notesBeside: roomToReflow(LESSON_PANEL_WIDTH),
+    tourLessonOn: lessonsOn.has(TOUR_LESSON),
+  };
   const modals = (
     <>
       <LessonPanel
@@ -2877,6 +3004,9 @@ export default function FlashcardApp({ user, onSignOut }) {
           }}
         />
       )}
+      {tourOpen && tourStepList.length > 0 && (
+        <Tour key={tourRun} steps={tourStepList} app={tourState} onClose={() => setTourOpen(false)} />
+      )}
     </>
   );
 
@@ -2930,7 +3060,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                 }
               }
               return (
-                <div key={lesson.id} style={S.lessonCard}>
+                <div key={lesson.id} style={S.lessonCard} data-tour-lesson={lesson.id}>
                   <div style={S.lessonHead}>
                     <div>
                       <div style={S.lessonTitle}>{lesson.title}</div>
@@ -2940,6 +3070,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         themselves into the deck on load. A student should
                         find L'impératif already there. */}
                     <button
+                      data-tour-study={lesson.id}
                       style={S.lessonStudyBtn}
                       disabled={!added}
                       onClick={() => enterLesson(lesson.id)}
@@ -2954,7 +3085,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     {" · "}
                     {lesson.source}
                   </div>
-                  <div style={S.lessonSwitchRow}>
+                  <div style={S.lessonSwitchRow} data-tour-include={lesson.id}>
                     <button
                       role="switch"
                       aria-checked={on}
@@ -3548,7 +3679,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               <div style={S.blurBR} />
 
               <div style={S.cardTopSpacer} />
-              <div style={S.cardWrap} onClick={onCardClick}>
+              <div style={S.cardWrap} onClick={onCardClick} data-tour="card">
                 <div style={{...S.card, transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)", transition: skipFlipAnim.current ? "none" : S.card.transition, cursor: "pointer"}}>
                   <div style={{...S.cardFront, pointerEvents: flipped ? "none" : "auto"}}>
                     {cardLesson && <div className="card-badge" style={S.cardBadge}>{cardLesson.title}</div>}
@@ -3616,7 +3747,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   column re-centred and the card jumped 45px up the page.
                   Reserving the tallest state's height keeps the card still and
                   lets only the controls change. */}
-              <div style={S.belowCard}>
+              <div style={S.belowCard} data-tour="well">
               {/* Pronunciation panel — appears below card when recording or showing results */}
               {PRONUNCIATION_ENABLED && (recState !== "idle") && (
                 <PronunciationPanel
@@ -3659,7 +3790,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         <>
                           {/* Beside the result, at its own size. Stacked under
                               it, the two took 99px of the well between them. */}
-                          <button style={S.continueBtn} onClick={() => answer(gotIt, "typed")}>
+                          <button style={S.continueBtn} onClick={() => answer(gotIt, "typed")} data-tour="continue">
                             Continue →
                           </button>
                           {/* The follow-ups sit BELOW Continue, in one centred
@@ -3730,7 +3861,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   </div>
                 ) : (
                   <>
-                    <div style={S.typeInputRow}>
+                    <div style={S.typeInputRow} data-tour="answer-row">
                       <input
                         ref={studyInputRef}
                         style={S.typeInput}
@@ -3749,7 +3880,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       <button style={S.typeSubmit} onClick={submitTyped}>Check</button>
                     </div>
                     <div style={S.giveUpRow}>
-                      <button style={S.giveUpBtn} onClick={giveUpTyped}>
+                      <button style={S.giveUpBtn} onClick={giveUpTyped} data-tour="show-answer">
                         Show answer
                       </button>
                     </div>
@@ -3763,7 +3894,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                       turns the card, in the same row so nothing moves. */}
                   {answerSeen ? (
                     <>
-                      <div style={S.actionRow}>
+                      <div style={S.actionRow} data-tour="grade">
                         <button style={S.actionAgainRect} onClick={() => answer(false)}>
                           Again
                         </button>
@@ -3775,7 +3906,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                     </>
                   ) : (
                     <div style={S.actionRow}>
-                      <button style={S.actionGotRect} onClick={flip} data-show-answer>
+                      <button style={S.actionGotRect} onClick={flip} data-show-answer data-tour="show-answer">
                         Show answer
                       </button>
                     </div>
