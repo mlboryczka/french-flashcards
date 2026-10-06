@@ -24,8 +24,6 @@ import { FEEDBACK_REVIEW_VERSION } from "./lib/feedbackReviewVersion";
 import ApiKeyModal from "./ApiKeyModal";
 import FsrsSettingsModal from "./FsrsSettingsModal";
 import { useFsrsSettings } from "./useFsrsSettings";
-import StatusModal from "./StatusModal";
-import { useStatusCheck } from "./useStatusCheck";
 import { keyHeaders, hasKey } from "./lib/anthropicKey";
 
 const SIDEBAR_WIDTH = 256;
@@ -680,8 +678,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   const isAdmin = !!(user?.email && user.email.toLowerCase() === ADMIN_EMAIL);
   // "Status" in the profile menu (admin only): whether the cards are being
   // shown the way FSRS and the app's rules say. See lib/statusChecks.js.
-  const [showStatus, setShowStatus] = useState(false);
-  const status = useStatusCheck(user, { enabled: isAdmin, ready: deckLoaded });
 
   // Load card alternates from Supabase on mount (and when user changes)
   useEffect(() => {
@@ -2808,7 +2804,6 @@ export default function FlashcardApp({ user, onSignOut }) {
                 onClick={() => setShowProfileMenu(v => !v)}
               >
                 <div style={S.profileAvatar}>{user.email[0].toUpperCase()}</div>
-                {isAdmin && status.amiss && <span data-status-alert="avatar" style={S.avatarAlert} aria-label="Status needs checking" />}
               </button>
               {showProfileMenu && (
                 <div style={S.profileMenuBottom} data-tour="profile-menu">
@@ -2845,16 +2840,6 @@ export default function FlashcardApp({ user, onSignOut }) {
                     </button>
                   )}
                   {isAdmin && (<>
-                    <button
-                      data-status-toggle
-                      style={S.profileMenuItem}
-                      onClick={() => { setShowStatus(true); setShowProfileMenu(false); status.run(); }}
-                    >
-                      <span style={S.statusLine}>
-                        Status
-                        {status.amiss && <span data-status-alert="menu" style={S.statusAlert} aria-label="needs checking">!</span>}
-                      </span>
-                    </button>
                     <button
                       style={S.profileMenuItem}
                       onClick={() => { setShowFeedbackModal(true); setShowProfileMenu(false); }}
@@ -2950,11 +2935,6 @@ export default function FlashcardApp({ user, onSignOut }) {
         open={showFsrsSettings}
         onClose={() => setShowFsrsSettings(false)}
         settings={fsrs}
-      />
-      <StatusModal
-        open={showStatus}
-        onClose={() => setShowStatus(false)}
-        status={status}
       />
       <CahierUpload
         open={showUpload}
@@ -5008,9 +4988,6 @@ const S = {
   profileBtn: { position:"relative", display:"flex", alignItems:"center", justifyContent:"center", padding:0, background:"transparent", border:"none", borderRadius:"50%", cursor:"pointer" },
   // The status check's alert: a dot on the avatar, and a mark on the menu's
   // Status line, while a check has failed or couldn't run.
-  avatarAlert: { position:"absolute", top:-1, right:-1, width:10, height:10, borderRadius:"50%", background:T.color.error, border:`2px solid ${T.color.surfaceLow}`, boxSizing:"border-box" },
-  statusLine: { display:"inline-flex", alignItems:"center", gap:8 },
-  statusAlert: { display:"inline-flex", alignItems:"center", justifyContent:"center", width:16, height:16, borderRadius:"50%", background:T.color.error, color:T.color.onError, fontSize:10, fontWeight:700, lineHeight:1 },
   profileAvatar: { width:32, height:32, borderRadius:"50%", background:T.color.primary, color:T.color.onPrimary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:600, fontFamily:T.font.sans, flexShrink:0 },
   profileChevron: { marginLeft:"auto", fontSize:12, color:T.color.onSurfaceVariant, opacity:0.5 },
   profileMenu: { position:"absolute", top:"100%", left:16, right:16, background:T.color.surfaceLowest, borderRadius:T.radius.lg, boxShadow:"0 8px 32px rgba(3,22,50,0.12)", padding:"8px 0", zIndex:20, fontFamily:T.font.sans },

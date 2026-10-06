@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // The status check on a student's real record, from the command line: the
-// same nine checks the admin's Status line runs in the app
-// (src/lib/statusChecks.js), for looking into what it reports.
+// same nine checks the server runs on every student each day
+// (src/lib/statusChecks.js), for looking into what they report. Claude runs
+// it each morning on this Mac (a scheduled task) and tells the owner only
+// when something needs their decision; the app itself shows no Status line.
 //
 // It only reads. Every request below is a GET, to the database's tables and to
 // the list of accounts; nothing is written anywhere.
@@ -11,6 +13,7 @@
 //   node scripts/status-check.mjs --from 2026-09-20   judge answers from an earlier day
 //   node scripts/status-check.mjs --tz Europe/Paris   time zone for answers saved without one
 //   node scripts/status-check.mjs --all               every detail, not the first six per check
+//   node scripts/status-check.mjs --everyone          every student, and the tests of Claude's work
 //
 // The time zone defaults to this computer's; answers saved since migration_013
 // carry their own.
@@ -46,6 +49,42 @@ if (missing.length) {
   console.error(`Missing: ${missing.join(", ")}\nPut them in .env.local or the environment.`);
   process.exit(1);
 }
+// --everyone: the morning check. The same nine checks on every student who has
+// answered anything, run now (api/_lib/statusDaily.js), and whether a change to
+// how Claude is asked has made it get wrong what it got right before
+// (api/_lib/evalStatus.js). Only reads. Exits 1 when anything needs looking at.
+if (args.includes("--everyone")) {
+  const { createClient } = await import("@supabase/supabase-js");
+  const { checkEveryone } = await import("../api/_lib/statusDaily.js");
+  const { evalStatus } = await import("../api/_lib/evalStatus.js");
+  const { statusText } = await import("../src/lib/statusChecks.js");
+  const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  let amiss = false;
+
+  const reports = await checkEveryone(db);
+  console.log(`Every student who has answered (${reports.length}), checked now:`);
+  for (const r of [...reports].sort((a, b) => Number(a.ok) - Number(b.ok))) {
+    if (r.error) { amiss = true; console.log(`\n  ${r.user_email}: couldn't be checked: ${r.error}`); continue; }
+    if (r.ok) { console.log(`  ${r.user_email}: ${r.answers} answers, every check passes or waits.`); continue; }
+    amiss = true;
+    console.log(`\n  ${r.user_email}: ${r.answers} answers, ${r.failing} check${r.failing === 1 ? "" : "s"} failing.`);
+    console.log(statusText(r.report).split("\n").map((l) => `    ${l}`).join("\n"));
+  }
+
+  const evals = await evalStatus(db);
+  for (const [kind, label] of [["answers", "Claude's marking of typed answers"], ["notes", "Claude reading class notes into cards"]]) {
+    const e = evals[kind] || {};
+    const last = e.latest ? `last tested ${e.latest.ran_at.slice(0, 10)} (version ${e.latest.version}, ${e.latest.passed} of ${e.latest.cases} right every time)` : "not tested yet";
+    console.log(`\n${label}: ${last}.`);
+    if (e.error) { amiss = true; console.log(`  Couldn't read its tests: ${e.error}`); }
+    for (const line of e.regressions || []) { amiss = true; console.log(`  - ${line}`); }
+    if (!e.error && !(e.regressions || []).length) console.log("  Nothing it got right before is wrong now.");
+  }
+
+  console.log(amiss ? "\nSomething needs looking at." : "\nAll clear.");
+  process.exit(amiss ? 1 : 0);
+}
+
 // The admin's account: ADMIN_EMAIL, or the app's own VITE_ADMIN_EMAIL, which a
 // local .env.local sets when the server's ADMIN_EMAIL is left empty.
 const clean = (s) => String(s || "").trim().toLowerCase();

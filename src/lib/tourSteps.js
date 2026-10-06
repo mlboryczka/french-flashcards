@@ -158,14 +158,14 @@ export function tourSteps(act, lesson) {
 
     { id: "tutor", spot: NAV("tutor"), pad: 0, radius: 6,
       title: "Ask the tutor",
-      body: "Stuck on a word or a sentence? Ask the **Tutor**. It can add the word to your cards for you." },
+      body: "Stuck on a word or a sentence? Ask the **Tutor**. It can add the word to your cards for you. To use it, first click your user icon at the bottom left, then **Connect Claude account**. You’ll need an API key from console.anthropic.com, which is paid for separately from a Claude subscription." },
 
     { id: "upload", spot: ['[data-tour="avatar"]', '[data-tour="profile-menu"]'], mark: '[data-tour="upload"]',
       prefer: ["right", "top"],
       enter: () => act.setProfileMenu(true),
       leave: () => act.setProfileMenu(false),
       title: "Add your class notes",
-      body: "Click your user icon at the bottom left, then **Upload document**. Each class you upload becomes new cards." },
+      body: "Click your user icon at the bottom left, then **Upload document**. Each class you upload becomes new cards. To use it, first click **Connect Claude account** in the same menu. You’ll need an API key from console.anthropic.com, which is paid for separately from a Claude subscription." },
 
     { id: "feedback", spot: "[data-feedback-toggle]", pad: 4, radius: 6, prefer: ["right", "top"],
       title: "Tell us what’s wrong",
