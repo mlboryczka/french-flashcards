@@ -11,6 +11,9 @@
 //   • without a choice, a lesson the student has answered cards in is on, so
 //     nobody's reviews went missing with the update, and one they haven't
 //     started is off — as is any lesson added later;
+//   • except the basic lessons, Leçons 1 to 5, which are on without a choice
+//     for every student, old and new (owner, 2026-10-06): every class starts
+//     with them. L'impératif and the adverbs stay off until switched on;
 //   • the first answer inside a lesson switches it on: by then the class has
 //     reached it. The student can switch it off again;
 //   • Cards can be narrowed to "My cahier": every card that isn't a lesson's,
@@ -42,11 +45,16 @@ export function startedLessons(cards) {
   return started;
 }
 
+// The lessons on Cards for a student who hasn't chosen: the basic lessons.
+export const ON_BY_DEFAULT = new Set(["lecon1", "lecon2", "lecon3", "lecon4", "lecon5"]);
+
 // The lessons whose cards come up on Cards: the student's choice, or without
-// one, whether they have started it.
+// one, whether it is a basic lesson or one they have started.
 export function lessonsInCards(lessonIds, started, choices) {
   return new Set(
-    lessonIds.filter((id) => (typeof choices?.[id] === "boolean" ? choices[id] : started.has(id)))
+    lessonIds.filter((id) =>
+      typeof choices?.[id] === "boolean" ? choices[id] : ON_BY_DEFAULT.has(id) || started.has(id)
+    )
   );
 }
 

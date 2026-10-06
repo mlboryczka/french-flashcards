@@ -1326,6 +1326,11 @@ narrowed to My cahier (owner, 2026-10-04; `src/lib/lessonChoice.js`).
   cards either way round** (`startedLessons`), so nobody's reviews went
   missing with the update. One they haven't started is off, as is any lesson
   added later.
+- **Except the basic lessons, Leçons 1 to 5, which are on without a choice**
+  for every student, old and new (`ON_BY_DEFAULT`; owner, 2026-10-06). No
+  account had a choice for any of them when this landed, so all were switched
+  on with nothing written to an account. A student who switches one off keeps
+  it off. L'impératif and the adverbs still start off.
 - **The first answer inside a lesson switches it on**, by then the class has
   reached it. Only the first, so a student who switches it off again isn't
   overruled by studying it.
@@ -1345,9 +1350,9 @@ narrowed to My cahier (owner, 2026-10-04; `src/lib/lessonChoice.js`).
   are the same on every computer, with no migration. They are read from the
   session and once from the server on opening (`getUser`). A failed save puts
   the switch back and says so.
-- **A new student whose deck is only lessons** sees "You're all caught up" on
-  Cards, with a line saying lessons come up once switched on
-  (`data-lessons-off-note`).
+- **A student who has studied everything switched on** sees "You're all
+  caught up" on Cards, with a line saying lessons come up once switched on
+  (`data-lessons-off-note`) while any lesson is off.
 
 ### Card-design rules the impératif module established
 

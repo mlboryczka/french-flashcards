@@ -632,6 +632,12 @@ console.log("\n  archive — out of circulation, recoverable");
   const chosen = lessonsInCards(ids, started, { imperatif: false, adverbes: true });
   ck("the student's choice overrides that, either way", !chosen.has("imperatif") && chosen.has("adverbes"),
      JSON.stringify([...chosen]));
+  const catalogue = LESSONS.map((l) => l.id);
+  const fresh = lessonsInCards(catalogue, new Set(), {});
+  ck("without a choice, the five basic lessons are on and L'impératif and the adverbs are off",
+     ["lecon1", "lecon2", "lecon3", "lecon4", "lecon5"].every((id) => fresh.has(id)) &&
+     !fresh.has("imperatif") && !fresh.has("adverbes"), JSON.stringify([...fresh]));
+  ck("a basic lesson switched off by hand stays off", !lessonsInCards(catalogue, new Set(), { lecon1: false }).has("lecon1"));
 
   const all = { scope: "all", lessonsOn: byDefault, lessonIds: ids };
   const cahier = { scope: "cahier", lessonsOn: byDefault, lessonIds: ids };

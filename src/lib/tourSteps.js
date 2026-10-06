@@ -144,7 +144,7 @@ export function tourSteps(act, lesson) {
       enter: () => act.goLessons(),
       title: "Lessons in your daily cards",
       body: (a) => (a.tourLessonOn
-        ? `${name} is now switched on, because you’ve studied it. Switch on each lesson your class reaches, and its cards come up in Cards every day.`
+        ? `${name} is switched on, so its cards come up in Cards every day, like all the basic lessons. When your class reaches a lesson like L’impératif, switch it on here.`
         : "Switch on **In my daily cards** for each lesson your class reaches, and its cards come up in Cards every day.") },
 
     { id: "cards", spot: NAV("cards"), pad: 0, radius: 6,

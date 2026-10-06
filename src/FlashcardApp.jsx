@@ -3901,8 +3901,9 @@ export default function FlashcardApp({ user, onSignOut }) {
           ) : (
             <div style={S.empty}>
               <p><strong>You're all caught up.</strong> Nothing is due, and there are no new cards here.</p>
-              {/* A new student's deck holds only lessons, all off until they
-                  switch one on (lib/lessonChoice.js): say where that is. */}
+              {/* A new student's deck holds only lessons, and only the basic
+                  ones are on until they switch another on
+                  (lib/lessonChoice.js): say where that is. */}
               {lessonFilter === "all" && scope === "all" && lessonsOff && (
                 <p data-lessons-off-note>Lessons come up here once you switch them on, on the Lessons page.</p>
               )}
