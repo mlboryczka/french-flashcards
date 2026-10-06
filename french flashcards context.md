@@ -27,7 +27,9 @@ This document brings a new session up to speed. It has three parts:
   not built. It is the last section.
 
 Keep it that way: when a change lands, update the reference section it touches,
-add a History entry, and update Open items.
+add a History entry, and update Open items. If the change touches something
+the public pages describe (`README.md` and `docs/`, written for people reading
+the repository), update those too.
 
 ---
 
@@ -50,8 +52,9 @@ add a History entry, and update Open items.
   Students bring their own API key; the owner and the linked cahier use the
   server's (see *Who pays for Claude*).
 - **Hosting:** Vercel, which deploys `main` automatically: `api/*.js` are
-  serverless functions, plus a daily cron in `vercel.json`. The Hobby plan
-  deploys at most 12 functions, and there are 12 (`api/_lib/` doesn't count).
+  serverless functions, plus four daily cron runs in `vercel.json` (see
+  *Serverless functions*). The Hobby plan deploys at most 12 functions, and
+  there are 12 (`api/_lib/` doesn't count).
   A 13th fails the whole deployment, as `api/fsrs-fit.js` did on 2026-09-26.
 
 `npm run dev` doesn't serve `api/`, so uploading, the tutor, disputing a mark
@@ -115,8 +118,8 @@ included: the app run with it, and every script in `scripts/`, works on live
 data. If Claude Code refuses to touch production, give the owner the command
 to run in their terminal (not the Supabase SQL editor).
 
-**`npm test` before every push.** It runs the 30 suites in `tests/suites` (13
-without a browser, 17 in headless Chromium) in about twenty minutes, so start
+**`npm test` before every push.** It runs the 34 suites in `tests/suites` (16
+without a browser, 18 in headless Chromium) in about twenty minutes, so start
 it early. `npm test -- <name>` runs only the suites whose names contain
 `<name>`. Don't edit `src/` while browser suites run: a save reloads the app
 under a running test. For a small change the owner wants the result in
@@ -147,9 +150,10 @@ check ("the tutor reflow actually ran") fails there on unchanged code (see
 ## How a session is built
 
 `buildSession(cards, opts)` in `src/lib/sessionQueue.js` deals a block of up to
-50 cards (`BLOCK_SIZE`); the student sees it as a set, and newer code says set
-too. FSRS decides when a card already seen comes back. Which cards make a
-block, and which new card comes next, are the app's rules (owner, 2026-09-12).
+50 cards (`BLOCK_SIZE`), or the 20, 30 or 100 the student picks under "Cards in
+a set" (below); the student sees it as a set, and newer code says set too.
+FSRS decides when a card already seen comes back. Which cards make a block,
+and which new card comes next, are the app's rules (owner, 2026-09-12).
 The cards come from the whole deck, or from one lesson or type when the student
 narrows it. On Cards, "the whole deck" means the student's own cards and the
 lessons they have switched on, or only their own under My cahier; see
@@ -202,8 +206,10 @@ lesson's `teachingOrder` of sections, then each card's place in the lesson
 (`lessonRank`). Otherwise: cards from classes in the last 14 days (*Last two
 weeks of class*), newest class first; then *Older classes*, the words from the
 most classes first (`dates.length`); then undated cards; then unseen lesson
-cards. A card added from the tutor is dated by its `created_at`. Ties come in
-random order.
+cards, lesson by lesson in `MEETING_ORDER` (`src/data/lessons/index.js`):
+L'impératif, the adverbs, then Leçons 1 to 5 in number order, though Leçon 1
+was added last (owner, 2026-10-06). A card added from the tutor is dated by
+its `created_at`. Ties come in random order.
 
 **Then the block is shuffled,** because runs of one kind are blocked practice,
 which tests worse than mixed. A lesson's block is shuffled too (owner,
@@ -216,7 +222,7 @@ the time, for the status check. The app never waits for this write. Its
 off (`dealScopeOf`), which the status check reads to rebuild what the set
 could have been dealt from.
 
-**A block is 50 answers, retries included** (`placeRetry`).
+**A block is as many answers as its size, retries included** (`placeRetry`).
 
 - A missed card comes back 20 cards later (`RE_QUEUE_OFFSET`), or at the end
   of the block if fewer are left. It takes the place of the block's last card
@@ -234,9 +240,20 @@ could have been dealt from.
   back: "Marked for review: counted as wrong, back later in this set", or
   "back tomorrow" when there is no room for a retry (owner, 2026-10-05 and
   2026-10-06). It names no card: a long front ran it off the top bar.
-- The counter reads "Card N of 50". On a retry it adds "· retry"; otherwise it
-  adds the block's relearning, review and new counts as they are now
-  (`countBuckets`). Then comes "· N retries to come".
+- The counter reads "Card N of 50", or of the size chosen. On a retry it adds
+  "· retry"; otherwise it adds the block's relearning, review and new counts
+  as they are now (`countBuckets`). Then comes "· N retries to come".
+
+**Cards in a set** (since 2026-10-04): 20, 30, 50 or 100, in the Settings menu
+behind the gear, kept in this browser (`localStorage` `set-size`; `SET_SIZES`
+in `FlashcardApp.jsx`). Since 2026-10-06 a new size changes the set on screen,
+not only the next one: the cards not yet reached are dealt again to the new
+length (`redealRest`), and the card on screen, every answer and the retries
+lined up stay. A size below the card on screen ends the set on it. At the end
+of a set, the new size is for the next one. The size is kept with the set
+(`study-place:`), so a reload or a trip into a lesson and back shows it too; a
+set that came out short because the deck ran out isn't topped up unless the
+size changed. Guarded by `set-size`.
 
 **An answer** (`answer()` in `FlashcardApp.jsx`) writes the schedule of the way
 round shown if FSRS counts it, a record in `card_reviews`, the streak's day
@@ -633,7 +650,7 @@ one. `api/_lib/` is shared code, not a route.
 | `parse-cahier.js` | Upload: splits a notebook into dated classes, then saves the cards |
 | `cahier-parse.js` | Upload: turns the classes into cards |
 | `cahier-sync.js` | Linked cahier: turns the doc's unread classes into cards. A body with `notesChecks` is instead the owner's test of how Claude reads a class (`api/_lib/notesChecks.js`) |
-| `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs. A second schedule, 14:00 UTC, runs the status check on every student instead (`api/_lib/statusDaily.js`); Vercel's `x-vercel-cron-schedule` header says which |
+| `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs. A second schedule, 14:00 UTC, runs the status check on every student instead (`api/_lib/statusDaily.js`); 15:00 and 16:00 UTC run the tests of Claude's marking and of its reading of class notes, each only when due (`api/_lib/evalRuns.js`). Vercel's `x-vercel-cron-schedule` header says which |
 | `chat.js` | The tutor. Gives hints, not the answer, until the card's answer is shown. Never writes cards |
 | `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude. A body with `feedback` is instead Claude's review of a piece of feedback and the owner's Apply and Dismiss (`api/_lib/feedbackReview.js`), here because of the 12-route limit. Every verdict is saved to `answer_reviews` (migration_015); a body with `answerChecks` is the owner's list of them and the test made from them (`api/_lib/answerChecks.js`) |
 | `fsrs-fit.js` | Once a day per student: fits their own FSRS settings when due, and recomputes memory estimates when the settings change |
@@ -734,7 +751,8 @@ the simulations*). Run `simulate` before changing scheduling.
 
 - The owner runs them in the Supabase SQL editor, in number order, after
   `supabase/schema.sql` on a new project. The live database has all of them:
-  012 was run on 2026-09-27 and 013 on 2026-09-28.
+  012 was run on 2026-09-27, 013 on 2026-09-28, 014 on 2026-10-04 and 015 on
+  2026-10-06.
 - `schema.sql`, 002, 003 and 009 write the admin's email into policies.
   Change it for another project.
 - Any of them can be run again except 004, which would blank `card_id` on
@@ -769,6 +787,10 @@ The files:
   with, on `card_reviews`, and `dealt_sets`, one row per set of cards dealt.
 - `014_feedback_review`: Claude's review of each piece of feedback, on
   `beta_feedback`.
+- `015_checks`: `answer_reviews`, every verdict on a disputed answer (the
+  accepted answers kept before then copied in as `kept`); `eval_runs`, each
+  run of a test of Claude's work; and `status_reports`, the morning status
+  check, one row a student.
 
 ---
 
@@ -1039,17 +1061,15 @@ Asked for by the owner on 2026-10-06, designed in a clickable mockup first
 It walks a new student through the app one part at a time: everything is
 dimmed but that part, and a caption beside it says what to do there.
 
-- **It comes up once per account, on the first sign-in** (owner): for a student
-  with nothing answered either way round, once the deck has come from the
-  server and the lesson sync has put Lesson 1's cards in it. A brand-new
-  student lands on Cards with "You're all caught up", since lessons start
-  switched off, so the tour starts there. Existing students, who have answers,
-  never see it: the first time the app finds one, it notes them as having
-  seen it, so "Reset all progress" later doesn't make them look new. An
-  account made before the tour that has never answered a card gets it once.
-- **That it was shown is kept on the account** (`user_metadata.tour_seen`,
+- **It comes up once for every student, new or not** (owner, 2026-10-06): the
+  next time they open the app, once the deck has come from the server and the
+  lesson sync has put Lesson 1's cards in it. Students who have answered cards
+  get it too. The tour's first version only showed it to students with
+  nothing answered, and marked the rest with `tour_seen` without showing it,
+  so that marker is no longer read.
+- **That it was shown is kept on the account** (`user_metadata.tour_shown`,
   saved the way the lesson switches are, and read from the server on opening)
-  **and on the browser** (`localStorage["tour-seen:<user id>"]`), so another
+  **and on the browser** (`localStorage["tour-shown:<user id>"]`), so another
   computer or a failed save doesn't bring it back. It counts as shown as soon
   as it appears, "Not now" and "Skip tour" included. "Take the tour again" in
   the profile menu, between "How much to remember" and Sign out, opens it any
@@ -1144,7 +1164,7 @@ protocol*.
 
 ### The suites
 
-Thirteen need no browser:
+Sixteen need no browser:
 
 - `logic`: the pure rules, from card types and prompt cleaning to
   `reconcileLessons` and the released-lesson-cards list.
@@ -1169,8 +1189,15 @@ Thirteen need no browser:
 - `feedback-review`: Claude's review of feedback and Apply and Dismiss, with a
   stand-in store and Claude: who may ask, Apply changing only the card's text,
   and refusing a card that changed after the review.
+- `status-daily`: the status check on every student, against a stand-in
+  Supabase with three accounts, each judged on their own record.
+- `answer-checks`: Claude's marking of disputed answers, with a stand-in for
+  Anthropic: what Claude should have said, taken from what the owner did;
+  when the test is due; and when the red dot lights.
+- `notes-checks`: Claude's reading of class notes, tested against the owner's
+  corrections, with a stand-in store, notebook and reading.
 
-Seventeen drive the app in a browser. `openApp` opens every one as a student
+Eighteen drive the app in a browser. `openApp` opens every one as a student
 who has seen the first-visit tour, unless it passes `tour: true`; `ready`
 says what to wait for when a page has no "Previous card".
 
@@ -1196,8 +1223,11 @@ says what to wait for when a page has no "Previous card".
   typed.
 - `session`: a set worked to its checkpoint, Continue, the keyboard, and one
   FSRS answer per card per day.
+- `set-size`: a new "Cards in a set" changing the set on screen, against a
+  routed deck of 160 cards, since the stand-in deck is too small for a set of
+  30.
 - `stats`: the Stats page, every figure counted from the suite's own fixture.
-- `types`: the Grammar / Vocab / Phrases filter and By type.
+- `types`: the Grammar / Vocab / Phrases filter, and no By type on Stats.
 - `statusline`: the admin's Status line, on a second Vite (port 5176) with the
   test account as admin.
 - `settings`: "How much to remember", including before `migration_012`.
@@ -1326,6 +1356,11 @@ narrowed to My cahier (owner, 2026-10-04; `src/lib/lessonChoice.js`).
   cards either way round** (`startedLessons`), so nobody's reviews went
   missing with the update. One they haven't started is off, as is any lesson
   added later.
+- **Except the basic lessons, Leçons 1 to 5, which are on without a choice**
+  for every student, old and new (`ON_BY_DEFAULT`; owner, 2026-10-06). No
+  account had a choice for any of them when this landed, so all were switched
+  on with nothing written to an account. A student who switches one off keeps
+  it off. L'impératif and the adverbs still start off.
 - **The first answer inside a lesson switches it on**, by then the class has
   reached it. Only the first, so a student who switches it off again isn't
   overruled by studying it.
@@ -1345,9 +1380,9 @@ narrowed to My cahier (owner, 2026-10-04; `src/lib/lessonChoice.js`).
   are the same on every computer, with no migration. They are read from the
   session and once from the server on opening (`getUser`). A failed save puts
   the switch back and says so.
-- **A new student whose deck is only lessons** sees "You're all caught up" on
-  Cards, with a line saying lessons come up once switched on
-  (`data-lessons-off-note`).
+- **A student who has studied everything switched on** sees "You're all
+  caught up" on Cards, with a line saying lessons come up once switched on
+  (`data-lessons-off-note`) while any lesson is off.
 
 ### Card-design rules the impératif module established
 
@@ -1713,8 +1748,9 @@ assumptions.
   see Open items.
 
 Suites: `status` (each fault the checks exist for fails its check),
-`status-script` (the script against a stand-in Supabase), and `statusline`
-(browser: the Status line and dialog).
+`status-script` (the script against a stand-in Supabase), `status-daily` (the
+morning check on every student), `answer-checks` and `notes-checks` (the tests
+of Claude's work), and `statusline` (browser: the Status line and dialog).
 
 ---
 
@@ -2060,6 +2096,55 @@ up only on the first sign-in. The app was renamed Déjà Review, and the sign-in
 page lost its tagline. See *The first-visit tour*. The new `tour` suite walks
 through it; the harness keeps it out of every other suite.
 
+### 2026-10-06 — Stats shows change over time
+
+The owner agreed a new Stats page from a clickable mockup, to show change
+rather than a snapshot: today's cards in three figures that add up, ~N
+remembered day by day, a pace for seeing every card, a calendar of the days
+studied, and Progress by Lesson folding, with Basic Lessons as one row. By
+type and Hardest cards went. The history behind the chart is rebuilt from
+`card_reviews` (`src/lib/progressHistory.js`). See *The Stats page*.
+
+### 2026-10-06 — Tests on GitHub; the status check on every student; Claude's work tested
+
+The owner asked whether the checks met the standards of a guide to evals, and
+then for all of it to be done. Every push to `main` now runs the build, the
+simulated students and every suite on GitHub. The status check runs each
+morning on every student. Claude's verdicts on disputed answers are kept and
+tested, and so is its reading of class notes, against the owner's
+corrections. Messy simulated students reproduce the three false alarms of
+2026-10-04. At first the owner was asked to mark Claude's verdicts and press a
+button to run each test; they objected to confirming decisions already made,
+so the right answers now come from what the owner did, and both tests run by
+themselves when due. An adversarial review found that a few borderline cases
+would light the red dot most weeks by chance, so it lights only for a case
+that passed before a change of version and fails after it. See *Since
+2026-10-06*.
+
+### 2026-10-06 — A new set size changes the set on screen
+
+Choosing 20, 30, 50 or 100 under "Cards in a set" used to wait for the next
+set, so the counter went on saying "Card 1 of 50" after 20 was chosen. Now the
+set on screen is dealt again to the new length, keeping the card on screen,
+every answer and the retries lined up. See *How a session is built*; the new
+`set-size` suite guards it.
+
+### 2026-10-06 — Documentation for readers of the repository
+
+The owner asked for the documentation to be brought up to date and organised
+for people looking at the repository, with the evaluation harness to the
+fore. `README.md` became a short front page: what the app is, screenshots, the
+highlights, how it's built, and that it is built with Claude Code. It links to
+five pages in `docs/`: the evaluation harness, how cards are scheduled, how
+class notes become cards, where Claude is used, and running your own copy. The
+old README's setup steps and scheduling detail moved there. The screenshots in
+`docs/screenshots/` were taken against the mock database with the test suites'
+sample data, so no student's cards appear. This document and `tests/README.md`
+stay where they are. GitHub's one-line description of the repository, which
+called the notes handwritten, was corrected at the same time. The page on Claude is `docs/where-claude-is-used.md`, not
+`docs/claude.md`: on the Mac's case-insensitive disk, Claude Code reads a file
+of that name as a `CLAUDE.md` of instructions.
+
 ---
 
 ## Open items
@@ -2069,9 +2154,6 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 
 ### The owner's to-dos
 
-- **Run `migrations/migration_014_feedback_review.sql`** in the Supabase SQL
-  editor. Until then View feedback works as before and says the reviews need
-  it.
 - **Check that `CRON_SECRET` is set in Vercel.** Without it the daily cahier
   check (`api/cahier-daily.js`) refuses to run. Linked docs are still read
   when a student opens the app, so the only sign is classes arriving late.
@@ -2144,8 +2226,9 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
 
 - **The first-visit tour** (2026-10-06). Sign up with a new address and the
   tour should come up once the app opens; sign out and in again, or open it on
-  another computer, and it shouldn't. Saving `tour_seen` to the account has
-  only been tested against the mock.
+  another computer, and it shouldn't. An existing student should get it once
+  too. Saving `tour_shown` to the account has only been tested against the
+  mock.
 
 - **The used sign-in link message** (2026-10-04). Ask for a link, open it,
   sign out, and open the same link again: the sign-in page should say it has
@@ -2157,9 +2240,11 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   Switch it off mid-set: the count and the card on screen stay. Saving to the
   account has only been tested against the mock.
 
-- **Claude's review of feedback** (2026-10-04). After migration_014, send a
-  note about a card and open View feedback: a review should be there or arrive
-  within about half a minute. Its request has never reached the real Claude.
+- **The tests of Claude's work on the real Claude** (2026-10-06). Both have
+  run only against stand-ins, since this Mac has no Anthropic key. The first
+  real runs are the 15:00 and 16:00 UTC schedules after 4f6c1d0: the next day,
+  the Status window's "Claude's marking" and "Notes to cards" tabs should each
+  show a run.
 
 - **The class notice closing on the first answer** (2026-09-30). The mock has
   no linked cahier, so the notice never appeared in a test. After the next
@@ -2245,10 +2330,10 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   them frees two slots; the multi-sense script imports its prompt from
   `split-senses.js`, so that would move into the script. (`split-senses.js`
   also still runs Opus 5 where Sonnet would do.)
-- **Stale text outside this document.** `tests/README.md`'s `progress` and
-  `stats` rows describe figures that were withdrawn. The Lessons page says
-  "Adding one copies its cards", but there is no add step. Several comments no
-  longer match the code: in `src/FlashcardApp.jsx`, the one above `answer()`
+- **Stale comments.** Two comments still say adding a lesson copies its cards,
+  though there is no add step: the one above the Lessons page in
+  `src/FlashcardApp.jsx` and the header of `src/data/lessons/index.js`. Several
+  others no longer match the code: in `src/FlashcardApp.jsx`, the one above `answer()`
   (`card_progress` no longer drives Stats) and those on `cardTopSpacer`,
   `cardWrap`, `S.card`, `typeLinksRow` and `cardBadge`; in
   `src/LessonPanel.jsx`, where the feedback panel renders.

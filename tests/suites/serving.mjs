@@ -13,7 +13,7 @@ import { buildSession, orderNewCards, classDaysOf, placeRetry, withdrawRetry, ap
 import { packSet, unpackEntries } from "../../src/lib/studyPlace.js";
 import { SIDE_FIELDS, sideOf, itemKey, withLocalAnswers } from "../../src/lib/directions.js";
 import { localISODate, localISODateDaysAgo } from "../../src/lib/studyDay.js";
-import { lessonRank } from "../../src/data/lessons/index.js";
+import { lessonRank, LESSONS } from "../../src/data/lessons/index.js";
 import LESSON from "../../src/data/lessons/imperatif.js";
 import { lessonCardKey } from "../../src/lib/lessonSource.js";
 import { checker } from "../check.mjs";
@@ -207,6 +207,19 @@ console.log("\n  outside a lesson, unseen lesson cards wait behind the notes");
   const onlyLesson = build(lessonCards, { lessonRank });
   ck("a student with no notes yet still gets the lesson, not an empty screen, in lesson order",
      onlyLesson.counts.new === 50 && onlyLesson.queue.every((c) => first50.has(c.id)), JSON.stringify(onlyLesson.counts));
+}
+
+console.log("\n  the basic lessons are met from Leçon 1");
+{
+  // Leçon 1 was added after Leçons 2 to 5; it still comes first (owner, 2026-10-06).
+  const basic = ["lecon5", "lecon4", "lecon3", "lecon2", "lecon1"];
+  const cardsOf = (id) => LESSONS.find((l) => l.id === id).cards.map(([front, back, category]) =>
+    newCard({ f: front, b: back, cat: category, source: `lesson:${id}#${lessonCardKey(front)}` }));
+  const order = orderNewCards(basic.flatMap(cardsOf), { now: NOW, lessonRank, rng: rng() })
+    .map((c) => c.source.slice(7, 13));
+  const seen = order.filter((id, i) => id !== order[i - 1]);
+  ck("a new student meets Leçon 1's cards first, then 2, 3, 4 and 5",
+     seen.join(" ") === "lecon1 lecon2 lecon3 lecon4 lecon5", seen.join(" "));
 }
 
 

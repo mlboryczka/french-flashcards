@@ -56,6 +56,13 @@ http.createServer((req,res)=>{
       return j(200,[]);
     }
     if(req.url.includes('/rest/v1/user_cards')&&req.method==='GET') return j(200,deck);
+    // The emailed sign-in code: 123456 signs in, anything else is refused
+    // with Supabase's own error.
+    if(req.url.includes('/auth/v1/verify')){
+      let parsed={}; try{parsed=JSON.parse(body||'{}');}catch{}
+      if(parsed.token!=='123456') return j(403,{code:403,error_code:'otp_expired',msg:'Token has expired or is invalid'});
+      return j(200,{access_token:'test.token',token_type:'bearer',expires_in:3600,expires_at:Math.floor(Date.now()/1000)+3600,refresh_token:'test.refresh',user});
+    }
     if(req.url.includes('/auth/v1/user')){
       if(req.method==='PUT'){
         let parsed={}; try{parsed=JSON.parse(body||'{}');}catch{}

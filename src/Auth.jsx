@@ -12,6 +12,7 @@ const linkFailed = () => {
 
 export default function Auth() {
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(() =>
@@ -36,6 +37,23 @@ export default function Auth() {
     else setSent(true);
   };
 
+  // The email carries a code as well as the link. Typing the code signs in
+  // this tab; the link can only open a new one, leaving two copies open.
+  const handleCode = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    const { data, error: codeError } = await supabase.auth.verifyOtp({
+      email,
+      token: code,
+      type: "email",
+    });
+    setLoading(false);
+    if (codeError?.code === "otp_expired" || codeError?.status === 403 || (!codeError && !data?.session))
+      setError("That code is wrong or has expired. Check the newest email, or send yourself a new one.");
+    else if (codeError) setError(codeError.message);
+  };
+
   return (
     <div style={styles.wrap}>
       <div style={styles.card}>
@@ -44,9 +62,33 @@ export default function Auth() {
           <div style={styles.sent}>
             <div style={styles.sentIcon}>✉</div>
             <p style={styles.sentText}>
-              Check your inbox for a login link. It'll sign you in automatically.
+              We've emailed a sign-in code to {email}. Type it here to sign in on this page.
             </p>
-            <button style={styles.linkBtn} onClick={() => setSent(false)}>
+            <form onSubmit={handleCode} style={styles.form}>
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="Code from the email"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={10}
+                required
+                disabled={loading}
+                style={{ ...styles.input, ...styles.codeInput }}
+                autoFocus
+              />
+              <button type="submit" disabled={loading || code.length < 6} style={styles.btn}>
+                {loading ? "Checking…" : "Sign in"}
+              </button>
+              {error && <div style={styles.error}>{error}</div>}
+            </form>
+            <p style={styles.sentNote}>
+              The link in the email works too, but it opens the app in a new tab.
+            </p>
+            <button
+              style={styles.linkBtn}
+              onClick={() => { setSent(false); setCode(""); setError(""); }}
+            >
               Use a different email
             </button>
           </div>
@@ -138,6 +180,19 @@ const styles = {
     marginTop: 4,
   },
   sent: { textAlign: "center" },
+  codeInput: {
+    textAlign: "center",
+    fontSize: 20,
+    letterSpacing: "4px",
+    fontFamily: "system-ui, sans-serif",
+  },
+  sentNote: {
+    fontSize: 12,
+    color: "#888",
+    fontFamily: "system-ui, sans-serif",
+    lineHeight: 1.5,
+    margin: "16px 0 8px",
+  },
   sentIcon: { fontSize: 40, marginBottom: 12 },
   sentText: {
     fontSize: 14,
