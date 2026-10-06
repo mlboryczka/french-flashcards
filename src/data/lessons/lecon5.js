@@ -357,7 +357,7 @@ export const NOTES = [
 
 export const LESSON = {
   id: "lecon5",
-  title: "Leçon 5 · Vouloir et pouvoir",
+  title: "Lesson 5 · Vouloir and pouvoir",
   subtitle: "Want and can, ne … pas, tu or vous, and 16 to 20",
   source: "LFL METHOD by Laura Caufour",
   cards: CARDS,

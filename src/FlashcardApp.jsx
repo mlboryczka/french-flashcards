@@ -762,6 +762,13 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (next.has(title)) next.delete(title); else next.add(title);
     return next;
   });
+  // The same on the Lessons page, kept apart from the sidebar's.
+  const [pageClosedGroups, setPageClosedGroups] = useState(() => new Set());
+  const togglePageGroup = (title) => setPageClosedGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(title)) next.delete(title); else next.add(title);
+    return next;
+  });
   const setLessonChoice = useCallback(async (id, on) => {
     const was = lessonChoicesRef.current[id];
     const next = { ...lessonChoicesRef.current, [id]: on };
@@ -2536,11 +2543,11 @@ export default function FlashcardApp({ user, onSignOut }) {
                   which has no room to nest anything. */}
               {m === "lessons" && !sidebarMin && lessonsOpen && LESSON_GROUPS.map((group) => {
                 const inside = group.lessons.some((l) => mode === "study" && lessonFilter === l.id);
-                const closed = group.title && closedGroups.has(group.title) && !inside;
-                const base = group.title ? { ...S.sideSubItem, ...S.sideSubItemNested } : S.sideSubItem;
+                const closed = group.folds && closedGroups.has(group.title) && !inside;
+                const base = group.folds ? { ...S.sideSubItem, ...S.sideSubItemNested } : S.sideSubItem;
                 return (
                   <Fragment key={group.title || "lessons"}>
-                    {group.title && (
+                    {group.folds && (
                       <button
                         style={S.sideGroup}
                         onClick={() => toggleGroup(group.title)}
@@ -2844,8 +2851,22 @@ export default function FlashcardApp({ user, onSignOut }) {
             <h1 style={S.statsHeading}>Lessons</h1>
             {LESSON_GROUPS.map((group) => (
               <Fragment key={group.title || "lessons"}>
-              {group.title && <h2 style={S.lessonGroupHeading} data-lesson-group-heading>{group.title}</h2>}
-              {group.lessons.map((lesson) => {
+              {group.title && (group.folds ? (
+                <button
+                  style={S.lessonGroupToggle}
+                  onClick={() => togglePageGroup(group.title)}
+                  aria-expanded={!pageClosedGroups.has(group.title)}
+                  data-lesson-group-heading={group.title}
+                >
+                  {group.title}
+                  <span style={pageClosedGroups.has(group.title) ? S.lessonGroupChevron : { ...S.lessonGroupChevron, ...S.sideChevronOpen }} aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                  </span>
+                </button>
+              ) : (
+                <h2 style={S.lessonGroupHeading} data-lesson-group-heading={group.title}>{group.title}</h2>
+              ))}
+              {!(group.folds && pageClosedGroups.has(group.title)) && group.lessons.map((lesson) => {
               const owned = userCards.filter((c) => lessonIdOf(c) === lesson.id);
               const added = owned.length > 0;
               // A lesson card whose front the deck already had as its own is
@@ -5131,6 +5152,8 @@ const S = {
   // you are, and the only pill-shaped things in this row are controls.
   lessonName: { fontFamily:T.font.serif, fontSize:15, fontWeight:600, color:T.color.primary, whiteSpace:"nowrap", letterSpacing:"-0.01em", flexShrink:0 },
   lessonGroupHeading: { fontSize:20, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, margin:"32px 0 14px" },
+  lessonGroupToggle: { display:"flex", alignItems:"center", gap:10, padding:0, border:"none", background:"transparent", cursor:"pointer", fontSize:20, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, margin:"32px 0 14px", textAlign:"left" },
+  lessonGroupChevron: { display:"flex", opacity:0.6, transition:"transform 0.2s" },
   lessonCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"20px 24px", marginBottom:12, boxShadow:T.shadow.card, maxWidth:720 },
   lessonHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16 },
   lessonTitle: { fontSize:18, fontFamily:T.font.serif, color:T.color.onSurface, marginBottom:4 },

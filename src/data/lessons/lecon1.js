@@ -256,7 +256,7 @@ export const NOTES = [
 
 export const LESSON = {
   id: "lecon1",
-  title: "Leçon 1 · Être",
+  title: "Lesson 1 · Être",
   subtitle: "I, you, he, she… and the verb to be",
   source: "LFL METHOD by Laura Caufour",
   cards: CARDS,

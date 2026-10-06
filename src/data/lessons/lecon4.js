@@ -328,7 +328,7 @@ export const NOTES = [
 
 export const LESSON = {
   id: "lecon4",
-  title: "Leçon 4 · Verbes en -er",
+  title: "Lesson 4 · -er verbs",
   subtitle: "Regular -er verbs, my / your / his / her, and 11 to 15",
   source: "LFL METHOD by Laura Caufour",
   cards: CARDS,

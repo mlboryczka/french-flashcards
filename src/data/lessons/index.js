@@ -40,17 +40,20 @@ export const lessonById = (id) => LESSONS.find((l) => l.id === id) || null;
 // How the catalogue is shown: on the Lessons page, in the sidebar and on
 // Stats. Separate from LESSONS, whose order is part of every card's rank
 // (lessonRank), so that list only ever grows at the end. Laura's numbered
-// beginner lessons sit together under one heading, in number order, though
-// Leçon 1 was added after Leçons 2 to 5 (owner, 2026-10-06). A lesson in no
-// group comes first, without a heading.
+// beginner lessons come first, together under one heading and in number
+// order, though Leçon 1 was added after Leçons 2 to 5 (owner, 2026-10-06).
+// Every other lesson follows. In the sidebar only a group that `folds` gets
+// a heading, with its lessons indented beneath it; the rest sit at the usual
+// indent, which is enough to set them apart. On the Lessons page, where the
+// cards are all the same width, they need their heading.
 const GROUPS = [
-  { title: "Basic Lessons", ids: ["lecon1", "lecon2", "lecon3", "lecon4", "lecon5"] },
+  { title: "Basic Lessons", folds: true, ids: ["lecon1", "lecon2", "lecon3", "lecon4", "lecon5"] },
 ];
 export const LESSON_GROUPS = (() => {
   const grouped = new Set(GROUPS.flatMap((g) => g.ids));
   return [
-    { title: null, lessons: LESSONS.filter((l) => !grouped.has(l.id)) },
-    ...GROUPS.map((g) => ({ title: g.title, lessons: g.ids.map(lessonById).filter(Boolean) })),
+    ...GROUPS.map((g) => ({ title: g.title, folds: g.folds, lessons: g.ids.map(lessonById).filter(Boolean) })),
+    { title: "More lessons", folds: false, lessons: LESSONS.filter((l) => !grouped.has(l.id)) },
   ].filter((g) => g.lessons.length > 0);
 })();
 export const LESSONS_SHOWN = LESSON_GROUPS.flatMap((g) => g.lessons);

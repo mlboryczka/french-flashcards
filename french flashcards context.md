@@ -1150,15 +1150,19 @@ A lesson is a fixed set of cards made from a teacher's materials, the same for
 every student. Lessons are in `src/data/lessons/`; `LESSONS` in `index.js` is
 the catalogue. There are seven: L'impératif (108 cards, from Laura Caufour's
 LFL METHOD sheets), Adjectif ou adverbe ? (81 cards, written for the app), and
-her beginner Leçons 1 to 5: Être (57), Aller (63), Avoir (62), Verbes en -er
-(78) and Vouloir et pouvoir (58).
+her beginner Leçons 1 to 5, titled in English in the app (owner, 2026-10-06):
+Lesson 1 · Être (57), Lesson 2 · Aller (63), Lesson 3 · Avoir (62), Lesson 4 ·
+-er verbs (78) and Lesson 5 · Vouloir and pouvoir (58).
 
 - **The Lessons page, the sidebar and Stats show `LESSON_GROUPS`**, not
-  `LESSONS`: Leçons 1 to 5 sit under the heading "Basic Lessons", in number
-  order (owner, 2026-10-06), though Leçon 1 was added after Leçons 2 to 5.
+  `LESSONS`: Lessons 1 to 5 come first, under the heading "Basic Lessons", in
+  number order (owner, 2026-10-06), though Lesson 1 was added after Lessons 2
+  to 5. The other lessons follow, under "More lessons" on the Lessons page
+  and with no heading in the sidebar, where the indent sets them apart.
   `LESSONS` keeps the order lessons were added in, because a lesson's place
-  there is part of every one of its cards' rank. In the sidebar the heading
-  has its own arrow and folds its five away, never over the lesson open.
+  there is part of every one of its cards' rank. "Basic Lessons" has its own
+  arrow, in the sidebar and on the Lessons page, and folds its five away; the
+  sidebar never folds it over the lesson open.
 
 - A card is `[front, back, category, section, previousFront?]`. The front is
   always the French, because the app reads it aloud and cleans it as French.

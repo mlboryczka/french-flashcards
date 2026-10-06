@@ -373,7 +373,7 @@ export const NOTES = [
 
 export const LESSON = {
   id: "lecon2",
-  title: "Leçon 2 · Aller",
+  title: "Lesson 2 · Aller",
   subtitle: "How are you, to go, the near future, numbers 1 to 5 and plurals",
   source: "LFL METHOD by Laura Caufour",
   cards: CARDS,

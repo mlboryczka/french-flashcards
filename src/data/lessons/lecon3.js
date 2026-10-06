@@ -338,7 +338,7 @@ export const NOTES = [
 
 export const LESSON = {
   id: "lecon3",
-  title: "Leçon 3 · Avoir",
+  title: "Lesson 3 · Avoir",
   subtitle: "Avoir and age, the gender of nouns, the articles, 6 to 10",
   source: "LFL METHOD by Laura Caufour",
   cards: CARDS,
