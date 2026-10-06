@@ -4961,8 +4961,11 @@ const S = {
   // means the sidebar stays fixed while the main content scrolls.
   // overflowX stays visible when minimized so the profile menu can open past
   // the 64px rail; the rail is short enough never to need to scroll.
+  // Padding as longhands, not the shorthand: React diffs per property, so going
+  // back from the rail's paddingTop:8 removed paddingTop without re-applying the
+  // shorthand, the top padding fell to 0 and Cards slid up under the button.
   sideBarMin: { width:SIDEBAR_MIN_WIDTH, overflowY:"visible", paddingTop:8 },
-  sideBar: { width:SIDEBAR_WIDTH, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", padding:"40px 0 24px", display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box", transition:`width ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
+  sideBar: { width:SIDEBAR_WIDTH, background:T.color.surfaceLow, borderRight:"1px solid rgba(3,22,50,0.07)", paddingTop:40, paddingRight:0, paddingBottom:24, paddingLeft:0, display:"flex", flexDirection:"column", flexShrink:0, position:"sticky", top:0, height:"100vh", overflowY:"auto", boxSizing:"border-box", transition:`width ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
   // Not flex:1 any more — the feedback dock below takes the free height, so the
   // panel can sit in it. The nav looks the same either way.
   sideNav: { display:"flex", flexDirection:"column", gap:4, flex:"none" },
