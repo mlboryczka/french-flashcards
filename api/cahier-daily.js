@@ -9,6 +9,12 @@
 // sync the app calls (api/cahier-sync.js), so there is one set of rules about
 // what gets parsed and what gets written.
 //
+// A second schedule in vercel.json, STATUS_SCHEDULE, runs the status check on
+// every student instead (api/_lib/statusDaily.js) and keeps the results for
+// the Status window. Vercel says which schedule called in the
+// x-vercel-cron-schedule header. It lives here because the Hobby plan deploys
+// at most 12 routes and there are 12.
+//
 // AUTHENTICATION. Vercel sends `Authorization: Bearer $CRON_SECRET` with every
 // cron request when that variable is set. Without CRON_SECRET this route
 // refuses to run at all rather than leaving a URL that any caller could use to
@@ -16,6 +22,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { syncUser } from "./cahier-sync.js";
+import { STATUS_SCHEDULE, checkEveryone, saveReports } from "./_lib/statusDaily.js";
 
 export const config = { maxDuration: 300 };
 
@@ -41,6 +48,20 @@ export default async function handler(req, res) {
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  if (req.headers["x-vercel-cron-schedule"] === STATUS_SCHEDULE) {
+    try {
+      const reports = await checkEveryone(admin);
+      const saved = await saveReports(admin, reports);
+      const failing = reports.filter((r) => !r.ok).length;
+      console.log(`[status-daily] ${reports.length} students checked, ${failing} with a failing check${saved.missing ? "; not kept: migration_015 not run" : ""}`);
+      if (saved.error) console.error("[status-daily] couldn't keep the reports:", saved.error);
+      return res.status(200).json({ ok: true, checked: reports.length, failing, kept: !!saved.ok });
+    } catch (e) {
+      console.error("[status-daily] failed:", e);
+      return res.status(500).json({ error: e.message });
+    }
+  }
 
   const { data: links, error } = await admin
     .from("cahier_links")

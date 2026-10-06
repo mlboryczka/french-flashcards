@@ -7,7 +7,12 @@
 // which timestamps every review. Falls back to last_sign_in_at for users
 // who have never reviewed a card.
 
+import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "./_lib/auth.js";
+import { checkEveryone, saveReports, latestReports } from "./_lib/statusDaily.js";
+
+// Checking every student takes a few seconds each.
+export const config = { maxDuration: 120 };
 
 // PostgREST caps unbounded queries at 1000 rows by default. With multiple
 // active users, user_cards / card_progress / user_review_dates all exceed
@@ -42,6 +47,29 @@ export default async function handler(req, res) {
   }
 
   if (!(await requireAdmin(req, res))) return;
+
+  // The status check on every student, for the Status window
+  // (api/_lib/statusDaily.js): ?view=status reads the latest kept report for
+  // each; with &run=1 every student is checked now first, and kept when
+  // migration_015 has been run.
+  if (req.query?.view === "status") {
+    const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    try {
+      if (req.query.run === "1") {
+        const reports = await checkEveryone(db);
+        const saved = await saveReports(db, reports);
+        return res.status(200).json({ reports, kept: !!saved.ok, waiting: !!saved.missing });
+      }
+      const latest = await latestReports(db);
+      if (latest.error) return res.status(500).json({ error: latest.error });
+      return res.status(200).json({ reports: latest.reports, waiting: !!latest.missing });
+    } catch (e) {
+      console.error("admin-users status failed:", e);
+      return res.status(500).json({ error: e.message });
+    }
+  }
 
   const sbHeaders = {
     apikey: SUPABASE_SERVICE_ROLE_KEY,

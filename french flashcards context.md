@@ -633,12 +633,12 @@ one. `api/_lib/` is shared code, not a route.
 | `parse-cahier.js` | Upload: splits a notebook into dated classes, then saves the cards |
 | `cahier-parse.js` | Upload: turns the classes into cards |
 | `cahier-sync.js` | Linked cahier: turns the doc's unread classes into cards |
-| `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs |
+| `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs. A second schedule, 14:00 UTC, runs the status check on every student instead (`api/_lib/statusDaily.js`); Vercel's `x-vercel-cron-schedule` header says which |
 | `chat.js` | The tutor. Gives hints, not the answer, until the card's answer is shown. Never writes cards |
-| `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude. A body with `feedback` is instead Claude's review of a piece of feedback and the owner's Apply and Dismiss (`api/_lib/feedbackReview.js`), here because of the 12-route limit |
+| `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude. A body with `feedback` is instead Claude's review of a piece of feedback and the owner's Apply and Dismiss (`api/_lib/feedbackReview.js`), here because of the 12-route limit. Every verdict is saved to `answer_reviews` (migration_015); a body with `answerChecks` is the owner's list of them and the test made from them (`api/_lib/answerChecks.js`) |
 | `fsrs-fit.js` | Once a day per student: fits their own FSRS settings when due, and recomputes memory estimates when the settings change |
 | `admin-update-card.js` | Saves a card edit, for any student's own cards despite the name. Uses the service role: edits from the browser under RLS silently did nothing |
-| `admin-users.js` | Admin only: every account and its activity |
+| `admin-users.js` | Admin only: every account and its activity. `?view=status` is the latest status check on every student; with `&run=1` they are all checked now |
 | `parse-corrections.js` | Admin only: logs corrections that `cahier-parse` learns from |
 | `split-senses.js`, `apply-splits.js` | Propose, then write, splits of cards that teach two words. Nothing in the app calls them now |
 
@@ -1611,6 +1611,36 @@ known it. A date after the set's day never counts. A date counts once its
 notes had arrived, which is when the first card carrying that date was made
 on or after that day, since only a notes upload makes one. Any other date is
 uncertain, and an order that depends on it isn't judged.
+
+### Since 2026-10-06: every student, Claude's marking, and tests on GitHub
+
+The owner asked for the checks to meet the standards of a guide to evals
+(2026-10-06). Three things came of it, all in the Status window, which has a
+tab for each:
+
+- **All students.** The nine checks run on the server every morning (the
+  second `cahier-daily` schedule) on every student who has answered a card,
+  and the reports are kept in `status_reports` (migration_015). "Check
+  everyone now" runs them on demand. A student's failed check lights the
+  avatar's alert as the admin's own does. The first run on live data, read
+  only, found three accounts with answers and every check passing.
+- **Claude's marking.** Every verdict on "My answer should have been
+  accepted" is saved, accept or not, in `answer_reviews`, with both sides of
+  the card, what was typed, Claude's reason and whether the student pressed
+  "Accept anyway". The accepted answers kept before then are copied in as
+  `kept`. The owner marks what Claude should have said; "Test Claude" asks
+  Claude about every marked answer again, three times each, with the app's own
+  question and model, and saves the run in `eval_runs`: agreed every time,
+  some of the time, never. The question carries a version (a hash of its
+  wording and the model), so runs before and after a change can be compared.
+- **Tests on GitHub.** `.github/workflows/tests.yml` builds the app, runs the
+  simulated students and every test suite on each push to `main`. A failure
+  marks the commit and emails whoever pushed. A browser suite that fails gets
+  one second try and is named in the summary.
+
+Known about the question Claude is asked, and left as it is so the first
+test measures it unchanged: for an English-side card it says "The card showed
+the English side" followed by the French text.
 
 ### The simulations (`tests/simulate/`)
 

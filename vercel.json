@@ -3,6 +3,10 @@
     {
       "path": "/api/cahier-daily",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cahier-daily",
+      "schedule": "0 14 * * *"
     }
   ]
 }

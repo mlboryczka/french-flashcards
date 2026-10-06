@@ -4,6 +4,7 @@ import { runStatusChecks } from "./lib/statusChecks";
 import { missingTable } from "./lib/dealLog";
 import { browserTimeZone } from "./lib/studyDay";
 import { lessonRank } from "./data/lessons";
+import { fetchStudentReports } from "./StatusStudents";
 
 // The status check (lib/statusChecks.js) on the signed-in student's own
 // record: were their cards shown the way FSRS and the app's rules say?
@@ -13,6 +14,10 @@ import { lessonRank } from "./data/lessons";
 // has loaded, when the Status dialog opens, and on coming back to the tab
 // once the last result is an hour old. `amiss` is what the profile menu's
 // alert shows: a check failed, or the check itself couldn't run.
+//
+// `students` is the latest kept check on every student (api/_lib/statusDaily.js,
+// each morning on the server), read at the same moments. A student's failed
+// check lights the alert too; not being able to read them doesn't.
 
 const PAGE = 1000;
 const STALE_MS = 60 * 60 * 1000;
@@ -35,6 +40,7 @@ export function useStatusCheck(user, { enabled, ready }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(false);
+  const [students, setStudents] = useState(null);
   const runningRef = useRef(false);
   const ranAtRef = useRef(0);
 
@@ -42,6 +48,9 @@ export function useStatusCheck(user, { enabled, ready }) {
     if (!userId || runningRef.current) return;
     runningRef.current = true;
     setRunning(true);
+    fetchStudentReports()
+      .then(setStudents)
+      .catch((e) => setStudents((s) => ({ ...(s || {}), error: e.message })));
     try {
       const [answers, cards, deals, settings] = await Promise.all([
         readAll("card_reviews", userId),
@@ -88,5 +97,9 @@ export function useStatusCheck(user, { enabled, ready }) {
     };
   }, [enabled, ready, userId, run]);
 
-  return { report, error, running, run, amiss: !!error || (!!report && !report.ok) };
+  const studentFailing = (students?.reports || []).some((r) => !r.ok);
+  return {
+    report, error, running, run, students, setStudents,
+    amiss: !!error || (!!report && !report.ok) || studentFailing,
+  };
 }

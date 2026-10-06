@@ -156,6 +156,9 @@ create policy "Users manage their own alternates"
 --   migration_012 → fsrs_settings, each student's own FSRS settings
 --   migration_013 → the settings each answer was scheduled with, and the
 --                   dealt_sets table of every set of cards dealt
+--   migration_015 → answer_reviews (Claude's verdicts on disputed answers),
+--                   eval_runs (tests of Claude's work), status_reports (the
+--                   daily status check on every student)
 -- Run this file first, then the migrations in order.
 
 create table if not exists public.user_cards (

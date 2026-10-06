@@ -2,11 +2,17 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { T } from "./theme";
 import { statusText } from "./lib/statusChecks";
+import StatusAnswers from "./StatusAnswers";
+import StatusStudents from "./StatusStudents";
 
 // "Status": whether the student's cards are being shown the way FSRS and the
 // app's own rules say (lib/statusChecks.js, run by useStatusCheck). The
 // admin's; opened from the profile menu, whose Status line carries an alert
 // while anything here has failed.
+//
+// Since 2026-10-06 it is where every check of the app lives, one tab each:
+// your own cards (above), every student's (StatusStudents.jsx), and Claude's
+// marking of disputed answers (StatusAnswers.jsx).
 
 const GROUPS = [
   ["Following FSRS", ["fsrs", "one-a-day", "kept"]],
@@ -14,14 +20,22 @@ const GROUPS = [
   ["How well it's working", ["predictions"]],
 ];
 
+const TABS = [
+  ["cards", "Your cards"],
+  ["students", "All students"],
+  ["answers", "Claude's marking"],
+];
+
 const day = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "long" });
 const time = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" });
 
 export default function StatusModal({ open, onClose, status }) {
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState("cards");
   useEffect(() => {
     if (!open) return;
     setCopied(false);
+    setTab("cards");
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -44,6 +58,25 @@ export default function StatusModal({ open, onClose, status }) {
     <div style={S.scrim} onClick={onClose}>
       <div style={S.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Status" data-status>
         <div style={S.title}>Status</div>
+        <div style={S.tabs} role="tablist">
+          {TABS.map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              data-status-tab={id}
+              style={tab === id ? S.tabOn : S.tab}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "students" && <StatusStudents students={status.students} onChecked={status.setStudents} />}
+        {tab === "answers" && <StatusAnswers />}
+
+        {tab === "cards" && (<>
         <p style={S.body}>
           Whether your cards are being shown the way FSRS and the app's rules say.
           {report ? ` Checked ${time(report.checkedAt)}, on your answers from ${day(report.from)} on.` : ""}
@@ -74,16 +107,19 @@ export default function StatusModal({ open, onClose, status }) {
             Copy the details and paste them to Claude in the project, and it will look into what happened.
           </p>
         )}
+        </>)}
 
         <div style={S.actions}>
-          {report && (
+          {tab === "cards" && report && (
             <button style={S.secondary} onClick={copy} data-status-copy>
               {copied ? "Copied" : "Copy details"}
             </button>
           )}
-          <button style={S.secondary} onClick={run} disabled={running}>
-            {running ? "Checking…" : "Check again"}
-          </button>
+          {tab === "cards" && (
+            <button style={S.secondary} onClick={run} disabled={running}>
+              {running ? "Checking…" : "Check again"}
+            </button>
+          )}
           <button style={S.done} onClick={onClose}>Done</button>
         </div>
       </div>
@@ -107,13 +143,22 @@ const S = {
   },
   modal: {
     background: T.color.surface, borderRadius: T.radius.xl,
-    padding: "24px 24px 20px", width: "min(520px, 100%)",
+    padding: "24px 24px 20px", width: "min(600px, 100%)",
     boxShadow: "0 24px 64px rgba(3,22,50,0.24)",
     fontFamily: T.font.sans, boxSizing: "border-box",
     maxHeight: "90vh", overflowY: "auto",
   },
   title: { fontFamily: T.font.serif, fontSize: 19, fontWeight: 600, color: T.color.onSurface },
   body: { fontSize: 13, lineHeight: 1.6, color: T.color.onSurfaceVariant, margin: "8px 0 14px" },
+  tabs: { display: "flex", flexWrap: "wrap", gap: 4, margin: "12px 0 12px", borderBottom: "1px solid rgba(3,22,50,0.08)" },
+  tab: {
+    padding: "7px 10px", background: "transparent", border: "none", borderBottom: "2px solid transparent",
+    fontFamily: T.font.sans, fontSize: 13, fontWeight: 600, color: T.color.onSurfaceVariant, cursor: "pointer", marginBottom: -1,
+  },
+  tabOn: {
+    padding: "7px 10px", background: "transparent", border: "none", borderBottom: `2px solid ${T.color.primary}`,
+    fontFamily: T.font.sans, fontSize: 13, fontWeight: 600, color: T.color.onSurface, cursor: "pointer", marginBottom: -1,
+  },
   note: {
     fontSize: 12.5, color: T.color.onSurfaceVariant,
     background: T.color.surfaceLowest, border: "1px solid rgba(3,22,50,0.08)",
