@@ -1,5 +1,6 @@
-// The Stats page: seen, about remembered and not yet seen, per area; and
-// today's answers. Every expected figure is counted from the
+// The Stats page: today's cards (new, reviews, retries), ~N remembered over
+// time, seen / ~N remembered / not yet seen per area with each one's last 7
+// days, and the days studied. Every expected figure is counted from the
 // served fixture here, independently of the app's own calculation, so the
 // check can't just agree with the code.
 import { openApp, finish, checker, gotoStats } from "../harness.mjs";
@@ -70,13 +71,35 @@ const isSeen = (r) => r.fsrs_state !== 0 || (twoWay(r) && (r.en_fsrs_state ?? 0)
 const today = localDay(now);
 const answeredToday = sides.filter((x) => x.last_review && localDay(x.last_review) === today);
 const rightToday = answeredToday.filter((x) => x.last_answer_correct === true);
-// Today's answer records: one for each card answered today, and three retries
-// on top — practice answers, which count as answers but not as first answers.
+// The record of answers, matching the cards: each way round a card has been
+// answered has a counted answer at its last review. Ten of the notes cards
+// answered today were met today for the first time; every other seen card was
+// first met ten days ago (notes) or two days ago (the lesson). Three retries
+// today on top: answers, but not first tries.
+const newToday = new Set(rows.slice(0, 60).filter((r, i) => i % 3 === 1 && i % 2 === 0).map((r) => r.id));
+const records = [];
+let rid = 1;
+const record = (r, dir, at, stateBefore, correct, stability, counted = true) => records.push({
+  id: `rec${rid++}`, card_id: r.id, direction: dir, answered_at: new Date(at).toISOString(),
+  correct, counted, state_before: counted ? stateBefore : null, stability_after: counted ? stability : null,
+});
+for (const r of rows) {
+  if (r.fsrs_state !== 0) {
+    const last = Date.parse(r.last_review);
+    if (newToday.has(r.id)) record(r, "fr", last, 0, r.last_answer_correct, r.stability);
+    else {
+      const first = r.source.startsWith("lesson:") ? last : now - 10 * DAY;
+      record(r, "fr", first, 0, true, 3);
+      if (last !== first) record(r, "fr", last, 2, r.last_answer_correct, r.stability);
+    }
+  }
+  if ((r.en_fsrs_state ?? 0) !== 0) record(r, "en", Date.parse(r.en_last_review), 0, r.en_last_answer_correct, r.en_stability);
+}
 const retriesToday = 3;
-const todaysRecords = [
-  ...answeredToday.map((_, i) => ({ id: `a${i}` })),
-  ...Array.from({ length: retriesToday }, (_, i) => ({ id: `r${i}` })),
-];
+for (let i = 0; i < retriesToday; i++) record(rows[i * 3 + 1], "fr", now - 30000, null, true, null, false);
+const todays = records.filter((x) => localDay(x.answered_at) === localDay(now));
+const freshToday = todays.filter((x) => x.counted && newToday.has(x.card_id)).length;
+const reviewsToday = todays.filter((x) => x.counted).length - freshToday;
 const notes = rows.filter((r) => !r.source.startsWith("lesson:"));
 const recent = notes.filter((r) => r.dates[0] >= daysAgo(14));
 const earlier = notes.filter((r) => r.dates[0] < daysAgo(14));
@@ -88,7 +111,7 @@ const { browser, page } = await openApp({
     await p.route("**/rest/v1/user_cards*", async (r) => r.request().method() !== "GET" ? r.continue() :
       r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(rows) }));
     await p.route("**/rest/v1/card_reviews*", async (r) => r.request().method() !== "GET" ? r.continue() :
-      r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(todaysRecords) }));
+      r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(records) }));
   },
 });
 await page.waitForTimeout(2500);
@@ -98,14 +121,40 @@ const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, "
 const within = (marker) => page.evaluate((m) => document.querySelector(m)?.innerText.replace(/\s+/g, " ") || "", marker);
 
 console.log("\n  today");
-// Every answer given today, retries included — the same count as the
-// end-of-set screen. It was counted off each card's last review, one per card
-// and way round, which left the retries out (2026-09-27).
-ck("answers today: every answer, retries included",
-   /today (\d+) answers/i.test(text) && Number(/today (\d+) answers/i.exec(text)[1]) === answeredToday.length + retriesToday,
-   `expected ${answeredToday.length + retriesToday}: ${/today \S+ \S+/i.exec(text)?.[0]}`);
-ck("right first time today",
-   text.includes(`${rightToday.length} of ${answeredToday.length}`), `expected ${rightToday.length} of ${answeredToday.length}`);
+// Every card studied today, in three, adding up: new + reviews + retries.
+ck("today: every card, retries included",
+   new RegExp(`Today ${todays.length} cards`, "i").test(text), `expected ${todays.length}: ${/today \S+ \S+/i.exec(text)?.[0]}`);
+ck("today's cards in three: new, reviews, retries",
+   text.includes(`${freshToday} new · ${reviewsToday} reviews · ${retriesToday} retries`),
+   `expected ${freshToday} new · ${reviewsToday} reviews · ${retriesToday} retries`);
+ck("the record agrees with the cards: one first try per way round answered today",
+   freshToday + reviewsToday === answeredToday.length, `${freshToday} + ${reviewsToday} vs ${answeredToday.length}`);
+ck("right first time today, out of the new cards and reviews",
+   text.includes(`${rightToday.length} of ${answeredToday.length} cards (${freshToday} new + ${reviewsToday} reviews)`),
+   `expected ${rightToday.length} of ${answeredToday.length} cards (${freshToday} new + ${reviewsToday} reviews)`);
+
+console.log("\n  over time");
+{
+  const trend = await within("[data-stats-trend]");
+  // Met in the last 7 days: cards whose first answer, either way round, came
+  // after the end of the day a week ago (the cards met today, the lesson's 30
+  // two days ago, and the words so far met only in English).
+  const firstAt = new Map();
+  for (const x of records) if (x.counted) {
+    const t = Date.parse(x.answered_at);
+    if (!firstAt.has(x.card_id) || t < firstAt.get(x.card_id)) firstAt.set(x.card_id, t);
+  }
+  const weekAgoEnd = (() => { const d = new Date(now); if (d.getHours() < 4) d.setDate(d.getDate() - 1); d.setHours(4, 0, 0, 0); d.setDate(d.getDate() - 6); return d.getTime() - 1; })();
+  const met = [...firstAt.values()].filter((t) => t > weekAgoEnd).length;
+  ck("the chart says what the last 7 days added, and how many new cards were met",
+     /In the last 7 days: ~\d+ more remembered/.test(trend) && trend.includes(`, ${met} new cards met.`), trend.slice(0, 200));
+  ck("the chart is drawn", await page.evaluate(() => !!document.querySelector("[data-stats-chart] path")));
+  const days = await within("[data-stats-days]");
+  const studied = new Set(records.map((x) => localDay(x.answered_at))).size;
+  ck(`days studied: ${studied} of 11, since the first answer ten days ago`,
+     days.includes(`${studied} of 11 days`), days.slice(0, 120));
+  ck("the calendar says what its shades mean", /Didn't study.*Under 50 cards.*50 to 69 cards.*70 cards or more/.test(days), days);
+}
 
 console.log("\n  all cards, and each area");
 const all = await within("[data-stats-all]");
@@ -117,8 +166,8 @@ ck("the whole deck's seen and not-yet-seen counts",
 // one way — most of this fixture — must add nothing.
 {
   const couldCount = rows.filter((r) => twoWay(r) ? r.fsrs_state !== 0 && (r.en_fsrs_state ?? 0) !== 0 : r.fsrs_state !== 0).length;
-  const n = Number(/about (\d+) remembered/.exec(all)?.[1]);
-  ck("about N remembered counts a word only once it is known both ways",
+  const n = Number(/~(\d+) remembered/.exec(all)?.[1]);
+  ck("~N remembered counts a word only once it is known both ways",
      Number.isFinite(n) && n > 0 && n <= couldCount, `${n} remembered, at most ${couldCount} could count; ${rows.filter(isSeen).length} seen`);
 }
 ck("students are never shown the two ways apart",
@@ -126,7 +175,7 @@ ck("students are never shown the two ways apart",
 const areas = await within("[data-stats-areas]");
 const row = (label, list) =>
   ck(`${label}: ${list.filter(isSeen).length} seen of ${list.length}`,
-     new RegExp(`${label.replace(/[()']/g, ".")}.*?${list.filter(isSeen).length} seen · about \\d+ remembered · ${list.length} cards`).test(areas), areas);
+     new RegExp(`${label.replace(/[()']/g, ".")}.*?${list.filter(isSeen).length} seen · ~\\d+ remembered · ${list.length} cards.*?(remembered in 7 days|no change in 7 days)`).test(areas), areas);
 row(LESSON.title, lesson);
 row("Last two weeks of class", recent);
 row("Older classes", earlier);
@@ -143,26 +192,11 @@ row("Older classes", earlier);
 // round as a card, and a session deals due cards by itself.
 ck("no \"Coming up\" forecast", !/coming up|due tomorrow/i.test(text), text.slice(0, 300));
 
-console.log("\n  by type");
-// Right last time, over the cards seen, from the same rows as everything else
-// on the page — never the lifetime tally, which still counted answers on
-// cards since reset to not yet seen.
-{
-  const vocab = sides.filter((x) => x.r.category === "V" && x.fsrs_state !== 0 && x.last_answer_correct != null);
-  const pct = Math.round((vocab.filter((x) => x.last_answer_correct === true).length / vocab.length) * 100);
-  const typeText = text.slice(text.indexOf("By type"));
-  ck("vocab reads right last time from the cards' own last answers",
-     new RegExp(`VOCAB ${pct}% right last time`, "i").test(typeText), typeText.slice(0, 200));
-}
-
-console.log("\n  hardest cards");
-{
-  // Forgotten either way round counts: both ways are the same word.
-  const worst = Math.max(...rows.map((r) => (r.lapses ?? 0) + (r.en_lapses ?? 0)));
-  const hard = text.slice(text.indexOf("Hardest cards"));
-  ck("a word forgotten only in English is among the hardest, with its count",
-     worst > 0 && hard.includes(`forgotten ${worst}×`), hard.slice(0, 200));
-}
+console.log("\n  removed sections stay removed");
+// By type and Hardest cards went on 2026-10-06 (owner).
+ck("no By type section", !/By type|Progress by Type/i.test(text));
+ck("no Hardest cards", !/Hardest cards/i.test(text));
+ck("Progress by Lesson is the heading", /Progress by Lesson/.test(areas), areas.slice(0, 80));
 
 console.log("\n  the old vocabulary is gone");
 ck("no \"mastered\" anywhere on the page", !/mastered/i.test(text));

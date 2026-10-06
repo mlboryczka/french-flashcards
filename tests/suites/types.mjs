@@ -1,5 +1,5 @@
-// Card types: the Grammar / Vocab / Phrases filter in the Cards view, and the
-// By type breakdown in Stats.
+// Card types: the Grammar / Vocab / Phrases filter in the Cards view. Stats
+// had a By type breakdown until 2026-10-06, when the owner removed it.
 import { openApp, finish, checker, gotoStats, sessionCounter, servedDeck, firstBlockItems } from "../harness.mjs";
 import { classifyCard, CARD_TYPES, TYPE_LABEL } from "../../src/lib/cardTypes.js";
 import { CAT_DB_TO_UI } from "../../src/lib/cardCategories.js";
@@ -60,20 +60,9 @@ ck(
   })) !== "rgba(0, 0, 0, 0)"
 );
 
-console.log("\n  the By type panel in Stats");
+console.log("\n  Stats has no By type panel");
 await gotoStats(page);
-const rows = await page.evaluate(() => {
-  const h = [...document.querySelectorAll("h3")].find((x) => x.textContent.trim() === "By type");
-  if (!h) return null;
-  const grid = h.parentElement.querySelector("div:last-child");
-  return [...grid.children].map((c) => c.innerText.replace(/\n/g, " · "));
-});
-console.log("  " + (rows ? rows.join("\n  ") : "(no By type section)"));
-ck("the breakdown exists", !!rows && rows.length > 0);
-ck(
-  "named Grammar / Vocab / Phrase",
-  !!rows && ["grammar", "vocab", "phrase"].every((t) => rows.some((r) => new RegExp("^" + t, "i").test(r)))
-);
+ck("no By type or Progress by Type section", !/By type|Progress by Type/i.test(await page.evaluate(() => document.body.innerText)));
 ck("no trace of the old Vocabulary label", !/Vocabulary/.test(await page.evaluate(() => document.body.innerText)));
 
 await finish(browser, ck);

@@ -48,8 +48,9 @@ async function open({ patchStatus, api, apiDelay = 0, studyMode, rows } = {}) {
       await p.route("**/rest/v1/card_reviews*", async (r) => {
         // Read back as the database would: the records saved so far.
         if (r.request().method() === "GET") {
-          const ids = [...new Set(reviews.filter((x) => x.body?.id).map((x) => x.body.id))];
-          return r.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify(ids.map((id) => ({ id }))) });
+          const byId = new Map();
+          for (const x of reviews) if (x.body?.id) byId.set(x.body.id, x.body);
+          return r.fulfill({ status: 200, contentType: "application/json", headers: CORS, body: JSON.stringify([...byId.values()]) });
         }
         reviews.push({ method: r.request().method(), url: r.request().url(), body: JSON.parse(r.request().postData() || "{}") });
         return r.fulfill({ status: 201, headers: CORS, body: "" });
@@ -497,9 +498,10 @@ console.log("\n  the counter and Stats follow what was actually answered");
   const summary = await t.page.evaluate(() => document.querySelector("[data-checkpoint]")?.innerText.split("\n")[0] || "");
   ck("8 answers in the set, and the end-of-set screen says so", answers === 8 && /^8 answers/.test(summary), `${answers} given; "${summary}"`);
   await gotoStats(t.page); await t.wait(800);
-  const today = () => t.page.evaluate(() => /Today (\d+) answers?/i.exec(document.body.innerText.replace(/\s+/g, " "))?.[1]);
-  ck("Stats counts every answer today, retries included: 8, not 6", (await today()) === "8", `${await today()}`);
-  ck("right first time is still out of the 6 cards", await t.has(/4 of 6/), "");
+  const today = () => t.page.evaluate(() => /Today (\d+) cards?/i.exec(document.body.innerText.replace(/\s+/g, " "))?.[1]);
+  ck("Stats counts every card today, retries included: 8, not 6", (await today()) === "8", `${await today()}`);
+  ck("and says which were retries: 2", await t.has(/· 2 retries/), "");
+  ck("right first time is still out of the 6 cards", await t.has(/4 of 6 cards/), "");
   await t.page.reload({ waitUntil: "commit" });
   await t.page.waitForSelector('button:has-text("Previous card")', { timeout: 20000 });
   await t.wait(1200);

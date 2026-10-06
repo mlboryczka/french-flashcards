@@ -1439,8 +1439,9 @@ and the Stats page, so they always agree.
 - Time since the last answer is measured exactly (`scheduler.forgetting_curve`
   with fractional days). `get_retrievability` rounds down to whole days, and
   made every card answered in the last 24 hours read 100%.
-- The wording is always "about N remembered", never a bare number, and never
-  "mastered", "known" or "learning" (owner, 2026-09-12).
+- The wording is "about N remembered" (on the Stats page "~N remembered",
+  owner, 2026-10-06), never a bare number, and never "mastered", "known" or
+  "learning" (owner, 2026-09-12).
 - Students never see the two ways round apart, on any screen or message
   (owner, 2026-09-14).
 - The figure is worked out when a set is dealt and at its checkpoint, not after
@@ -1450,33 +1451,64 @@ and the Stats page, so they always agree.
 
 ### The Stats page
 
-The Stats page is the `mode === "stats"` branch of `src/FlashcardApp.jsx`.
-Every figure that reads FSRS state counts each way round separately.
+The Stats page is the `mode === "stats"` branch of `src/FlashcardApp.jsx`; the
+chart, the calendar and Progress by Lesson are in `src/StatsSections.jsx`. The
+owner agreed it from a clickable mockup on 2026-10-06. Every number on it names
+what it counts, and figures side by side add up.
 
-- Today: every answer given today (the day runs 4am to 4am), retries included,
-  matching the end-of-set screens. It is read from `card_reviews`, plus answers
-  on this page still being saved (since 2026-09-27).
-- Right first time today: read from each card's `last_review` and
-  `last_answer_correct`. It is exact because FSRS records only the first answer
-  of the day.
+- Today: "64 cards", then "21 new · 29 reviews · 14 retries". A review is a
+  card back from an earlier day; a retry is a card missed earlier in the same
+  set (not counted by FSRS). Read from `card_reviews`, plus answers on this
+  page still being saved. Until the record is read, each card's last answer
+  stands in, with no split.
+- Right first time today: "37 of 50 cards (21 new + 29 reviews)". Retries
+  aren't first tries.
 - Streak: consecutive study days in `user_review_dates`.
-- All your cards: one bar in three bands: remembered, seen but not remembered
-  now, and not yet seen.
-- Your progress: a row per lesson, then "Last two weeks of class" and "Older
-  classes". Each class group shows its dates, because the line between them
-  moves daily.
-- By type: right last time, from the FSRS rows, and seen / about remembered.
-- Hardest cards: the most `lapses`, both ways added.
+- ~N remembered, day by day: a line chart, "Last 7 days" or since the first
+  answer on record, with "In the last 7 days: ~70 more remembered, 121 new
+  cards met." Hollow dots are days not studied. Hovering a day gives its
+  figure and its cards in three.
+- All your cards: one bar in three bands (remembered, seen but not remembered
+  now, not yet seen), and "At your current pace, all seen by May 2029": the
+  pace is new cards met over the last 14 days, shown after a week of answers.
+- Days you studied: "19 of 23 days since you started on 14 September" ("since
+  14 September" when the streak's days go back further), and a calendar of the
+  last six weeks shaded by cards studied (under 50, 50 to 69, 70 or more), with
+  its legend.
+- Progress by Lesson: folds. Basic Lessons is one row, its lessons added
+  together, folding open to each lesson; then every other lesson; then "Last
+  two weeks of class" and "Older classes" with their dates. Each row ends with
+  its change, "+12 remembered in 7 days". All navy, like the rest of the page.
 - Reset all progress: every card back to new both ways, in one update
   (`resetColumns()`; `next_due_at` can't be null, so it is set to now). It also
   clears the kept sets, `card_progress` and the streak (owner, 2026-09-14).
 - Reset reports a streak delete that row security refuses, and keeps
   `card_reviews`.
-- `card_progress` is a legacy tally, still written on every answer. Only
-  Hardest cards' "seen N×" and the admin users table read it.
+- `card_progress` is a legacy tally, still written on every answer. Only the
+  admin users table reads it.
 
-The `stats` and `progress` suites guard all this. Finish estimates are not
-built; see *Open items*.
+Everything over time comes from `src/lib/progressHistory.js`. ~N remembered on
+an earlier day is the same sum as now, read at the end of that day: each
+counted answer's record keeps the strength it left (`stability_after`), and the
+chance falls from there with time. A card's history starts again the last time
+it was answered as new, and a card not yet seen now counts for nothing on any
+day, so a reset student's chart starts again. Today's point is the live figure.
+The record is read whole when the page opens, 1,000 rows a request. On the
+owner's 808 answers (2026-10-06) it takes 6 ms, and the reconstructed today
+matched the live ~69.
+
+The `stats`, `progress`, `answering` and `types` suites guard all this.
+
+### What the owner took off the page (2026-10-06)
+
+- **By type** (Grammar / Vocab / Phrase): its big figure was "right last time",
+  which matched nothing under it.
+- **Hardest cards.**
+- **A "cards that came back" figure** (share of reviews right, against the
+  "How much to remember" setting). Considered and dropped: the app brings
+  cards back when it expects about that share right, so the figure sits near
+  the setting whatever the student does, and a student can't act on it. The
+  setting is a setting, never a "goal". The figure belongs in the status check.
 
 ### Why there is no "Coming up" forecast
 
@@ -2104,12 +2136,10 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   could open the notes there; the notes' fourth tab is Use, and Phrases has
   none. Agreed with it: a section drill must not write FSRS reviews, since it
   would ask cards whether or not they are due.
-- **Finish estimates on Stats.** Agreed wording: "At your current pace, all
-  seen by September 2028". Pace needs how many new cards a student meets a
-  day, which `card_reviews` shows from 2026-09-14. Needs the owner's go-ahead.
-- **More from the answer record.** `card_reviews` feeds the FSRS fit, the
-  status check, Stats "Today" and the check for answers given elsewhere, but
-  no student sees their true retention across sessions or progress over time.
+- **The end-of-set screen still says "64 answers, 37 right first time".**
+  Stats now says "64 cards: 21 new · 29 reviews · 14 retries"; asked whether
+  the end-of-set screen should match, not answered yet (2026-10-06). The
+  checkpoint also still says "about N", where Stats says "~N".
 - **The browser simulation as one command.** Its files in `tests/simulate/`
   point at an old session's temporary folder and the owner's `~/Downloads`,
   and its stand-in database lacks `fsrs_settings` and `migration_013`. It

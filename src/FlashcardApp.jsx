@@ -68,8 +68,10 @@ import {
   CORRECTION_ACTIONS,
 } from "./lib/parseCorrections";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
-import { localISODate, reviewedToday, endOfLocalDay, startOfLocalDay, browserTimeZone } from "./lib/studyDay";
-import { progressByArea, progressChanges, aboutRemembered, summarize, areaDates } from "./lib/progress";
+import { localISODate, reviewedToday, endOfLocalDay, browserTimeZone } from "./lib/studyDay";
+import { progressByArea, progressChanges, aboutRemembered, areaDates } from "./lib/progress";
+import { statsOverTime, HISTORY_COLUMNS, endOfDayAgo, allSeenBy } from "./lib/progressHistory";
+import { RememberedChart, StudyCalendar, ProgressByLesson, Bands, splitText } from "./StatsSections";
 import { buildSession, applyAnswer, placeRetry, countBuckets, BLOCK_SIZE } from "./lib/sessionQueue";
 import { RE_QUEUE_OFFSET, State, settingsInUse } from "./lib/spacedRepetition";
 import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, resetColumns } from "./lib/directions";
@@ -1050,28 +1052,44 @@ export default function FlashcardApp({ user, onSignOut }) {
   // Ids this page has written are known, as are ones a check has already
   // acted on.
   const knownReviewIdsRef = useRef(new Set());
-  // Today's answers for the Stats page: every one, retries included. The
-  // count was read off the cards, one per card and way round, so it left out
-  // retries and said 6 where the end-of-set screen said 8 (2026-09-27). The
-  // records are read when the page opens; answers given here are added from
-  // answersHereRef, so one whose record is still being saved counts too.
-  const answersHereRef = useRef(new Map()); // review id -> answered at (ms)
-  const [todayAnswers, setTodayAnswers] = useState(null); // { from, ids }
+  // The record of answers, for the Stats page: today's cards (new, reviews,
+  // retries), ~N remembered day by day, each lesson's last 7 days and the
+  // days studied (lib/progressHistory.js). Read whole when the page opens, a
+  // page of rows at a time, since the server hands back at most 1,000 per
+  // request. Answers given here are added from answersHereRef, so one whose
+  // record is still being saved counts too: today's count once said 6 where
+  // the end-of-set screen said 8 (2026-09-27).
+  const answersHereRef = useRef(new Map()); // review id -> its record
+  const [historyRows, setHistoryRows] = useState(null); // null until read, or if it can't be
   useEffect(() => {
     if (mode !== "stats" || !user?.id) return;
     let live = true;
-    const from = startOfLocalDay(new Date());
-    supabase
-      .from("card_reviews")
-      .select("id")
-      .eq("user_id", user.id)
-      .gte("answered_at", new Date(from).toISOString())
-      .limit(5000)
-      .then(({ data, error }) => {
-        if (live && !error && Array.isArray(data)) setTodayAnswers({ from, ids: data.map((r) => r.id) });
-      });
+    (async () => {
+      const rows = [];
+      const PAGE = 1000;
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("card_reviews")
+          .select(HISTORY_COLUMNS)
+          .eq("user_id", user.id)
+          .order("answered_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (!live) return;
+        if (error || !Array.isArray(data)) { setHistoryRows(null); return; }
+        rows.push(...data);
+        if (data.length < PAGE) break;
+      }
+      const have = new Set(rows.map((r) => r.id));
+      for (const [id, row] of answersHereRef.current) if (!have.has(id)) rows.push(row);
+      setHistoryRows(rows);
+    })();
     return () => { live = false; };
   }, [mode, user?.id]);
+  const statsHistory = useMemo(
+    () => (mode === "stats" && historyRows ? statsOverTime({ cards: userCards, rows: historyRows, now: Date.now() }) : null),
+    [mode, userCards, historyRows],
+  );
   const lastElsewhereCheckRef = useRef(0);
   const checkElsewhere = useCallback(async () => {
     if (!user?.id || !deckFetchedAt) return;
@@ -1660,10 +1678,6 @@ export default function FlashcardApp({ user, onSignOut }) {
     const before = isCorrection ? earlier.before : recordsReview ? sideColumns(sideOf(card, cardDir), cardDir) : null;
     const reviewId = isCorrection ? earlier.reviewId : newReviewId();
     knownReviewIdsRef.current.add(reviewId);
-    // Every answer given on this page, retries included, for the Stats page's
-    // count of today's answers while its record is still on its way to the
-    // database. A correction is the same answer, so it isn't added.
-    if (!isCorrection && card.row_id != null) answersHereRef.current.set(reviewId, answeredAt);
     blockAnswersRef.current.set(slotKey, { before, got, reviewId });
     if (sr) {
       setDeck(prev => prev.map(c =>
@@ -1691,6 +1705,9 @@ export default function FlashcardApp({ user, onSignOut }) {
         settings: before ? settingsInUse() : null, timeZone: before ? browserTimeZone() : null,
       });
       save(`review:${reviewId}`, reviewId, () => saveReviewRow(row));
+      // Kept here too, for the Stats page while the record is on its way to
+      // the database. A correction rewrites it under the same id.
+      answersHereRef.current.set(reviewId, row);
     }
     // Record today's review date for streak tracking.
     // Write to Supabase (persists across devices) and update local state so
@@ -3123,30 +3140,6 @@ export default function FlashcardApp({ user, onSignOut }) {
   if (mode === "stats") {
     const now = Date.now();
     const todayISO = localISODate();
-    // Every card, each way round it is asked: a word is two schedules, and
-    // everything below that reads FSRS state reads them apart.
-    const sides = [];
-    for (const c of userCards) for (const d of directionsOf(c)) sides.push({ card: c, side: sideOf(c, d) });
-    const isSeenSide = (s) => (s.fsrs_state ?? State.New) !== State.New;
-
-    // Today. FSRS records one answer per card per way round per day, so the
-    // sides whose last review falls today ARE today's answers, across every
-    // block, reload and device — and last_answer_correct on those is whether
-    // that first answer was right.
-    let answeredToday = 0, rightToday = 0;
-    for (const { side } of sides) {
-      if (!reviewedToday(side.last_review, new Date(now))) continue;
-      answeredToday++;
-      if (side.last_answer_correct === true) rightToday++;
-    }
-    // That counts each card once, which is right for "right first time" but
-    // leaves retries out of "answers". Every answer is a record: those read
-    // from the database and any given here still being saved. Never fewer than
-    // the cards answered, should some records be missing.
-    const todayFrom = startOfLocalDay(new Date(now));
-    const answerIds = new Set(todayAnswers?.from === todayFrom ? todayAnswers.ids : []);
-    for (const [id, at] of answersHereRef.current) if (at >= todayFrom) answerIds.add(id);
-    const answersToday = Math.max(answerIds.size, answeredToday);
 
     // Streak: based on actual review days stored in Supabase
     // (loaded into reviewDates state on mount, appended to by answer()).
@@ -3160,29 +3153,53 @@ export default function FlashcardApp({ user, onSignOut }) {
       else if (iso !== todayISO) break;
     }
 
-    // Hardest cards: the ones you have actually forgotten, most often.
-    //
-    // `lapses` is FSRS's own count of times a card went from known back to
-    // unknown, which is the definition of a hard card. The old version looked
-    // for a low score on the retired ladder, so it surfaced cards nobody had
-    // answered since the migration and missed ones being missed today.
-    // Forgotten either way round counts: both ways are the same word.
-    const hardest = userCards
-      .map(c => {
-        const ways = directionsOf(c).map((d) => sideOf(c, d));
-        return {
-          ...c,
-          _lapses: ways.reduce((n, w) => n + (w.lapses ?? 0), 0),
-          _difficulty: Math.max(...ways.map((w) => w.difficulty ?? 0)),
-          _seen: progress[c.id]?.seen ?? 0,
-        };
-      })
-      .filter(c => c._lapses >= 1)
-      .sort((a, b) => b._lapses - a._lapses || b._difficulty - a._difficulty)
-      .slice(0, 4);
-
-    // Seen / about remembered / not yet seen, for the whole deck and each area.
+    // Seen / ~N remembered / not yet seen, for the whole deck and each area.
     const areas = progressByArea(userCards, now);
+    const history = statsHistory;
+
+    // Today, from the record of answers: the cards studied, in three (new
+    // cards, reviews back from an earlier day, and retries), and how many
+    // first tries were right. A retry isn't a first try. Every figure names
+    // what it counts and they add up: 64 cards = 21 new + 29 reviews + 14
+    // retries, and right first time is out of the 50 new and reviews (owner,
+    // 2026-10-06). Until the record is read, or if it can't be, each card's
+    // own last answer stands in: one per card and way round answered today,
+    // with no split.
+    let today;
+    if (history) {
+      const d = history.days.at(-1)?.iso === todayISO ? history.days.at(-1) : { cards: 0, fresh: 0, reviews: 0, retries: 0, right: 0 };
+      today = { ...d, tries: d.fresh + d.reviews };
+    } else {
+      let tries = 0, right = 0;
+      for (const c of userCards) for (const dir of directionsOf(c)) {
+        const side = sideOf(c, dir);
+        if (!reviewedToday(side.last_review, new Date(now))) continue;
+        tries++;
+        if (side.last_answer_correct === true) right++;
+      }
+      today = { cards: tries, tries, right, fresh: null };
+    }
+
+    // The last 7 days: ~N remembered now against the end of the day a week
+    // ago, for the whole deck and each area, worked out from the record.
+    const weekAgo = history ? history.rememberedAt(endOfDayAgo(7, now)) : null;
+    const gain = (nowRem, thenRem) => Math.round(nowRem) - Math.round(thenRem || 0);
+    const firstDayLong = history?.days.length
+      ? new Date(history.days[0].start).toLocaleDateString(undefined, { day: "numeric", month: "long" })
+      : null;
+    // "Since you started" only if the record goes back to the first day
+    // studied: the streak's days go back further for anyone who studied before
+    // every answer was kept (2026-09-14).
+    const startedThen = history?.days.length > 0 && ![...reviewDates].some((d) => d < history.days[0].iso);
+
+    // The chart: ~N remembered at the end of each day, and now for today, so
+    // its last point is the figure above it.
+    const points = history ? history.days.map((d) => ({ ...d })) : [];
+    if (points.length) points[points.length - 1].remembered = areas.all.remembered;
+
+    // At the pace of the last 14 days, when every card will have been seen.
+    const allSeenDate = history ? allSeenBy({ history, notSeen: areas.all.notSeen, now }) : null;
+
     // Which classes each group holds, in dates: the line between them moves
     // with the calendar, and a card changes group when its class turns two
     // weeks old, so the page says where the line is today.
@@ -3196,57 +3213,30 @@ export default function FlashcardApp({ user, onSignOut }) {
         earlier: earliestOlder ? `${month(earliestOlder)} to ${day(dayBefore)}` : `Classes before ${day(since)}`,
       };
     })();
-    const areaRows = [
-      ...LESSONS_SHOWN.filter((l) => areas.lessons[l.id]?.total > 0)
-        .map((l) => ({ key: `lesson:${l.id}`, label: l.title, sub: "Lesson", summary: areas.lessons[l.id] })),
-      { key: "recent", label: AREA_LABEL.recent, sub: areaSpan.recent, summary: areas.recent },
-      { key: "earlier", label: AREA_LABEL.earlier, sub: areaSpan.earlier, summary: areas.earlier },
-    ].filter((r) => r.summary.total > 0);
-
-    // Breakdown by card type. Grammar, words and phrases are different kinds
-    // of work and tend to sit at different levels — this is where you find out
-    // that your vocabulary is fine and your conjugations are not.
-    const byType = CARD_TYPES.map((type) => {
-      const cards = userCards.filter((c) => classifyCard(c) === type);
-      // Of the cards seen, how many were right the last time they were
-      // answered — read off the same FSRS rows as the rest of the page.
-      //
-      // This was the lifetime tally in card_progress, which went back to the
-      // box system and never forgets: after the 2026-09-14 reset it still
-      // counted old answers on 1,200 cards now "not yet seen", and read 55%
-      // beside a Right first time today of 70%.
-      // Each way round a card has been answered is one last answer.
-      let answered = 0, right = 0;
-      for (const c of cards) {
-        for (const d of directionsOf(c)) {
-          const side = sideOf(c, d);
-          if (!isSeenSide(side) || side.last_answer_correct == null) continue;
-          answered++;
-          if (side.last_answer_correct === true) right++;
-        }
-      }
-      return {
-        type,
-        summary: summarize(cards, now),
-        accuracy: answered > 0 ? Math.round((right / answered) * 100) : null,
-        answered,
-      };
-    }).filter((t) => t.summary.total > 0);
-
-    // One bar, three bands: remembered (solid), seen but not currently
-    // remembered (light), not yet seen (the empty track).
-    const bands = (summary, color, height) => {
-      const total = Math.max(summary.total, 1);
-      const rem = Math.min(summary.remembered, summary.seen);
-      return (
-        <div style={{ ...S.bandTrack, height }}>
-          <div style={{ width: `${(rem / total) * 100}%`, background: color }} />
-          <div style={{ width: `${((summary.seen - rem) / total) * 100}%`, background: color, opacity: 0.3 }} />
-        </div>
-      );
-    };
-    const figures = (summary) =>
-      `${summary.seen.toLocaleString()} seen · about ${aboutRemembered(summary).toLocaleString()} remembered · ${summary.total.toLocaleString()} cards`;
+    // Progress by Lesson: a group that folds (Basic Lessons) as one row, its
+    // lessons added together, then every other lesson, then the two class
+    // groups. Each with its change over the last 7 days.
+    const lessonRow = (l) => ({
+      key: `lesson:${l.id}`, label: l.title, summary: areas.lessons[l.id],
+      delta: weekAgo ? gain(areas.lessons[l.id].remembered, weekAgo.byArea[`lesson:${l.id}`]) : null,
+    });
+    const lessonGroups = [];
+    const lessonRows = [];
+    for (const g of LESSON_GROUPS) {
+      const rows = g.lessons.filter((l) => areas.lessons[l.id]?.total > 0).map(lessonRow);
+      if (!rows.length) continue;
+      if (!g.folds) { lessonRows.push(...rows); continue; }
+      const sum = (k) => rows.reduce((n, r) => n + r.summary[k], 0);
+      lessonGroups.push({
+        key: `group:${g.title}`, label: g.title, sub: `${rows.length} ${rows.length === 1 ? "lesson" : "lessons"}`, lessons: rows,
+        summary: { total: sum("total"), seen: sum("seen"), remembered: sum("remembered"), notSeen: sum("notSeen") },
+        delta: weekAgo ? rows.reduce((n, r) => n + r.delta, 0) : null,
+      });
+    }
+    const classRows = ["recent", "earlier"].map((k) => ({
+      key: k, label: AREA_LABEL[k], sub: areaSpan[k], summary: areas[k],
+      delta: weekAgo ? gain(areas[k].remembered, weekAgo.byArea[k]) : null,
+    })).filter((r) => r.summary.total > 0);
 
     return (
       <div style={shellStyle}>
@@ -3257,15 +3247,21 @@ export default function FlashcardApp({ user, onSignOut }) {
 
             {/* Row 1: Today · Right first time today · Streak */}
             <div style={S.statsRow3}>
-              <div style={S.metricCard}>
+              <div style={S.metricCard} data-stats-today>
                 <div style={S.metricLabel}>Today</div>
-                <div style={S.metricVal}>{answersToday.toLocaleString()}</div>
-                <div style={S.metricSub}>{answersToday === 1 ? "answer" : "answers"}</div>
+                <div><span style={S.metricVal}>{today.cards.toLocaleString()}</span> <span style={S.metricUnit}>{today.cards === 1 ? "card" : "cards"}</span></div>
+                <div style={S.metricSub}>
+                  {today.cards === 0 ? "nothing studied yet today" : today.fresh == null ? "" : splitText(today)}
+                </div>
               </div>
-              <div style={S.metricCard}>
+              <div style={S.metricCard} data-stats-first-time>
                 <div style={S.metricLabel}>Right first time today</div>
-                <div style={S.metricVal}>{answeredToday > 0 ? `${Math.round((rightToday / answeredToday) * 100)}%` : "—"}</div>
-                <div style={S.metricSub}>{answeredToday > 0 ? `${rightToday.toLocaleString()} of ${answeredToday.toLocaleString()}` : "nothing answered yet today"}</div>
+                <div style={S.metricVal}>{today.tries > 0 ? `${Math.round((today.right / today.tries) * 100)}%` : "—"}</div>
+                <div style={S.metricSub}>
+                  {today.tries === 0 ? "nothing answered yet today"
+                    : `${today.right.toLocaleString()} of ${today.tries.toLocaleString()} ${today.tries === 1 ? "card" : "cards"}` +
+                      (today.fresh == null ? "" : ` (${today.fresh} new + ${today.reviews} ${today.reviews === 1 ? "review" : "reviews"})`)}
+                </div>
               </div>
               <div style={S.streakCard}>
                 <div style={{fontSize:16}}>🔥</div>
@@ -3274,87 +3270,42 @@ export default function FlashcardApp({ user, onSignOut }) {
               </div>
             </div>
 
-            {/* All cards: seen / about remembered / not yet seen */}
+            {/* ~N remembered, day by day */}
+            {history && points.length > 0 && (
+              <RememberedChart
+                points={points}
+                now={now}
+                week={{ gain: gain(areas.all.remembered, weekAgo.all), met: history.newMetBetween(endOfDayAgo(7, now), now) }}
+                all={{ remembered: aboutRemembered(areas.all), met: history.newMetBetween(-Infinity, now) }}
+                allLabel={startedThen ? "Since you started" : `Since ${firstDayLong}`}
+              />
+            )}
+
+            {/* All cards: seen / ~N remembered / not yet seen, and when all will be seen */}
             <div style={S.pipelineCard} data-stats-all>
               <div style={S.pipeTitle}>All your cards</div>
-              {bands(areas.all, T.color.primary, 28)}
+              <Bands summary={areas.all} height={28} />
               <div style={S.pipeLegend}>
-                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />about {aboutRemembered(areas.all).toLocaleString()} remembered</div>
+                <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary}} />~{aboutRemembered(areas.all).toLocaleString()} remembered</div>
                 <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.primary, opacity:0.3}} />{Math.max(0, areas.all.seen - aboutRemembered(areas.all)).toLocaleString()} seen, not currently remembered</div>
                 <div style={S.pipeLegItem}><div style={{...S.pipeDot, background:T.color.surfaceHigh}} />{areas.all.notSeen.toLocaleString()} not yet seen</div>
               </div>
               <p style={S.statsFootnote}>A word or phrase counts as remembered once you'd get it right from French and from English. It's an estimate: it rises when you study and falls when you don't.</p>
+              {allSeenDate && (
+                <div style={S.finishLine} data-stats-finish>
+                  At your current pace, all seen by <b>{allSeenDate.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</b>.
+                </div>
+              )}
             </div>
 
-            {/* Your progress: each lesson, recent classes, earlier notes */}
-            {areaRows.length > 0 && (
-              <div style={{marginTop:24}} data-stats-areas>
-                <h3 style={S.statsSectionTitle}>Your progress</h3>
-                <p style={S.statsSectionSub}>Lessons, and the cards from your own classes, split by how long ago the class was.</p>
-                <div style={S.areaList}>
-                  {areaRows.map((r) => (
-                    <div key={r.key} style={S.areaRow}>
-                      <div style={S.areaHead}>
-                        <span style={S.areaName}>{r.label}</span>
-                        <span style={S.areaSub}>{r.sub}</span>
-                      </div>
-                      {bands(r.summary, T.color.secondary, 10)}
-                      <div style={S.areaFigures}>{figures(r.summary)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {/* The days studied since the first answer on record */}
+            {history && history.days.length > 0 && (
+              <StudyCalendar days={history.days} since={startedThen ? `since you started on ${firstDayLong}` : `since ${firstDayLong}`} />
             )}
 
-            {/* By type: grammar vs words vs phrases */}
-            {byType.length > 1 && (
-              <div style={{marginTop:24}}>
-                <h3 style={S.statsSectionTitle}>By type</h3>
-                <p style={S.statsSectionSub}>Grammar, single words and phrases ask different things of you.</p>
-                <div style={S.typeGrid}>
-                  {byType.map((t) => (
-                    <div key={t.type} style={S.typeCard}>
-                      <span style={{...S.hardTag, background: TYPE_COLOR[t.type] + "22", color: TYPE_COLOR[t.type]}}>
-                        {TYPE_LABEL[t.type]}
-                      </span>
-                      <div style={S.typeVal}>{t.accuracy === null ? "—" : `${t.accuracy}%`}</div>
-                      <div style={S.typeSub}>
-                        {t.summary.seen === 0
-                          ? `${t.summary.total.toLocaleString()} card${t.summary.total === 1 ? "" : "s"} · none studied yet`
-                          : `${t.accuracy === null ? "" : "right last time · "}${t.summary.seen.toLocaleString()} of ${t.summary.total.toLocaleString()} seen · about ${aboutRemembered(t.summary).toLocaleString()} remembered`}
-                      </div>
-                      <div style={{marginTop:10}}>{bands(t.summary, TYPE_COLOR[t.type], 4)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Hardest Cards */}
-            {hardest.length > 0 && (
-              <div style={{marginTop:24}}>
-                <h3 style={S.statsSectionTitle}>Hardest cards</h3>
-                <p style={S.statsSectionSub}>Cards you've seen multiple times but keep missing.</p>
-                <div style={S.hardGrid}>
-                  {hardest.map(c => (
-                    <div key={c.id} style={S.hardCard}>
-                      <div style={S.hardHead}>
-                        <span style={{
-                          ...S.hardTag,
-                          background: TYPE_COLOR[classifyCard(c)] + "22",
-                          color: TYPE_COLOR[classifyCard(c)],
-                        }}>
-                          {TYPE_LABEL[classifyCard(c)]}
-                        </span>
-                      </div>
-                      <h4 style={S.hardWord}>{c.f}</h4>
-                      <p style={S.hardMeta}>
-                        forgotten {c._lapses}×{c._seen ? ` · seen ${c._seen}×` : ""}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {/* Each lesson, Basic Lessons folded together, and the class groups */}
+            {(lessonGroups.length > 0 || lessonRows.length > 0 || classRows.length > 0) && (
+              <ProgressByLesson groups={lessonGroups} rows={[...lessonRows, ...classRows]} />
             )}
 
             <button style={S.resetBtn} onClick={resetAll}>Reset all progress</button>
@@ -5364,11 +5315,7 @@ const S = {
   resetSBtn: { padding:"11px 26px", border:"none", borderRadius:T.radius.md, background:T.color.surfaceLowest, color:T.color.primary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, boxShadow:T.shadow.focus },
   // Stats — bento dashboard
   statsHeading: { fontSize:36, fontWeight:600, color:T.color.primary, fontFamily:T.font.serif, letterSpacing:"-0.02em", margin:"8px 0 28px" },
-  // ── New stats layout: metric cards + pipeline + hardest ───────────
-  typeGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:12, marginTop:10 },
-  typeCard: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"14px 16px 16px", border:"1px solid rgba(3,22,50,0.06)" },
-  typeVal: { fontSize:28, fontFamily:T.font.serif, fontWeight:700, color:T.color.primary, marginTop:8, letterSpacing:"-0.02em" },
-  typeSub: { fontSize:11.5, color:T.color.onSurfaceVariant, marginTop:2 },
+  // ── Stats layout: metric cards, then the all-cards bar ─────────────
   typeBarWrap: { height:4, borderRadius:2, background:"rgba(3,22,50,0.07)", marginTop:10, overflow:"hidden" },
   typeBar: { height:"100%", borderRadius:2, transition:"width 300ms ease" },
   statsRow3: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:12 },
@@ -5376,6 +5323,7 @@ const S = {
   metricCard: { background:T.color.surfaceLow, borderRadius:T.radius.xl, padding:"22px 24px" },
   metricLabel: { fontSize:11, fontFamily:T.font.sans, fontWeight:600, color:T.color.onSurfaceVariant, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 },
   metricVal: { fontSize:32, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, lineHeight:1.1 },
+  metricUnit: { fontSize:18, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary },
   metricSub: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, marginTop:4 },
   statsNote: { fontSize:11, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, opacity:0.5, marginBottom:16, paddingLeft:2 },
   streakCard: { background:"#1a2b48", borderRadius:T.radius.xl, padding:"22px 24px", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center" },
@@ -5390,26 +5338,13 @@ const S = {
   pipeLegItem: { display:"flex", alignItems:"center", gap:6, fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, whiteSpace:"nowrap" },
   pipeDot: { width:8, height:8, borderRadius:"50%", flexShrink:0 },
   // Section titles
-  bandTrack: { display:"flex", borderRadius:6, overflow:"hidden", background:T.color.surfaceHigh, marginBottom:10 },
   cahierNotice: { display:"flex", alignItems:"center", gap:12, margin:"0 24px 4px", padding:"10px 14px", borderRadius:10,
     background:T.color.surfaceHigh, color:T.color.onSurface, fontFamily:T.font.sans, fontSize:13, lineHeight:1.4 },
   cahierDismiss: { marginLeft:"auto", border:"none", background:"transparent", cursor:"pointer", color:T.color.onSurfaceVariant, fontSize:13, padding:4 },
+  finishLine: { marginTop:14, paddingTop:14, borderTop:"1px solid rgba(3,22,50,0.06)", fontSize:14, fontFamily:T.font.sans, color:T.color.primary },
   statsFootnote: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"12px 0 0", lineHeight:1.5 },
-  areaList: { display:"flex", flexDirection:"column", gap:10 },
-  areaRow: { background:T.color.surfaceLowest, borderRadius:T.radius.xl, padding:"14px 18px", border:"1px solid rgba(3,22,50,0.06)" },
-  areaHead: { display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:12, marginBottom:10, flexWrap:"wrap" },
-  areaName: { fontSize:15, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary },
-  areaSub: { fontSize:12, fontFamily:T.font.sans, color:T.color.onSurfaceVariant },
-  areaFigures: { fontSize:12.5, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, fontVariantNumeric:"tabular-nums", marginTop:-2 },
   statsSectionTitle: { fontSize:18, fontFamily:T.font.serif, fontWeight:600, color:T.color.primary, margin:"0 0 4px" },
   statsSectionSub: { fontSize:13, fontFamily:T.font.sans, color:T.color.onSurfaceVariant, margin:"0 0 14px" },
-  // Hardest cards
-  hardGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:14 },
-  hardCard: { background:T.color.surfaceLow, borderRadius:T.radius.xl, padding:"18px 20px", display:"flex", flexDirection:"column", gap:8, transition:"background 0.15s", cursor:"default" },
-  hardHead: { display:"flex", justifyContent:"space-between", alignItems:"flex-start" },
-  hardTag: { fontSize:9, fontFamily:T.font.sans, fontWeight:700, padding:"3px 8px", borderRadius:T.radius.sm, textTransform:"uppercase", letterSpacing:"0.08em" },
-  hardWord: { fontSize:18, fontFamily:T.font.serif, fontStyle:"italic", color:T.color.primary, margin:"4px 0 0", letterSpacing:"-0.01em", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
-  hardMeta: { fontSize:11, color:T.color.onSurfaceVariant, fontFamily:T.font.sans, margin:0 },
   resetBtn: { display:"block", width:"100%", padding:"13px", border:"none", borderRadius:T.radius.md, background:"transparent", color:T.color.secondary, fontSize:13, cursor:"pointer", fontFamily:T.font.sans, fontWeight:600, marginTop:24 },
   // Legacy stats styles (kept to avoid crashes if any references remain)
   bento: { display:"grid", gridTemplateColumns:"repeat(12, minmax(0, 1fr))", gap:24, marginBottom:32 },
