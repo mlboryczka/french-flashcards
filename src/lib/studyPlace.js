@@ -82,12 +82,15 @@ export function clearStudyPlace(userId) {
 //            accepted — a reload before Continue used to save it as wrong
 //   switches the lessons switched off when it was dealt (lib/lessonChoice.js):
 //            if they have changed, its cards not yet reached are dealt again
-export function packSet({ deck, idx, stats, done, answers, blockStart, face, day, dir, seq, switches }) {
+//   size     the set size it was dealt at: if another has been chosen since,
+//            a set not yet finished is dealt again to the new length
+export function packSet({ deck, idx, stats, done, answers, blockStart, face, day, dir, seq, switches, size }) {
   return {
     day,
     dir,
     seq: seq ?? null,
     switches: switches ?? null,
+    size: size ?? null,
     idx,
     done: !!done,
     stats,

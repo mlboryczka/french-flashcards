@@ -265,7 +265,8 @@ function matchAnswer(typed, correct, extraAlts = [], { exact = false } = {}) {
 // replaced.
 const STUDY_MODE_KEY = "study-mode";
 // Auto-speak and the number of cards in a set, kept on this browser like the
-// flip/type choice. A new set size is used from the next set dealt.
+// flip/type choice. A new set size applies to the set on screen at once (the
+// deck-build effect).
 const AUTO_SPEAK_KEY = "auto-speak";
 const SET_SIZE_KEY = "set-size";
 const SET_SIZES = [20, 30, 50, 100];
@@ -361,8 +362,9 @@ export default function FlashcardApp({ user, onSignOut }) {
   // either has moved on, the block is dealt again — see the deck-build effect.
   const dealtSeqRef = useRef(null);
   const dealtDayRef = useRef(null);
-  // And which lessons were switched off then (switchSig).
+  // And which lessons were switched off then (switchSig), and the set size.
   const dealtSwitchRef = useRef(null);
+  const dealtSizeRef = useRef(null);
   // Bumped on coming back to the tab on a new day, to run that check.
   const [recheck, setRecheck] = useState(0);
   // Where the student was, kept in this browser (lib/studyPlace.js): the set
@@ -442,8 +444,11 @@ export default function FlashcardApp({ user, onSignOut }) {
   useEffect(() => {
     try { localStorage.setItem(STUDY_MODE_KEY, typeMode ? "type" : "flip"); } catch { /* storage blocked */ }
   }, [typeMode]);
-  // How many cards a set has. Read through a ref when a set is dealt, so
-  // changing it never touches the set under way: the next set has the new size.
+  // How many cards a set has. Changing it changes the set on screen: the
+  // cards not yet reached are dealt again to the new length, while the card on
+  // screen, every answer and the retries lined up stay where they are. It used
+  // to wait for the next set, and the counter went on saying "of 50" after 20
+  // was chosen (2026-10-06).
   const [setSize, setSetSize] = useState(() => {
     try {
       const n = Number(localStorage.getItem(SET_SIZE_KEY));
@@ -869,11 +874,23 @@ export default function FlashcardApp({ user, onSignOut }) {
 
     // The cards of a set not yet reached, dealt again from the deck as it now
     // is. What has been shown, answered or lined up for a retry stays put.
-    const redealRest = (entries, at) => {
+    //
+    // `size` is the set's length afterwards, when the set size has changed:
+    // a longer set gets more cards at the end, a shorter one loses the cards
+    // not yet reached. A set shorter than its card on screen, answers and
+    // retries leave room for loses its last unanswered retries, as a miss with
+    // no room for a retry does (placeRetry): due again tomorrow instead. The
+    // set never ends before the card on screen.
+    const redealRest = (entries, at, size = entries.length) => {
       const head = entries.slice(0, at + 1);
       const tail = entries.slice(at + 1);
-      const kept = new Set(tail.filter((c) => c._retry || blockAnswersRef.current.has(slotKeyOf(c))));
-      const room = tail.length - kept.size;
+      const answered = (c) => blockAnswersRef.current.has(slotKeyOf(c));
+      const staying = tail.filter((c) => c._retry || answered(c));
+      for (let over = head.length + staying.length - size, j = staying.length - 1; over > 0 && j >= 0; j--) {
+        if (!answered(staying[j])) { staying.splice(j, 1); over--; }
+      }
+      const kept = new Set(staying);
+      const room = Math.max(0, size - head.length - kept.size);
       const dealt = room > 0
         ? buildSession(candidates, {
             direction: dirRef.current,
@@ -886,7 +903,11 @@ export default function FlashcardApp({ user, onSignOut }) {
       if (dealt) recordDeal({ kind: "rest", scope: dealScope, direction: dirRef.current, slots: room, dealt, kept: [...head, ...kept] });
       const fill = dealt ? dealt.queue : [];
       let f = 0;
-      return [...head, ...tail.map((c) => (kept.has(c) ? c : fill[f++])).filter(Boolean)];
+      const rest = tail
+        .filter((c) => kept.has(c) || !(c._retry || answered(c)))
+        .map((c) => (kept.has(c) ? c : fill[f++]))
+        .filter(Boolean);
+      return [...head, ...rest, ...fill.slice(f)];
     };
 
     // Moving between sets: a lesson, the whole deck, a type. The set being
@@ -900,6 +921,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
           face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "", accepted: disputeAccepted },
           day: dealtDayRef.current, dir: dirRef.current, seq: dealtSeqRef.current, switches: dealtSwitchRef.current,
+          size: dealtSizeRef.current,
         });
       }
       const saved = placeRef.current.sets[filterSig];
@@ -909,13 +931,18 @@ export default function FlashcardApp({ user, onSignOut }) {
         for (const [, a] of blockAnswersRef.current) if (a?.reviewId) knownReviewIdsRef.current.add(a.reviewId);
         blockStartRef.current = saved.blockStart || progressByArea(userCards);
         // Unchanged since it was left, it comes back as it was; otherwise the
-        // cards not yet reached are checked against the deck as it now is.
-        const unchanged = saved.seq === deckFreshSeq && saved.dir === dirRef.current && saved.switches === switchSig;
-        const next = unchanged ? back.entries : redealRest(back.entries, back.idx);
+        // cards not yet reached are checked against the deck as it now is, and
+        // a set not yet finished takes the set size chosen since. One that
+        // came out short, the deck having run out, is not topped up unless
+        // the size has changed.
+        const resized = !saved.done && saved.size !== setSizeRef.current;
+        const unchanged = saved.seq === deckFreshSeq && saved.dir === dirRef.current && saved.switches === switchSig && !resized;
+        const next = unchanged ? back.entries : redealRest(back.entries, back.idx, resized ? setSizeRef.current : back.entries.length);
         const at = Math.min(back.idx, next.length - 1);
         dealtSeqRef.current = deckFreshSeq;
         dealtDayRef.current = saved.day;
         dealtSwitchRef.current = switchSig;
+        dealtSizeRef.current = setSizeRef.current;
         scheduledRef.current = stamp;
         setDeck(next);
         setDeckSig(filterSig);
@@ -968,6 +995,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     // been shown, answered or lined up for a retry stays, so the count and the
     // student's place don't move, and the rest is dealt under the new switches.
     const outOfDate = dealtSeqRef.current !== deckFreshSeq || dealtSwitchRef.current !== switchSig;
+    // A finished set keeps its length: the next one has the new size.
+    const resized = dealtSizeRef.current !== setSize && !sessionDone;
     const newDay = dealtDayRef.current !== today;
     const started = blockAnswersRef.current.size > 0 || answerSeen;
     if (!filterChanged && deck.length > 0 && !newDay && !(outOfDate && !started)) {
@@ -982,11 +1011,12 @@ export default function FlashcardApp({ user, onSignOut }) {
         })
         .filter(Boolean);
       let next = patched;
-      if (outOfDate) {
-        next = redealRest(patched, Math.min(idx, patched.length - 1));
+      if (outOfDate || resized) {
+        next = redealRest(patched, Math.min(idx, patched.length - 1), resized ? setSize : patched.length);
         dealtSeqRef.current = deckFreshSeq;
         dealtSwitchRef.current = switchSig;
       }
+      dealtSizeRef.current = setSize;
       setDeck(next);
       setIdx(i => Math.min(i, Math.max(0, next.length - 1)));
       return;
@@ -1035,6 +1065,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     dealtSeqRef.current = deckFreshSeq;
     dealtDayRef.current = today;
     dealtSwitchRef.current = switchSig;
+    dealtSizeRef.current = setSizeRef.current;
     scheduledRef.current = stamp;
     setDeck(cards);
     setDeckSig(filterSig);
@@ -1043,7 +1074,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     setSessionDone(false);
     setStats({ seen:0, got:0, missed:0, answered:0, firstAnswered:0, firstGot:0 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, typeFilter, lessonFilter, scope, switchSig, userCards, blockSeq, deckFreshSeq, recheck]);
+  }, [loaded, typeFilter, lessonFilter, scope, switchSig, userCards, blockSeq, deckFreshSeq, recheck, setSize]);
 
   // Answers given somewhere else — another device, another tab — since the
   // deck in memory was fetched. Coming back to the tab asks for their ids,
@@ -1304,6 +1335,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       deck, idx, stats, done: sessionDone, answers: blockAnswersRef.current, blockStart: blockStartRef.current,
       face: { seen: answerSeen, key: card ? itemKey(card) : null, typeResult, typed: typeResult ? typedAnswer : "", accepted: disputeAccepted },
       day: dealtDayRef.current, dir, seq: dealtSeqRef.current, switches: dealtSwitchRef.current,
+      size: dealtSizeRef.current,
     });
     placeRef.current.sets[deckSig] = set;
     placeRef.current.current = { lessonFilter, typeFilter, scope, dir };
