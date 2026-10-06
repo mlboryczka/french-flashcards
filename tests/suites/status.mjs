@@ -7,7 +7,7 @@
 process.env.TZ = "America/New_York";
 
 import { checker } from "../check.mjs";
-import { simulate, TIME_ZONE, lessonRank } from "../simulate/student.mjs";
+import { simulate, TIME_ZONE, lessonRank, detourRepeats } from "../simulate/student.mjs";
 import { runStatusChecks, statusText, CHECKS_START } from "../../src/lib/statusChecks.js";
 import { reviewRow, withoutExtras, REVIEW_EXTRAS, missingColumn } from "../../src/lib/reviewLog.js";
 import { dealRow, missingTable } from "../../src/lib/dealLog.js";
@@ -45,6 +45,30 @@ console.log("\n  a simulated student studying by the app's rules");
   }
   ck("every answer recalculated to the day, not just within FSRS's spread", /All \d+ answers match\.$/.test(result(report, "fsrs").summary), result(report, "fsrs").summary);
   ck("the report says it is fine", report.ok && report.failing === 0);
+}
+
+// ── A messy student passes too ─────────────────────────────────────────
+// The habits the owner's real record showed (2026-09-30 to 10-01) and a tidy
+// student never has: an old copy of the deck dealing a set on opening,
+// replaced seconds later; a class's notes arriving partway through a set; a
+// reload; a detour into a lesson and back. Against the checks as they were
+// before 2026-10-04 this record fails three of them, as the owner's did.
+console.log("\n  a messy student: old copies, class notes mid-set, reloads, detours into a lesson");
+{
+  const rec = simulate({ days: 40, seed: 7, cards: 260, student: "typical", messy: 0.35 });
+  const h = rec.metrics.messy;
+  ck("(the run met every habit, more than once)", h.oldCopy > 1 && h.notes > 1 && h.reload > 1 && h.detour > 1, JSON.stringify(h));
+  ck("(and sets were replaced before anything in them was answered)",
+     rec.deals.some((d, i) => i + 1 < rec.deals.length && rec.deals[i + 1].scope === d.scope &&
+       !rec.answers.some((r) => r.answered_at >= d.dealt_at && r.answered_at < rec.deals[i + 1].dealt_at)));
+  const report = check(rec);
+  for (const r of report.results) {
+    if (r.id === "dealt") continue;
+    ck(`${r.title}: passes`, r.status === "pass", `${r.status}: ${r.summary}${r.details.length ? " — " + r.details[0] : ""}`);
+  }
+  const known = detourRepeats(rec, report);
+  ck("every card asked came from a set; any asked twice running came back from a detour into a lesson (known, not yet fixed)",
+     known.onlyThese, `${result(report, "dealt").summary} ${result(report, "dealt").details[0] || ""}`);
 }
 
 // ── Following FSRS ─────────────────────────────────────────────────────

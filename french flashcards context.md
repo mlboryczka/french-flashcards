@@ -1653,6 +1653,20 @@ assumptions.
   seconds. Run it before any change to scheduling or to which cards a set
   takes. The predictions check can't fail it, since the students' memory is
   invented.
+- Messy students (`messy` in `simulate`, since 2026-10-06), run alongside
+  the tidy ones: on a share of study days the app deals from the browser's
+  old copy on opening and deals again seconds later, a class's notes arrive
+  partway through a set (cards gain today's date, two are made) and the rest
+  is dealt again, the page is reloaded mid-set, or the student detours into a
+  lesson's set and comes back. These are what the owner's record showed on
+  2026-09-30 and 10-01, and the checks as they were before 2026-10-04 fail
+  every messy run with the same three false alarms. With `messy` at 0 a run is
+  exactly what it was before.
+- What the first messy run found (2026-10-06, known, not fixed): back from a
+  detour into a lesson, the set left comes back as it was, so a card just
+  answered in the lesson can be asked again, uncounted, sometimes straight
+  away. `detourRepeats` tells it apart from anything new, and the runs report
+  it without failing.
 - `npm run simulate:compare`: the four "How much to remember" choices, in
   about a minute. On 2026-09-27, 95% was never best and cost typical and
   strong students 17–26% more time per card remembered; among the other three

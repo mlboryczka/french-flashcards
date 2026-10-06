@@ -46,6 +46,14 @@ let uuidN = 0;
 const uuid = () => `00000000-0000-4000-8000-${String(++uuidN).padStart(12, "0")}`;
 
 // ── The deck ───────────────────────────────────────────────────────────
+// A card never answered, either way.
+const BLANK = {
+  next_due_at: null, lapses: 0, stability: null, difficulty: null, fsrs_state: 0, reps: 0,
+  last_review: null, last_answer_correct: null,
+  en_next_due_at: null, en_lapses: 0, en_stability: null, en_difficulty: null, en_fsrs_state: 0,
+  en_reps: 0, en_last_review: null, en_last_answer_correct: null,
+};
+
 // The demo deck and the lessons, shaped as useUserDeck shapes rows. Class
 // dates are moved so the latest class was the day before the student starts,
 // as a real notebook's would be: some classes are "recent", most older.
@@ -58,12 +66,7 @@ export function makeDeck({ start, cards: limit = Infinity } = {}) {
     return localISODate(d);
   };
   const created = new Date(start - 30 * DAY).toISOString();
-  const blank = {
-    next_due_at: null, lapses: 0, stability: null, difficulty: null, fsrs_state: 0, reps: 0,
-    last_review: null, last_answer_correct: null,
-    en_next_due_at: null, en_lapses: 0, en_stability: null, en_difficulty: null, en_fsrs_state: 0,
-    en_reps: 0, en_last_review: null, en_last_answer_correct: null,
-  };
+  const blank = BLANK;
   const seen = new Set();
   const cards = [];
   let rowId = 1;
@@ -198,10 +201,14 @@ export const SECONDS = { new: 20, right: 8, wrong: 16, retry: 10, checkpoint: 10
 //   study     chance of studying on a given day
 //   habit     "sets": that many sets and stop, whatever is due; "due": keep
 //             going while sets still bring due cards, up to 6 sets a day
+//   messy     the chance, each study day, of each of the habits the owner's
+//             real record showed (2026-09-30 to 10-01) and a tidy student
+//             never has: see below. 0, the default, leaves a run exactly as
+//             it was before they were added.
 export function simulate({
   days = 60, seed = 1, student = "typical", target = "auto", start = Date.parse("2026-09-27T00:00:00"),
   cards: limit = Infinity, lessons = 0.15, directions = { mix: 0.8, fr: 0.1, en: 0.1 },
-  blocks = [0.55, 0.9], study = 0.85, habit = "sets",
+  blocks = [0.55, 0.9], study = 0.85, habit = "sets", messy = 0,
 } = {}) {
   uuidN = 0;
   const deck = makeDeck({ start, cards: limit });
@@ -217,6 +224,12 @@ export function simulate({
     target: target === "auto" ? DEFAULT_TARGET : target, target_changed_at: null, days: [],
   };
   const m = { seconds: 0, answers: 0, counted: 0, newMet: 0, reviews: 0, reviewsRight: 0, dueLeft: [], targets: [] };
+  // The messy habits draw on their own randomness, so a tidy run is the same
+  // run it always was. `habits` counts each one as it happens.
+  const mess = mulberry32(seed * 13 + 5);
+  const habits = { oldCopy: 0, notes: 0, reload: 0, detour: 0 };
+  let copy = null; // the deck as the browser saved it, the last time the page loaded
+  let nextRow = Math.max(...deck.map((c) => c.row_id)) + 1;
 
   for (let day = 0; day < days; day++) {
     const studies = day === 0 || cal() < study;
@@ -250,48 +263,135 @@ export function simulate({
     applySettings({ weights: settings.weights, retention: settings.target });
     m.targets.push(settings.target);
 
+    // The messy habits. On opening, the browser's saved copy of the deck,
+    // from the last time the page loaded, deals a set; the database's copy
+    // arrives seconds later and the set is dealt again before anything in it
+    // is answered. Partway through the first set: a class's notes arrive (some
+    // notebook cards gain today's date, two new cards are made) and the rest
+    // of the set is dealt again; or the page is reloaded and the same happens
+    // without the notes; or the student goes into a lesson's set, answers a
+    // few cards there, and comes back to the set they left, as they left it.
+    const roll = () => messy > 0 && mess() < messy;
+    const oldCopy = roll() && copy;
+    const notesAt = roll() ? 3 + Math.floor(mess() * 12) : -1;
+    const reloadAt = roll() ? 3 + Math.floor(mess() * 25) : -1;
+    const detourAt = roll() ? 2 + Math.floor(mess() * 20) : -1;
+    const opened = messy > 0 ? deck.map((c) => ({ ...c, dates: [...c.dates] })) : null;
+
+    // One card answered: block[idx], in `block`, which comes back with any
+    // retry placed in it.
+    const answerAt = (block, idx) => {
+      const item = block[idx];
+      const card = byRow.get(item.row_id);
+      const dir = item.shownDir;
+      const side = sideOf(card, dir);
+      const counted = !item._retry && !reviewedToday(side.last_review, new Date(now));
+      const res = s.answer(card, dir, now);
+      let sr = null;
+      const before = counted ? sideColumns(side, dir) : null;
+      if (counted) {
+        sr = applyAnswer(card, res.got, now, dir);
+        Object.assign(card, sr);
+        m.counted++;
+        if (side.fsrs_state === State.New) m.newMet++;
+        else { m.reviews++; if (res.got) m.reviewsRight++; }
+      }
+      answers.push(stored(reviewRow({
+        id: uuid(), userId: USER_ID, cardId: card.row_id, dir, got: res.got, before, after: sr, at: now,
+        settings: counted ? settingsInUse() : null, timeZone: counted ? TIME_ZONE : null,
+      })));
+      m.answers++;
+      const secs = item._retry ? SECONDS.retry : res.first ? SECONDS.new : res.got ? SECONDS.right : SECONDS.wrong;
+      m.seconds += secs;
+      if (!res.got) block = placeRetry(block, idx, { ...item, ...card, _rid: String(m.answers) }, RE_QUEUE_OFFSET);
+      now += secs * 1000;
+      return block;
+    };
+
+    // The rest of a set dealt again, as the app's redealRest does: what has
+    // been reached and the retries lined up stay, the rest is dealt afresh.
+    const redealRest = (block, at, pool, scope, lessonMode) => {
+      const head = block.slice(0, at + 1);
+      const tail = block.slice(at + 1);
+      const kept = new Set(tail.filter((c) => c._retry));
+      const room = tail.length - kept.size;
+      if (room <= 0) return block;
+      const dealt = buildSession(pool, { now, direction, target: room, lessonMode, lessonRank, rng: shuffle, inBlock: [...head, ...kept] });
+      deals.push(dealRow({
+        id: uuid(), userId: USER_ID, kind: "rest", scope, direction, slots: room, dealt,
+        kept: [...head, ...kept], at: now, timeZone: TIME_ZONE,
+      }));
+      let f = 0;
+      return [...head, ...tail.map((c) => (kept.has(c) ? c : dealt.queue[f++])).filter(Boolean)];
+    };
+
+    const notesArrive = () => {
+      const today = localISODate(new Date(now));
+      const notebook = deck.filter((c) => c.source === "cahier-upload" && !c.dates.includes(today));
+      for (let i = 0; i < 4 && notebook.length; i++) {
+        const c = notebook.splice(Math.floor(mess() * notebook.length), 1)[0];
+        c.dates = [...c.dates, today];
+        c.freq = c.dates.length;
+      }
+      const made = new Date(now).toISOString();
+      for (let i = 0; i < 2; i++) {
+        const f = `un mot nouveau ${day}-${i}`;
+        const card = { f, b: `a new word ${day}-${i}`, cat: "vocab", dates: [today], freq: 1, id: f, row_id: nextRow++, source: "cahier-upload", created_at: made, ...BLANK };
+        deck.push(card);
+        byRow.set(card.row_id, card);
+      }
+    };
+
     let moreDue = true;
     for (let b = 0; b < (habit === "due" ? 6 : nBlocks); b++) {
       if (habit === "due" && b >= nBlocks && !moreDue) break;
       const lesson = lessonDay && b === 0 ? LESSONS[Math.floor(shuffle() * LESSONS.length)].id : null;
-      const candidates = lesson ? deck.filter((c) => lessonIdOf(c) === lesson) : deck;
-      const dealt = buildSession(candidates, { now, direction, lessonMode: !!lesson, lessonRank, rng: shuffle });
+      const scope = `all|${lesson || "all"}`;
+      const pool = (cards) => (lesson ? cards.filter((c) => lessonIdOf(c) === lesson) : cards);
+      if (b === 0 && oldCopy) {
+        const stale = buildSession(pool(copy), { now, direction, lessonMode: !!lesson, lessonRank, rng: shuffle });
+        if (stale.queue.length) {
+          deals.push(dealRow({ id: uuid(), userId: USER_ID, kind: "new", scope, direction, slots: BLOCK_SIZE, dealt: stale, at: now, timeZone: TIME_ZONE }));
+          habits.oldCopy++;
+          now += 12000;
+        }
+      }
+      const dealt = buildSession(pool(deck), { now, direction, lessonMode: !!lesson, lessonRank, rng: shuffle });
       if (!dealt.queue.length) break;
       moreDue = dealt.dueRemaining > 0 || dealt.queue.some((x) => x._bucket !== "new");
       deals.push(dealRow({
-        id: uuid(), userId: USER_ID, kind: "new", scope: `all|${lesson || "all"}`, direction,
+        id: uuid(), userId: USER_ID, kind: "new", scope, direction,
         slots: BLOCK_SIZE, dealt, at: now, timeZone: TIME_ZONE,
       }));
       let block = dealt.queue;
       for (let idx = 0; idx < block.length; idx++) {
-        const item = block[idx];
-        const card = byRow.get(item.row_id);
-        const dir = item.shownDir;
-        const side = sideOf(card, dir);
-        const counted = !item._retry && !reviewedToday(side.last_review, new Date(now));
-        const res = s.answer(card, dir, now);
-        let sr = null;
-        const before = counted ? sideColumns(side, dir) : null;
-        if (counted) {
-          sr = applyAnswer(card, res.got, now, dir);
-          Object.assign(card, sr);
-          m.counted++;
-          if (side.fsrs_state === State.New) m.newMet++;
-          else { m.reviews++; if (res.got) m.reviewsRight++; }
+        if (b === 0 && idx === notesAt) {
+          notesArrive();
+          block = redealRest(block, idx, pool(deck), scope, !!lesson);
+          habits.notes++;
         }
-        answers.push(stored(reviewRow({
-          id: uuid(), userId: USER_ID, cardId: card.row_id, dir, got: res.got, before, after: sr, at: now,
-          settings: counted ? settingsInUse() : null, timeZone: counted ? TIME_ZONE : null,
-        })));
-        m.answers++;
-        const secs = item._retry ? SECONDS.retry : res.first ? SECONDS.new : res.got ? SECONDS.right : SECONDS.wrong;
-        m.seconds += secs;
-        if (!res.got) block = placeRetry(block, idx, { ...item, ...card, _rid: String(m.answers) }, RE_QUEUE_OFFSET);
-        now += secs * 1000;
+        if (b === 0 && idx === reloadAt) {
+          block = redealRest(block, idx, pool(deck), scope, !!lesson);
+          habits.reload++;
+        }
+        if (b === 0 && idx === detourAt && !lesson) {
+          const away = LESSONS[Math.floor(mess() * LESSONS.length)].id;
+          const there = buildSession(deck.filter((c) => lessonIdOf(c) === away), { now, direction, lessonMode: true, lessonRank, rng: shuffle });
+          if (there.queue.length) {
+            deals.push(dealRow({ id: uuid(), userId: USER_ID, kind: "new", scope: `all|${away}`, direction, slots: BLOCK_SIZE, dealt: there, at: now, timeZone: TIME_ZONE }));
+            let other = there.queue;
+            const few = 2 + Math.floor(mess() * 6);
+            for (let j = 0; j < Math.min(few, other.length); j++) other = answerAt(other, j);
+            now += 30000;
+            habits.detour++;
+          }
+        }
+        block = answerAt(block, idx);
       }
       m.seconds += SECONDS.checkpoint;
       now += 60000;
     }
+    if (opened) copy = opened;
     m.dueLeft.push(dueCount(deck, now));
   }
 
@@ -310,12 +410,37 @@ export function simulate({
     cards: deck.map(userCardRow),
     metrics: {
       ...m,
+      messy: habits,
       hours: m.seconds / 3600,
       known, bothWays, seen,
       knownPerHour: known / Math.max(1e-9, m.seconds / 3600),
       reviewRetention: m.reviews ? m.reviewsRight / m.reviews : null,
     },
   };
+}
+
+// Known, and not fixed (found by the messy student, 2026-10-06): back from a
+// detour into a lesson's set, the set left can ask a card that was just
+// answered in the lesson again, straight away (not counted, since it was
+// answered today). The set comes back as it was left, cards answered elsewhere
+// since included. Whether every "asked twice in a row" in a run's status check
+// is that, and how many there are, so a test can tell it from anything new.
+export function detourRepeats(run, report) {
+  const dealt = report.results.find((r) => r.id === "dealt");
+  const pairs = [];
+  const rows = run.answers;
+  for (let k = 1; k < rows.length; k++) {
+    const a = rows[k - 1], b = rows[k];
+    if (a.card_id !== b.card_id || a.direction !== b.direction) continue;
+    const at = Date.parse(a.answered_at);
+    if (Date.parse(b.answered_at) - at >= 30 * 60000) continue;
+    const fromLesson = run.deals.some((d) => d.scope !== "all|all" && Date.parse(d.dealt_at) <= at && at - Date.parse(d.dealt_at) < 10 * 60000);
+    pairs.push(fromLesson && b.counted === false);
+  }
+  const details = dealt.details.length + (dealt.more || 0);
+  const onlyThese = dealt.status === "pass" ||
+    (pairs.length === details && pairs.every(Boolean) && dealt.details.every((d) => /was asked twice in a row/.test(d)));
+  return { onlyThese, count: pairs.length };
 }
 
 function dueCount(deck, now) {
