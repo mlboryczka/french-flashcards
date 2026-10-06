@@ -1148,8 +1148,9 @@ From this project's history:
 
 A lesson is a fixed set of cards made from a teacher's materials, the same for
 every student. Lessons are in `src/data/lessons/`; `LESSONS` in `index.js` is
-the catalogue. There are two: L'impératif (108 cards, from Laura Caufour's LFL
-METHOD sheets) and Adjectif ou adverbe ? (81 cards, written for the app).
+the catalogue. There are three: L'impératif (108 cards, from Laura Caufour's
+LFL METHOD sheets), Adjectif ou adverbe ? (81 cards, written for the app) and
+Leçon 2 · Aller (63 cards, from her LFL METHOD Leçon 2).
 
 - A card is `[front, back, category, section, previousFront?]`. The front is
   always the French, because the app reads it aloud and cleans it as French.
@@ -1283,6 +1284,24 @@ card, shown in French.
   line by line (2026-10-04): four tabs, Use · Forms · Expressions · False
   friends, each opening with its rule in one sentence. The vowel rule is put
   as "drop the -e after a vowel", so fou → follement no longer contradicts it.
+
+### Leçon 2 · Aller
+
+`lecon2.js` is the first of Laura's beginner course in the app, from her
+Google Drive folder Français → Leçons 1 à 20 (lesson, exercises, answer key),
+built 2026-10-04. Leçons 3 to 5 were built with it and wait on the owner's
+review, outside `LESSONS`.
+
+- Her answers stand where her key gives one; the header comment lists every
+  departure. Her vocabulary list became word cards. Dictation, oral answers
+  and the true/false and story questions were left out: none can be a typed
+  card.
+- The notes are on the impératif's model: Use · Forms · Future · Être ·
+  Numbers · Plural. No word list: the cards are how the words are learned
+  (owner, 2026-10-05).
+- A phrase card's typo tolerance lets "Je suis bien" pass for "Je vais bien",
+  the être / aller mistake her lesson warns about. Cards marked exactly carry
+  that contrast instead; a real fix is a marking change, not proposed yet.
 
 ---
 
@@ -1977,9 +1996,9 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   secured. Bringing them back means putting them behind `requireUser` and, if
   the owner shouldn't pay, a per-user credential like the Anthropic one.
 - **A lesson generator.** Turning Laura's lesson PDFs into cards was scoped,
-  not built. The impératif is the only lesson made from her sheets, and one
-  example is too few to design from; check her template on two or three more
-  lessons first.
+  not built. Leçons 2 to 5 were built from her sheets by hand (2026-10-04);
+  her template is the same in all four (dialogue, grammar, numbers, then
+  exercises with an answer key), so they are the examples to design from.
 - **Two routes nothing calls.** `api/split-senses.js` and `api/apply-splits.js`
   have no caller in the app but count toward Vercel's 12-route limit. Retiring
   them frees two slots; the multi-sense script imports its prompt from
