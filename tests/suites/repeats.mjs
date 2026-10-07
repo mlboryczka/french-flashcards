@@ -32,8 +32,10 @@
 //   nothing and adds nothing.
 
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { checker } from "../check.mjs";
 import { fakeSupabase } from "../fake-supabase.mjs";
+import { localPostgres } from "../local-postgres.mjs";
 
 const ck = checker();
 
@@ -202,8 +204,8 @@ const { readClasses } = await import("../../api/cahier-parse.js");
 const { syncUser } = await import("../../api/cahier-sync.js");
 const { removeCard } = await import("../../api/_lib/removeCard.js");
 const { runUpload } = await import("../../src/lib/uploadRun.js");
-const { isSureMatch, cardIndex } = await import("../../src/lib/sameCard.js");
-const { matchNewCards } = await import("../../src/lib/cardMatch.js");
+const { isSureMatch, cardIndex, formsOfOneWord } = await import("../../src/lib/sameCard.js");
+const { matchNewCards, plannedWrites } = await import("../../src/lib/cardMatch.js");
 const { reconcileLessons } = await import("../../src/lib/lessonSync.js");
 const { lessonCardKey } = await import("../../src/lib/lessonSource.js");
 const { askSameCard, PAIRS_PER_CALL, CALLS_AT_ONCE } = await import("../../api/_lib/sameCardQuestion.js");
@@ -504,6 +506,132 @@ console.log("\n  a card that is one item of another card's list is that card (th
        !merged.some((c) => c.front === "à l'heure" || c.front === "épais"),
      JSON.stringify(merged.map((c) => [c.front, c.dates])));
   ck("  but not different words grouped on one card", merged.some((c) => c.front === "amener") && merged.some((c) => c.front === "se lever, acheter, amener"));
+  // A list card read after two of its items takes in both (2026-10-07). It
+  // used to take the place of only the first item it found, and the other
+  // was left beside it: "à l'heure", "à temps", then "à temps / à l'heure"
+  // gave "à l'heure" and the list card, and the card-writer then joined the
+  // list card to "à l'heure", so "à temps" was never made. The owner's
+  // "rater", "manquer" and "manquer / rater" went the same way.
+  const V = (front, back, date) => ({ front, back, category: "V", dates: [date] });
+  const both = [
+    [V("à l'heure", "on time", "2026-01-05"), V("à temps", "on time", "2026-01-12"), V("à temps / à l'heure", "on time", "2026-01-19")],
+    [V("rater", "to miss", "2025-12-01"), V("manquer", "to miss", "2025-12-24"), V("manquer / rater", "to miss", "2025-12-24")],
+  ].map((group) => mergeRepeats(group));
+  ck("inside one reading, a list card read after two of its items is one card with every class",
+     both.every((m) => m.length === 1) && JSON.stringify(both[0][0].dates) === '["2026-01-05","2026-01-12","2026-01-19"]' &&
+       both[0][0].front === "à temps / à l'heure" && both[1][0].front === "manquer / rater",
+     JSON.stringify(both.map((m) => m.map((c) => [c.front, c.dates]))));
+  // An item read again after the list card took its place lands on the list
+  // card, its class date with it: through the copy the list card replaced
+  // when the rule finds only that copy ("in time" agrees with "on time", but
+  // not every word of the list's English is in it).
+  const again = [
+    mergeRepeats([V("à l'heure", "on time", "2026-01-05"), V("à temps / à l'heure", "on time", "2026-01-12"), V("à l'heure", "on time", "2026-01-19")]),
+    mergeRepeats([V("à l'heure", "on time", "2026-01-05"), V("à temps / à l'heure", "on time", "2026-01-12"), V("à l'heure", "in time", "2026-01-19")]),
+  ];
+  ck("  an item, its list card, then the item again: one card, the list card, with all three classes",
+     again.every((m) => m.length === 1 && m[0].front === "à temps / à l'heure" && JSON.stringify(m[0].dates) === '["2026-01-05","2026-01-12","2026-01-19"]'),
+     JSON.stringify(again.map((m) => m.map((c) => [c.front, c.dates]))));
+
+  // A new list card is never joined to one of its items the student has
+  // (2026-10-07). The owner's "taper" (to hit, to strike) was made on 15
+  // April, and "frapper, taper" on 4 September only added a date to it:
+  // their one "frapper" card was lost. Now the item they have gains the
+  // date, and each other item becomes a card. 31 such pairs were in the
+  // live decks, the list made after the item.
+  const REVERSE = [
+    [{ front: "taper", back: "to hit, to strike" }, { front: "frapper, taper", back: "to hit, to strike" }, "frapper"],
+    [{ front: "à l'heure", back: "on time" }, { front: "à temps / à l'heure", back: "on time" }, "à temps"],
+    [{ front: "connu", back: "known, famous" }, { front: "connu/célèbre", back: "known, famous" }, "célèbre"],
+    [{ front: "un(e) coloc", back: "a roommate" }, { front: "un(e) colocataire, un(e) coloc", back: "a roommate" }, "un(e) colocataire"],
+  ];
+  const lost = [];
+  for (const [have, list, word] of REVERSE) {
+    for (const source of ["cahier-upload", "archived:cahier-upload"]) {
+      const asked = [];
+      const m = await matchNewCards({
+        incoming: [{ ...list, category: "V", dates: ["2026-09-04"] }],
+        deck: [{ id: 1, ...have, dates: ["2026-04-15"], source }],
+        ask: async (pairs) => { asked.push(...pairs); return pairs.map(() => "same"); },
+      });
+      const joined = m.decisions.find((d) => d.action === "join");
+      const made = m.decisions.filter((d) => d.action === "insert").map((d) => d.insert);
+      if (!(asked.length === 0 && joined?.row.id === 1 && joined.card.front === have.front && made.length === 1 && made[0].front === word &&
+            made[0].back === list.back && JSON.stringify(made[0].dates) === '["2026-09-04"]' && m.decisions.length === 2)) {
+        lost.push(`${list.front} beside ${source === "cahier-upload" ? "" : "a removed "}${have.front}: ${m.decisions.map((d) => `${d.card.front} ${d.action}`).join(", ")}, ${asked.length} asked`);
+      }
+    }
+  }
+  ck("a new list card beside one of its items: the item gains the date and the list's other word becomes a card, with no question",
+     lost.length === 0, lost.join("; "));
+  ck("  and the card the student removed stays removed: only the new word goes into study",
+     (await matchNewCards({ incoming: [{ front: "frapper, taper", back: "to hit, to strike", dates: ["2026-09-04"] }],
+       deck: [{ id: 1, front: "taper", back: "to hit, to strike", dates: [], source: "archived:cahier-upload" }], ask: async () => [] }))
+       .decisions.every((d) => (d.card.front === "taper" ? d.action === "join" && d.row.source.startsWith("archived:") : d.action === "insert")));
+  // But a list card that holds only forms of the word the student has is
+  // that card: "bon, bonne" beside "bon" adds a date to "bon", as before.
+  // Of the 31 real pairs, 25 are such forms ("lent, lente", "un joueur, une
+  // joueuse", "frais, fraîche", "15 = quinze"); a card of its own for each
+  // feminine, with the same English, would be a card asked "good" whose
+  // answer "bon" is marked wrong. The other words become cards.
+  const FORMS = [
+    [["bon", "good"], ["bon, bonne", "good"], []],
+    [["un joueur", "a player"], ["un joueur, une joueuse", "a player"], []],
+    [["frais (adj)", "fresh"], ["frais, fraîche", "fresh"], []],
+    [["vieux (adj)", "old"], ["vieux, vieille", "old"], []],
+    [["les cheveux", "the hair"], ["un cheveu, des cheveux", "a hair, hair"], []],
+    [["quinze", "fifteen"], ["15 = quinze", "fifteen"], []],
+    [["un connard", "a jerk"], ["un connard, une connasse", "a jerk"], ["une connasse"]],
+  ];
+  const formsWrong = [];
+  for (const [[f1, b1], [f2, b2], made] of FORMS) {
+    const asked = [];
+    const m = await matchNewCards({
+      incoming: [{ front: f2, back: b2, dates: ["2026-09-04"] }],
+      deck: [{ id: 1, front: f1, back: b1, dates: ["2026-04-15"], source: "cahier-upload" }],
+      ask: async (pairs) => { asked.push(...pairs); return pairs.map(() => "different"); },
+    });
+    const w = plannedWrites(m.decisions);
+    if (JSON.stringify(w.inserts.map((i) => i.front)) !== JSON.stringify(made) || w.updates[0]?.id !== 1 || asked.length) {
+      formsWrong.push(`${f2} beside ${f1}: new ${w.inserts.map((i) => i.front).join(", ") || "none"}, ${asked.length} asked`);
+    }
+  }
+  ck("  a new list card of forms of the word the student has only adds its date; a different word on it becomes a card",
+     formsWrong.length === 0, formsWrong.join("; "));
+  const isForm = [["japonais", "japonaise"], ["étranger", "étrangère"], ["conservateur", "conservatrice (adj)"], ["un infirmier", "une infirmière"],
+    ["beau", "belle"], ["gentil", "gentille"], ["un cheval", "des chevaux"], ["secret (adj)", "secrète"], ["significatif", "significative"]];
+  const notForm = [["frapper", "taper"], ["à temps", "à l'heure"], ["un(e) colocataire", "un(e) coloc"], ["connu", "célèbre"], ["un connard", "une connasse"],
+    ["soir", "soirée"], ["jour", "journée"], ["un an", "une année"], ["matin", "matinée"], ["manquer", "rater"]];
+  ck("  forms of one word, told from different words",
+     isForm.every(([a, b]) => formsOfOneWord(a, b) && formsOfOneWord(b, a)) && notForm.every(([a, b]) => !formsOfOneWord(a, b)),
+     JSON.stringify([isForm.filter(([a, b]) => !formsOfOneWord(a, b)), notForm.filter(([a, b]) => formsOfOneWord(a, b))]));
+  {
+    const m = await matchNewCards({
+      incoming: [{ front: "bon, bonne", back: "good, fine", dates: ["2026-09-04"] }],
+      deck: [{ id: 1, front: "bon", back: "good", dates: ["2026-04-15"], source: "cahier-upload" }],
+      ask: async (pairs) => pairs.map(() => "same"),
+    });
+    ck("  and so when Claude calls such a list card the same as the word the student has",
+       m.decisions.length === 2 && m.decisions.every((d) => d.action === "join" && d.row.id === 1), JSON.stringify(m.decisions.map((d) => [d.card.front, d.action])));
+  }
+  // The same when Claude calls the list card the same card as an item whose
+  // English is worded differently: "après" (after) gains the date, and
+  // "ensuite" becomes a card. A "different" keeps the list card whole, and
+  // no answer leaves it waiting.
+  const apres = (verdict) => matchNewCards({
+    incoming: [{ front: "ensuite / après", back: "then / afterwards", category: "V", dates: ["2026-09-04"] }],
+    deck: [{ id: 1, front: "après", back: "after", dates: ["2026-04-15"], source: "cahier-upload" }],
+    ask: async (pairs) => pairs.map(() => verdict),
+  });
+  const [same, different, none] = [await apres("same"), await apres("different"), await apres(null)];
+  ck("  Claude's \"same\" for a new list card and one of its items: that item gains the date, and the other becomes a card",
+     same.decisions.length === 2 && same.decisions.some((d) => d.card.front === "après" && d.action === "join" && d.row.id === 1) &&
+       same.decisions.some((d) => d.action === "insert" && d.insert.front === "ensuite" && d.insert.back === "then / afterwards"),
+     JSON.stringify(same.decisions.map((d) => [d.card.front, d.action])));
+  ck("  its \"different\" makes the list card, and no answer leaves it waiting",
+     different.decisions.length === 1 && different.decisions[0].insert?.front === "ensuite / après" &&
+       none.decisions.length === 1 && none.decisions[0].action === "wait",
+     JSON.stringify([different.decisions.map((d) => [d.card.front, d.action]), none.decisions.map((d) => [d.card.front, d.action])]));
 
   // The upload and the sync, against a deck with the list cards: an item
   // the rule is sure of only adds its class date, with no question; one
@@ -534,6 +662,46 @@ console.log("\n  a card that is one item of another card's list is that card (th
        asked.includes("après") && !live.includes("après") && byFront(admin, "ensuite / après").dates.includes("2026-01-12"), asked.join(" | "));
     ck(`${via}: what a list only seems to hold is put to Claude, and its "different" makes a card`,
        asked.includes("amener") && live.includes("amener") && live.includes("une montagne") && live.length === 6, JSON.stringify(live));
+  }
+  // The other way round: the items first, the list cards in a later class.
+  // Each list's words the student hasn't got become cards; the items they
+  // have only gain the class date; what a list only seems to hold stays one
+  // list card.
+  const LISTS_LATER = { ...LISTS, dateLine: "Le 19 janvier 2026" };
+  for (const via of ["upload", "sync"]) {
+    const admin = fakeSupabase();
+    claude.seen = new Map();
+    claude.respell = "strict";
+    if (via === "upload") await upload(admin, notebook(ITEMS_CLASS));
+    else { doc.text = notebook(ITEMS_CLASS); await syncAll(admin, { url: URL_1 }); }
+    resetCalls();
+    claude.judge = judge;
+    const r = via === "upload" ? await upload(admin, notebook(ITEMS_CLASS, LISTS_LATER)) : (doc.text = notebook(ITEMS_CLASS, LISTS_LATER), await syncAll(admin));
+    claude.judge = null;
+    const live = inStudy(admin).map((c) => c.front).sort();
+    const want = ["à l'heure", "à temps", "après", "amener", "des yeux", "ensuite", "se lever, acheter, amener", "un œil", "une montagne"].sort();
+    ck(`${via}: list cards after their items: the words the student hasn't got become cards, and nothing is lost`,
+       r.ok !== false && JSON.stringify(live) === JSON.stringify(want), JSON.stringify(live));
+    ck(`${via}: the items they have gain the later class's date`,
+       ["à l'heure", "après", "des yeux"].every((f) => byFront(admin, f).dates.includes("2026-01-19")) && byFront(admin, "à temps")?.dates.join() === "2026-01-19");
+    const rows = inStudy(admin);
+    const twice = rows.flatMap((a, i) => rows.slice(i + 1).filter((b) => isSureMatch(a, b)).map((b) => `${a.front} ~ ${b.front}`));
+    ck(`${via}: and no card in study is one item of another's list`, twice.length === 0, twice.join("; "));
+  }
+  // One reading with two items and their list card makes the list card
+  // alone, with every class, whichever way round the notes have them (the
+  // newest class is read first).
+  {
+    const got = [];
+    for (const order of [[0, 1, 2], [2, 1, 0]]) {
+      const classes = [C("Le 5 janvier 2026", "à l'heure = on time"), C("Le 12 janvier 2026", "à temps = on time"), C("Le 19 janvier 2026", "à temps / à l'heure = on time")];
+      const admin = fakeSupabase();
+      claude.seen = new Map();
+      const r = await upload(admin, notebook(...order.map((i) => classes[i])));
+      got.push(r.ok !== false && JSON.stringify(inStudy(admin).map((c) => [c.front, c.dates])));
+    }
+    ck("one upload with two items and their list card, in either order: the list card alone, with all three classes",
+       got.every((g) => g === JSON.stringify([["à temps / à l'heure", ["2026-01-05", "2026-01-12", "2026-01-19"]]])), got.join(" | "));
   }
 }
 
@@ -610,8 +778,9 @@ async function headlineVia(label, { build = "upload", run, readCheck = true, exp
      text.includes("5 new cards added to your deck.") && text.includes("4 classes were already read and left as they are.") &&
        text.includes(`${gained} words you already have got the new class date.`) && !/everything in these notes|couldn't|wait/.test(text), text);
   const pairs = admin.tables.card_pairs;
-  // "manquer" and "japonais, japonaise" are items of list cards the student
-  // has, which the rule settles without a question (2026-10-07).
+  // "manquer" is an item of a list card the student has, and the new
+  // "japonais, japonaise" holds their "japonais" and its feminine: the rule
+  // settles both without a question (2026-10-07).
   ck("upload: each of Claude's answers is kept, with the question's version",
      pairs.length >= 5 && pairs.every((p) => p.version && /^[0-9a-f]{7}$/.test(p.version) && p.card_a) &&
        pairs.some((p) => p.verdict === "same" && p.b_front === "le cas"),
@@ -835,6 +1004,58 @@ console.log("\n  Replace works by class, never deletes, and leaves lesson and tu
     ck("the save itself never takes an answered card out for a Replace, either way round",
        data?.archived === 1 && !isOut(db.tables.user_cards[0]) && !isOut(db.tables.user_cards[1]) && isOut(db.tables.user_cards[2]), JSON.stringify(data));
   }
+  // That copy is written out by hand, so the SQL itself is checked too: its
+  // refusal is a clause of save_notes_reading's step that takes cards out,
+  // and deleting it broke no test (2026-10-07). The clause must be there and
+  // name all six signs of an answer, the same six the copy and the app
+  // (src/lib/replaceDeck.js's answered) look at.
+  {
+    const sql = readFileSync(new URL("../../migrations/migration_016_notes_read_once.sql", import.meta.url), "utf8");
+    const fn = sql.slice(sql.indexOf("create or replace function public.save_notes_reading("));
+    const body = fn.slice(0, fn.indexOf("$$;")).replace(/--[^\n]*/g, "").replace(/\s+/g, " ");
+    const step = /update public\.user_cards c set source = 'archived:' \|\| coalesce\(c\.source, ''\), archived_reason = a\.reason.*?returning c\.id/.exec(body)?.[0] || "";
+    const clause = /and \(a\.reason is distinct from 'replaced' or \((.*?)\)\) returning/.exec(step)?.[1] || "";
+    const SIX = ["coalesce(c.fsrs_state, 0) = 0", "coalesce(c.en_fsrs_state, 0) = 0", "coalesce(c.reps, 0) = 0", "coalesce(c.en_reps, 0) = 0",
+      "c.last_review is null", "c.en_last_review is null"];
+    const missing = SIX.filter((t) => !clause.split(" and ").map((x) => x.trim()).includes(t));
+    ck("migration_016's own save refuses a Replace of an answered card: the clause is there, naming all six signs of an answer",
+       !!step && !!clause && missing.length === 0, step ? `missing: ${missing.join(", ") || "none"}` : "no archive step found");
+    const fake = readFileSync(new URL("../fake-supabase.mjs", import.meta.url), "utf8");
+    const copy = /const answeredRow = \(r\) => ([^;]*);/.exec(fake)?.[1] || "";
+    ck("  and the hand-written copy the tests run looks at the same six",
+       ["fsrs_state", "en_fsrs_state", "reps", "en_reps", "last_review", "en_last_review"].every((col) => new RegExp(`r\\.${col}\\b`).test(copy)), copy);
+  }
+  // Where this machine has Postgres, the real function is run on real rows.
+  {
+    const { db: pg, why } = await localPostgres();
+    if (!pg) console.log(`  (not run here: the real save_notes_reading on a local Postgres; ${why})`);
+    else {
+      try {
+        const U = "00000000-0000-0000-0000-0000000000a1", RUN = "11111111-1111-1111-1111-111111111111";
+        // One card for each sign of an answer, alone, so leaving any one of
+        // them out of the clause shows; one never answered; and one answered
+        // that the student removes.
+        const SIGNS = [["fsrs_state", "2"], ["en_fsrs_state", "1"], ["reps", "3"], ["en_reps", "2"], ["last_review", "now()"], ["en_last_review", "now()"]];
+        const values = SIGNS.map(([col, v], i) =>
+          `(${9001 + i}, '${U}', 'carte ${i + 1}', 'card ${i + 1}', 'cahier-upload', ${["fsrs_state", "en_fsrs_state", "reps", "en_reps", "last_review", "en_last_review"].map((c) => (c === col ? v : c.endsWith("review") ? "null" : "0")).join(", ")})`);
+        const setup = pg.sql(`
+          insert into auth.users (id) values ('${U}');
+          insert into public.user_cards (id, user_id, front, back, source, fsrs_state, en_fsrs_state, reps, en_reps, last_review, en_last_review) values
+            ${values.join(",\n            ")},
+            (9007, '${U}', 'jamais vu', 'never seen', 'cahier-upload', 0, 0, 0, 0, null, null),
+            (9008, '${U}', 'déjà vu', 'already seen', 'cahier-upload', 2, 0, 4, 0, now(), null);
+          insert into public.notes_read (user_id, run_id) values ('${U}', '${RUN}');`);
+        const saved = pg.sql(`select public.save_notes_reading('${U}', '${RUN}', p_archive => '${JSON.stringify(
+          [9001, 9002, 9003, 9004, 9005, 9006, 9007].map((id) => ({ id, reason: "replaced" })).concat([{ id: 9008, reason: "removed" }]))}'::jsonb) ->> 'archived'`);
+        const rows = pg.sql(`select string_agg(id || ':' || coalesce(archived_reason, 'in study'), ', ' order by id) from public.user_cards where user_id = '${U}'`);
+        const want = [...SIGNS.map((_, i) => `${9001 + i}:in study`), "9007:replaced", "9008:removed"].join(", ");
+        ck("on a local Postgres, the real save takes out for a Replace only the card never answered, whichever sign of an answer a card has; a card the student removes goes out answered or not",
+           setup.ok && saved.out === "2" && rows.out === want, `${setup.err || saved.err || ""} archived ${saved.out}: ${rows.out}`);
+      } finally {
+        pg.stop();
+      }
+    }
+  }
   ck("the removed card stays removed", byFront(admin, "Naza").archived_reason === "removed");
   ck("lesson and tutor cards are left alone", !isOut(byFront(admin, "Je vais bien")) && !isOut(byFront(admin, "une falaise")));
   ck("the other classes are untouched", ["soulagé (adj)", "le soleil", "le travail"].every((f) => !isOut(byFront(admin, f))));
@@ -876,9 +1097,17 @@ console.log("\n  the first run after the fix: a class the linked notebook read w
   // fingerprint no longer matches, only lines on a card count as read. Where
   // it matches, or there is none, the class counts as read whole, as before,
   // a line that made no card (a grammar rule) included.
+  //
+  // A line is on a card in four ways (src/lib/notesLines.js's lineMatcher):
+  // a card's French, one part of a list card ("rater" of "manquer / rater"),
+  // a drill's answer ("Je vais au cinéma"), and two words with " // " between
+  // them that each have a card ("le jour // la journée"). The class gained
+  // one line of each besides the two on no card; only those two are read.
   const K1 = C("Le 1 décembre 2025", "un lit = a bed", "une table = a table", "moins + adj / moins de + nom");
   const K2 = C("Le 8 décembre 2025", "une lampe = a lamp", "un tapis = a rug");
-  const K2b = { ...K2, lines: [...K2.lines, "se moucher = to blow one's nose", "à partir de lundi = from Monday"] };
+  const ON_CARDS = ["rater = to miss", "Je vais au cinéma", "le jour // la journée"];
+  const K2b = { ...K2, lines: [...K2.lines, "se moucher = to blow one's nose", ...ON_CARDS, "à partir de lundi = from Monday"] };
+  const NEW_LINES = ["se moucher = to blow one's nose", "à partir de lundi = from Monday"];
   const DK1 = "2025-12-01", DK2 = "2025-12-08";
   const textOf = (nb, date) => sliceIntoBlocks(nb).find((b) => b.date === date).text;
   const deckRows = () => [
@@ -886,7 +1115,12 @@ console.log("\n  the first run after the fix: a class the linked notebook read w
     { id: 2, user_id: USER, front: "une table", back: "a table", dates: [DK1], source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0 },
     { id: 3, user_id: USER, front: "une lampe", back: "a lamp", dates: [DK2], source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0 },
     { id: 4, user_id: USER, front: "Un tapis.", back: "a rug", dates: [DK2], source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0 },
+    { id: 5, user_id: USER, front: "manquer / rater", back: "to miss", dates: ["2025-11-03"], source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0 },
+    { id: 6, user_id: USER, front: "Je (aller) → au cinéma", back: "Je vais au cinéma", dates: ["2025-11-03"], source: "conjugation-drill", fsrs_state: 0, en_fsrs_state: 0 },
+    { id: 7, user_id: USER, front: "le jour", back: "the day", dates: ["2025-11-03"], source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0 },
+    { id: 8, user_id: USER, front: "la journée", back: "the day (its length)", dates: ["2025-11-03"], source: "cahier-upload", fsrs_state: 0, en_fsrs_state: 0 },
   ];
+  const DECK = deckRows().length;
   const linkWith = (k2) => ({ user_id: USER, doc_id: "DOC1", doc_url: URL_1, classes: { [DK1]: classFingerprint(textOf(notebook(K1), DK1)), [DK2]: k2 } });
   const setup = (k2, { migrated = true } = {}) => {
     const admin = fakeSupabase({ migrated });
@@ -898,27 +1132,54 @@ console.log("\n  the first run after the fix: a class the linked notebook read w
     return admin;
   };
   const shorter = classFingerprint(textOf(notebook(K2), DK2));
-  for (const via of ["upload", "sync"]) {
+  const recorded = (admin) => admin.tables.notes_read.find((r) => r.user_id === USER)?.classes || {};
+  const fromLink = (admin) =>
+    runUpload({ post: poster(admin), mode: "url", content: URL_1, replace: false, source: "link" }).catch((e) => ({ ok: false, error: e.message }));
+  const readsOnlyNew = (label, r, admin) => {
+    const k2Reads = claude.reads.filter((x) => /une lampe/.test(x.lesson));
+    ck(`${label}: the class read when it was shorter has only its lines with no card read`,
+       r.ok !== false && k2Reads.length === 1 && JSON.stringify(k2Reads[0].newLines) === JSON.stringify(NEW_LINES),
+       JSON.stringify(claude.reads.map((x) => x.newLines || x.lesson.split("\n")[0])));
+    ck(`${label}: and they become cards, dated that class`, ["se moucher", "à partir de lundi"].every((f) => JSON.stringify(byFront(admin, f)?.dates) === JSON.stringify([DK2])),
+       JSON.stringify(cards(admin).map((c) => c.front)));
+    ck(`${label}: the class whose fingerprint matches is not read, the line that made no card included`, !claude.reads.some((x) => /un lit/.test(x.lesson)),
+       claude.reads.length + " readings");
+    ck(`${label}: nothing else is added`, cards(admin).length === DECK + 2, JSON.stringify(cards(admin).map((c) => c.front)));
+  };
+  // The sync and an upload of the doc's link read the doc's own text, which
+  // the fingerprints were taken from.
+  for (const via of ["sync", "upload of the doc's link"]) {
     const admin = setup(shorter);
     doc.text = notebook(K1, K2b);
-    const r = via === "upload" ? await upload(admin, notebook(K1, K2b)) : await syncAll(admin);
-    const k2Reads = claude.reads.filter((x) => /une lampe/.test(x.lesson));
-    ck(`${via}: the class read when it was shorter has only its lines with no card read`,
-       r.ok !== false && k2Reads.length === 1 && JSON.stringify(k2Reads[0].newLines) === JSON.stringify(["se moucher = to blow one's nose", "à partir de lundi = from Monday"]),
-       JSON.stringify(claude.reads.map((x) => x.newLines || x.lesson.split("\n")[0])));
-    ck(`${via}: and they become cards, dated that class`, ["se moucher", "à partir de lundi"].every((f) => JSON.stringify(byFront(admin, f)?.dates) === JSON.stringify([DK2])),
-       JSON.stringify(cards(admin).map((c) => c.front)));
-    ck(`${via}: the class whose fingerprint matches is not read, the line that made no card included`, !claude.reads.some((x) => /un lit/.test(x.lesson)),
-       claude.reads.length + " readings");
-    ck(`${via}: nothing else is added`, cards(admin).length === 6, JSON.stringify(cards(admin).map((c) => c.front)));
-    await secondTimeAsksNothing(`${via}, after the class read when it was shorter`, admin, () => (via === "upload" ? upload(admin, notebook(K1, K2b)) : syncAll(admin)));
+    const r = via === "sync" ? await syncAll(admin) : await fromLink(admin);
+    readsOnlyNew(via, r, admin);
+    await secondTimeAsksNothing(`${via}, after the class read when it was shorter`, admin, () => (via === "sync" ? syncAll(admin) : fromLink(admin)));
+  }
+  // Pasted text, or a file, is never byte for byte the doc's export: a .docx
+  // has a blank line after every paragraph, a paste can lose a tab or a
+  // trailing space. On the owner's notes every fingerprinted class then
+  // looked changed, and 21 lines read before were read again. So such an
+  // upload reads none of those lines and records none of them, and the
+  // next sync, on the doc's own text, reads only the two with no card.
+  const asDocx = (text) => text.split("\n").map((l) => (l ? `${l}  ` : l)).join("\n\n");
+  for (const [shape, text] of [["pasted as the doc has it", notebook(K1, K2b)], ["from a .docx, a blank line after every line", asDocx(notebook(K1, K2b))]]) {
+    const admin = setup(shorter);
+    doc.text = notebook(K1, K2b);
+    const r = await upload(admin, text);
+    ck(`an upload ${shape}: no line of a class the notebook fingerprinted is read again`,
+       r.ok !== false && claude.reads.length === 0 && cards(admin).length === DECK, `${claude.reads.length} readings, ${cards(admin).length} cards`);
+    ck(`an upload ${shape}: and the class that changed is left unrecorded, for the sync`, !(DK2 in recorded(admin)), JSON.stringify(Object.keys(recorded(admin))));
+    resetCalls();
+    const s2 = await syncAll(admin);
+    readsOnlyNew(`the sync after an upload ${shape}`, s2, admin);
+    await secondTimeAsksNothing(`an upload ${shape}, then the sync`, admin, () => upload(admin, text));
   }
   // "already in your deck" is what linking writes for a class on a card: no
   // fingerprint, so the class counts as read whole, as before.
   {
     const admin = setup("already in your deck");
     const r = await upload(admin, notebook(K1, K2b));
-    ck("a class with no fingerprint still counts as read whole", r.ok !== false && claude.reads.length === 0 && cards(admin).length === 4, `${claude.reads.length} readings`);
+    ck("a class with no fingerprint still counts as read whole", r.ok !== false && claude.reads.length === 0 && cards(admin).length === DECK, `${claude.reads.length} readings`);
   }
   // Before migration_016 a class is known by its date only, as it always
   // was: there is no record to remember the class's other lines were read.
@@ -927,7 +1188,7 @@ console.log("\n  the first run after the fix: a class the linked notebook read w
     const r = await upload(admin, notebook(K1, K2b));
     doc.text = notebook(K1, K2b);
     const s2 = await syncAll(admin);
-    ck("before migration_016 nothing changes: the class waits for the migration", r.ok !== false && s2.ok && claude.reads.length === 0 && cards(admin).length === 4,
+    ck("before migration_016 nothing changes: the class waits for the migration", r.ok !== false && s2.ok && claude.reads.length === 0 && cards(admin).length === DECK,
        `${claude.reads.length} readings`);
   }
 }

@@ -31,7 +31,9 @@
 // read once. The owner's 2 October class was read with 4 lines and now has
 // 16, and the 12 added since ("se moucher", "j'ai le nez bouché", "corriger
 // une erreur", "à partir de lundi" among them) would otherwise never have
-// become cards.
+// become cards. Only the doc's own text can be compared with that
+// fingerprint: an upload of pasted text or a file counts such a class as read
+// and records none of its lines, and leaves it to the next sync.
 
 import { looseKey, partsOf, isDrillFront } from "./sameCard.js";
 
@@ -128,6 +130,10 @@ export function lineMatcher(rows = []) {
 // that count as read where the record has no lines for them. `changed(block)`
 // says a class was read by the linked notebook when its text was different;
 // then only lines `knownLine(text)` knows are on a card count as read.
+// `unsure(block)` says this text can't tell whether it was: an upload that
+// isn't the doc's own export (api/_lib/notesReading.js's seedingFrom). Then
+// the class counts as read and none of its lines is recorded (`unrecorded`),
+// so the next run on the doc's own text decides.
 //
 // Each class comes back with:
 //   lines       its lines, with fingerprints
@@ -139,7 +145,8 @@ export function lineMatcher(rows = []) {
 //   fpsKnown    the lines already read, recorded if this run can't read it
 //   retypedFrom the date it had before, when its date line was retyped or it
 //               moved onto another class's date
-export function planReading({ blocks = [], classes = {}, readDates = new Set(), changed = () => false, knownLine = null }) {
+//   unrecorded  whether this run may record none of its lines
+export function planReading({ blocks = [], classes = {}, readDates = new Set(), changed = () => false, unsure = () => false, knownLine = null }) {
   const record = classes || {};
   const planned = blocks.map((b) => ({ b, lines: classLines(b.text) }));
 
@@ -168,11 +175,13 @@ export function planReading({ blocks = [], classes = {}, readDates = new Set(), 
     const fpsAll = lines.map((l) => l.fp);
     let known;
     let seeded = false;
+    let unrecorded = false;
     let retypedFrom = null;
     if (Array.isArray(record[b.date])) {
       known = new Set(record[b.date]);
     } else if (readDates.has(b.date)) {
-      known = knownLine && changed(b) ? new Set(lines.filter((l) => knownLine(l.text)).map((l) => l.fp)) : new Set(fpsAll);
+      unrecorded = unsure(b);
+      known = !unrecorded && knownLine && changed(b) ? new Set(lines.filter((l) => knownLine(l.text)).map((l) => l.fp)) : new Set(fpsAll);
       seeded = true;
     } else {
       known = new Set();
@@ -206,6 +215,7 @@ export function planReading({ blocks = [], classes = {}, readDates = new Set(), 
       fpsKnown: fpsAll.filter((fp) => known.has(fp)),
       seeded,
       retypedFrom,
+      unrecorded,
     };
   });
 }
@@ -214,11 +224,13 @@ export function planReading({ blocks = [], classes = {}, readDates = new Set(), 
 // that waits (or that Claude couldn't read) keeps only the lines it had, and
 // is listed even when that is none, so it is never taken as read just because
 // its date is on a card. A class with nothing new records its lines too,
-// which is how the record fills itself.
+// which is how the record fills itself, except one this run couldn't judge
+// (`unrecorded`), which is left for a run on the doc's own text.
 export function recordAfter(plan = [], classes = {}, { read = new Set(), waiting = new Set() } = {}) {
   const out = {};
   for (const [date, fps] of Object.entries(classes || {})) out[date] = Array.isArray(fps) ? [...fps] : [];
   for (const p of plan) {
+    if (p.unrecorded) continue;
     const done = !p.needsReading || (read.has(p.date) && !waiting.has(p.date));
     const add = done ? p.fpsAll : p.fpsKnown;
     out[p.date] = [...new Set([...(out[p.date] || []), ...add])];

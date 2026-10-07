@@ -68,12 +68,25 @@ const FINGERPRINT = /^[0-9a-f]{16}$/;
 // remembers that the class's other lines were read. Before it, a class is
 // known by its date only, as it always was, and a line added to an old class
 // waits for the migration.
-export function seedingFrom(rows = [], linkClasses = null, mode = "lines") {
+//
+// The fingerprint is of the class's text exactly as the Google Doc's export
+// gave it, so it only tells a class changed when the text compared is that
+// export too: the sync, and an upload of the doc's link (`fromDoc`). Pasted
+// text, a .docx (which puts a blank line after every paragraph) or a .pdf
+// never matches it, however unchanged the class; on the owner's notes every
+// one of their 50 fingerprinted classes looked changed, and 21 lines that
+// had been read and made no card were read again (2026-10-07). So an upload
+// of any other kind counts such a class as read, as before, and records
+// none of its lines (`unsure`): the class keeps waiting for the doc's own
+// text, and the next sync reads its lines that are on no card.
+export function seedingFrom(rows = [], linkClasses = null, mode = "lines", { fromDoc = false } = {}) {
   const link = linkClasses && typeof linkClasses === "object" ? linkClasses : {};
+  const differs = (block) => mode === "lines" && FINGERPRINT.test(String(link[block.date] ?? "")) && link[block.date] !== classFingerprint(block.text);
   let known = null;
   return {
     readDates: readDatesFrom(rows, link),
-    changed: (block) => mode === "lines" && FINGERPRINT.test(String(link[block.date] ?? "")) && link[block.date] !== classFingerprint(block.text),
+    changed: (block) => fromDoc && differs(block),
+    unsure: (block) => !fromDoc && differs(block),
     // Built only if a class changed.
     knownLine: (line) => (known ||= lineMatcher(rows))(line),
   };
@@ -300,7 +313,8 @@ export async function saveRun({
     saved = await saveStepByStep(admin, { userId, inserts, updates: writes.updates, archive, restore, hasReasons: deck.hasReasons });
   }
 
-  const waitingCards = match.decisions.filter((d) => d.action === "wait").length;
+  // A list card decided item by item waits once, however many of its items do.
+  const waitingCards = new Set(match.decisions.filter((d) => d.action === "wait").map((d) => d.card.from || d.card)).size;
   return {
     ...saved,
     added: saved.inserted,

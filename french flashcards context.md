@@ -530,9 +530,16 @@ that are on a card the student has count as read, and the rest are read once
 `src/lib/notesLines.js`). The owner's 2 October class was read when it had 4
 lines; it has 16, and the other 12 ("se moucher", "j'ai le nez bouché",
 "corriger une erreur", "à partir de lundi" among them) would otherwise never
-have become cards. On a read-only copy of the owner's deck and notes, their
-first run after the migration reads exactly those 12 lines and the 6 of the
-28/29 September class, and nothing else. A line added to a class with no
+have become cards. The fingerprint is of the class as the Google Doc's export
+gives it, so only the sync and an upload of the doc's link compare it. Pasted
+text or a file never matches it byte for byte (a .docx has a blank line after
+every paragraph), and on the owner's notes every one of the 50 fingerprinted
+classes looked changed, so 21 lines read before would have been read again.
+Such an upload counts the class as read and records none of its lines, and
+the next sync, on the doc's own text, reads the lines on no card (2026-10-07).
+On a read-only copy of the owner's deck and notes, their first run after the
+migration, or the first sync after an upload of any kind, reads exactly those
+12 lines and the 6 of the 28/29 September class, and nothing else. A line added to a class with no
 fingerprint (linking writes "already in your deck" for the classes already on
 cards) before its first run still can't be told apart. Before
 migration_016 a class is known by its date only, in `cahier_links.classes`
@@ -590,8 +597,24 @@ by one rule shared by every path that writes a card from notes
    "ensuite / après" (then / afterwards)) is a near look-alike, and Claude's
    question now says an item of a list is the same card and names those
    three kinds as different. Inside one reading the list card is the one
-   kept. On the read-only snapshot the rule now names 6 such pairs in the
-   owner's deck, 9 in demarajackson's, 5 in foisydm's and 1 in nguyen's.
+   kept, and it takes in every item of it read before it. On the read-only
+   snapshot the rule now names 6 such pairs in the owner's deck, 9 in
+   demarajackson's, 5 in foisydm's and 1 in nguyen's.
+   A new card joins a card the student has in one direction only
+   (2026-10-07): a new item joins their list card, but a new list card is
+   never joined to one of its items. The item they have gains the class
+   date, and each other word of the list becomes a card, unless it is a card
+   they have too, or only the feminine, plural or number of the item they
+   have (`formsOfOneWord`: "bon, bonne" beside "bon" only adds a date). The
+   owner's "taper" (to hit, to strike) was made on 15 April, and "frapper,
+   taper" on 4 September only added a date to it, so their one "frapper"
+   was lost. Of the 31 pairs in the live decks where the list card came
+   after its item, 25 are forms of one word, which still only add a date; 2
+   are a list card the student already had; and 4 lost a word, which would
+   now become a card: the owner's "frapper" and "une connasse", and
+   demarajackson's "célèbre" and "un(e) colocataire". The same when Claude
+   calls a new list card the same as one of its items: "après" gains the
+   date and "ensuite" becomes a card.
 2. Near look-alikes (accents, "ne", articles or brackets set aside; half of a
    list card; the same words or list parts in another order, such as foisydm's
    "amener / apporter" and "apporter, amener (ici)"; "il/elle" for "il", as in
@@ -862,7 +885,7 @@ holds other students' cards).
 
 | Script | What it does |
 |---|---|
-| `status-check.mjs` | Runs the eleven status checks on a student's live record, and only reads. It checks the admin unless `--email` names someone else; `--from YYYY-MM-DD` judges from an earlier day, `--tz` sets the time zone for answers saved without one, `--all` shows every detail. `--everyone` is the morning check: every student who has answered, what the server's daily run last asked Claude about look-alike cards, and the three tests of Claude's work with any slip named. Each problem is told apart as new or raised before, from a list kept on the Mac outside the repo (`~/.claude/scheduled-tasks/morning-check/raised.json`), which `--everyone --record` saves; a daily run that couldn't ask Claude is a problem too. The last line is "All clear.", "Nothing new: …" or "Something new needs looking at.", and only the last exits 1. It never asks Claude anything. Claude runs it on the owner's Mac under the rule in `.claude/settings.local.json`; without that rule auto mode blocks it from reading production. The owner's `.env.local` leaves both admin addresses blank, so pass `--email` |
+| `status-check.mjs` | Runs the eleven status checks on a student's live record, and only reads. It checks the admin unless `--email` names someone else; `--from YYYY-MM-DD` judges from an earlier day, `--tz` sets the time zone for answers saved without one, `--all` shows every detail. `--everyone` is the morning check: every student who has answered, what the server's daily run last asked Claude about look-alike cards, and the three tests of Claude's work with any slip named. Each problem is told apart as new or raised before, from a list kept on the Mac outside the repo (`~/.claude/scheduled-tasks/morning-check/raised.json`), which `--everyone --record` saves; a daily run that couldn't ask Claude is a problem too, kept under one line whatever its error says, with the error printed beneath it (the error's count of pairs and an API error's request id change every morning, and a problem whose line changes is raised as new each day). The last line is "All clear.", "Nothing new: …" or "Something new needs looking at.", and only the last exits 1. It never asks Claude anything. Claude runs it on the owner's Mac under the rule in `.claude/settings.local.json`; without that rule auto mode blocks it from reading production. The owner's `.env.local` leaves both admin addresses blank, so pass `--email` |
 | `record-cleanup-reasons.mjs` | One-off. Writes onto the 85 cards the 2026-10-06 clean-up put away why it did: `archived_reason` 'duplicate' with `merged_into` the card each repeats (for a list card whose words each kept a card, the one the card-writers' rule finds closest), or 'removed' for "Naza" and the registers card, and `archived_at` the time it ran. From the clean-up's plan (`--plan`, its `cleanup-plan.json`) and backup (`--backup`). Needs migration_016; touches only those three columns, only on rows still out of study with no reason, backs them up first, and a second run writes nothing. Not run yet |
 | `resolve-feedback.mjs` | Lists open feedback; `<ids> --note "…" --apply` marks entries resolved. Never deletes |
 | `resolve-disputes.mjs` | Settles old disputed marks in `feedback_submissions`, leaving `uncertain` ones alone: a machine that can't decide shouldn't close a complaint about its own marking |
@@ -1362,7 +1385,14 @@ Eighteen need no browser:
   by side and its time limit, the lesson sync leaving removed cards out and
   keeping a dropped lesson card a class landed on, Remove card through its
   route, View feedback's Remove card, the message an upload shows, and before
-  migration_016 (Replace taking nothing out).
+  migration_016 (Replace taking nothing out). Since 2026-10-07 also a new list
+  card beside one of its items (the other words made cards, forms of the item
+  joined), a list card read after two of its items, an upload of pasted text
+  or a .docx against the link's fingerprints, and migration_016's own refusal
+  of a Replace of an answered card: its SQL read as written, and, where the
+  machine has Postgres (Homebrew's postgresql@16 on the owner's Mac; not
+  GitHub's runner), run on a throwaway database built from the schema and
+  every migration (`tests/local-postgres.mjs`).
 - `repeat-checks`: the harness for repeated cards: the morning check asking
   Claude about look-alikes (the cap, newest first, verdicts kept and judged
   with, a failed call's pairs left for tomorrow, nothing asked before
@@ -2544,6 +2574,46 @@ one card fewer, which changes every later card's luck, and on that seed
 points off. That band fails on most seeds before and after the change,
 because the simulated student's memory is deliberately not FSRS.
 
+### 2026-10-07 — The no-doubles fix reviewed: list cards after their items, uploads that aren't the doc
+
+A review of the day's fix, each finding checked on the read-only snapshot
+and fixed with a test that fails without it:
+
+- **A new list card no longer joins one of its items.** "frapper, taper"
+  only added a date to the owner's "taper", and "frapper" never became a
+  card. Now the list's other words become cards, and a word that is only
+  the feminine, plural or number of the item stays that card (see *The
+  linked cahier*). Claude's "same" for a new list card and one of its items
+  works the same way. The question's wording is unchanged.
+- **Inside one reading a list card takes in every item read before it.**
+  "à l'heure", "à temps", then "à temps / à l'heure" used to keep "à l'heure"
+  beside the list card, and the card-writer then joined the two, losing
+  "à temps". An item read again after its list card lands on the list card,
+  class date and all; a test now covers that chain.
+- **An upload of pasted text or a file doesn't compare the link's
+  fingerprints.** Only the sync and an upload of the doc's link see the
+  export the fingerprints came from. Before, a .docx or a paste as the first
+  run after migration_016 read 39 lines instead of 18.
+- **The morning check keys a failed daily run on fixed text.** The error goes
+  on the line beneath, so the same failure the next morning, with another
+  count or request id, isn't raised as new.
+- **The status suite no longer depends on the seed's luck.** Neither
+  simulated student is judged on "FSRS's predictions match your results",
+  which fails on 5 of seeds 1 to 10 for the tidy student and 8 for the messy
+  one; every other check passes on all ten. The messy student is back on
+  seed 7.
+- **migration_016's refusal of a Replace of an answered card is tested in
+  the SQL itself**, as written and, where the machine has Postgres, run.
+- **The lines already on a card are tested in all four ways**: a card's
+  French, a list card's part, a drill's answer, and two words with " // ".
+- **The second clean-up of repeated cards waits for the fix to be live**
+  for every group whose card to put away has a lesson card's exact French,
+  whatever its own source (nguyen's "une infirmière" came from her notes),
+  and for the restore of 16650 "après". The live lesson sync would land on
+  such a card and bring it back into study. migration_016 being run no
+  longer counts as the fix being live; the owner passes `--fix-live` after
+  the deploy.
+
 ---
 
 ## Open items
@@ -2602,7 +2672,11 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
   morning check now fails on them. The clean-up of 2026-10-06 put away only
   repeats from reading notes again; the owner decided on 2026-10-07 that
   these go the same way, which needs a write to the live cards and hasn't
-  been done. By the rule, on the read-only snapshot taken after the clean-up
+  been done. Its groups that put away a card with a lesson card's exact
+  French (the owner's "une infirmière" and "Allons-y !", nguyen's "une
+  infirmière"), and the one that puts 16650 "après" back out of study, wait
+  until the no-doubles fix is deployed: the live lesson sync would bring
+  those cards back. By the rule, on the read-only snapshot taken after the clean-up
   and counting a card that is one item of another card's list (2026-10-07):
   the owner 6 (all list items, such as "à l'heure" beside "à temps /
   à l'heure"), demarajackson 25 (9 of them list items) and laura.caufour 3,
@@ -2657,7 +2731,9 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   `repeats` run in `eval_runs`.
 - **No card made twice** (2026-10-06). After migration_016, upload the same
   notes twice: the second should say no new cards and every class already
-  read. Claude's same-or-different question has only met a stand-in; the
+  read. Then the first sync (Check now) should read only the lines of
+  2 October and 28/29 September that are on no card: an upload of pasted
+  text or a file leaves those classes to it. Claude's same-or-different question has only met a stand-in; the
   plan's third test (the owner's real doc against a private copy of the deck,
   and the 63 groups and 30 "different" pairs through the real question, a few
   cents) was offered, not run. `migration_016` was run on a local Postgres 16

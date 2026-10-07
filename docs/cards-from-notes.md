@@ -58,6 +58,9 @@ ended up with 73 cards that repeated another one. The owner's rule since then:
   too, so it isn't read again. The first time, the record fills itself from
   the classes already on the student's cards, except that lines added to a
   class since the linked doc last read it, and on no card, are still read.
+  Only the doc's own text can show that a class changed since: pasted text
+  or a file never matches it exactly, so an upload leaves such a class to the
+  next sync.
 - **One reading at a time.** The daily check and an upload can't read the
   same student's notes at the same moment; the second is told to wait.
 - **Saved together.** The new cards and the record of the lines read are
@@ -75,7 +78,13 @@ ended up with 73 cards that repeated another one. The owner's rule since then:
 - **A card that is one item of another card's list is that card.** "à
   l'heure" beside "à temps / à l'heure" is one card twice (the owner's
   decision). When the English agrees word for word it is settled at once;
-  otherwise Claude is asked, and told so. Kept apart: a word inside a
+  otherwise Claude is asked, and told so. It works one way only: a new item
+  joins the list card the student has, but a new list card never joins one of
+  its items. If "taper" is in the deck and a class teaches "frapper, taper",
+  "taper" gains the date and "frapper" becomes a card. Before, the list only
+  added a date to "taper", and "frapper" was lost. A word on the list that is
+  only the feminine or plural of the one the student has is that card: "bon,
+  bonne" beside "bon" only adds a date. Kept apart: a word inside a
   sentence ("en fait" and "En fait, ça veut dire que"), different words
   grouped on one card ("amener" and "se lever, acheter, amener"), and another
   meaning of the same spelling ("fin" (the end) and "fin, fine" (thin)).

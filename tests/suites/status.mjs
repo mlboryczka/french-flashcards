@@ -47,6 +47,15 @@ const failsOnly = (report, id, label) => {
 };
 
 // ── A correct record passes ────────────────────────────────────────────
+// Every check but one: the simulated student's memory is deliberately not
+// FSRS (tests/simulate/student.mjs), so whether "FSRS's predictions match
+// your results" passes on its record is the luck of the seed. On seeds 1 to
+// 10 it fails on five for this student and on eight for the messy one below,
+// and every other check passes on all ten (2026-10-07). It has tests of its
+// own (FSRS's predictions against results, below), so here it is left out,
+// and a change to how the simulated deck is built can't turn the suite red
+// by reshuffling the luck.
+const LUCK = new Set(["predictions"]);
 console.log("\n  a simulated student studying by the app's rules");
 {
   const report = check(base);
@@ -55,10 +64,11 @@ console.log("\n  a simulated student studying by the app's rules");
   ck("the run met lessons and direction settings other than mixed",
      base.deals.some((d) => d.scope !== "all|all") && base.deals.some((d) => d.direction !== "mix"));
   for (const r of report.results) {
+    if (LUCK.has(r.id)) continue;
     ck(`${r.title}: passes`, r.status === "pass", `${r.status}: ${r.summary}${r.details.length ? " — " + r.details[0] : ""}`);
   }
   ck("every answer recalculated to the day, not just within FSRS's spread", /All \d+ answers match\.$/.test(result(report, "fsrs").summary), result(report, "fsrs").summary);
-  ck("the report says it is fine", report.ok && report.failing === 0);
+  ck("the report says it is fine", report.results.every((r) => LUCK.has(r.id) || r.status !== "fail"));
 }
 
 // ── A messy student passes too ─────────────────────────────────────────
@@ -69,13 +79,11 @@ console.log("\n  a simulated student studying by the app's rules");
 // before 2026-10-04 this record fails three of them, as the owner's did.
 console.log("\n  a messy student: old copies, class notes mid-set, reloads, detours into a lesson");
 {
-  // The seed is the student's luck. This student's memory is deliberately
-  // not FSRS, so on most seeds "FSRS's predictions match your results" finds
-  // its lowest band (0%–70%) more than 10 points off, before 2026-10-07 and
-  // after. Seed 7 stopped passing that day: the deck now holds "une
-  // infirmière" inside "un infirmier, une infirmière", one card fewer, which
-  // changes every later card's luck. Seed 5 passes before and after.
-  const rec = simulate({ days: 40, seed: 5, cards: 260, student: "typical", messy: 0.35 });
+  // The seed is the student's luck. "FSRS's predictions match your results"
+  // is left out (see above): seed 7 stopped passing it on 2026-10-07, when
+  // the deck came to hold "une infirmière" inside "un infirmier, une
+  // infirmière", one card fewer, which changed every later card's luck.
+  const rec = simulate({ days: 40, seed: 7, cards: 260, student: "typical", messy: 0.35 });
   const h = rec.metrics.messy;
   ck("(the run met every habit, more than once)", h.oldCopy > 1 && h.notes > 1 && h.reload > 1 && h.detour > 1, JSON.stringify(h));
   ck("(and sets were replaced before anything in them was answered)",
@@ -83,7 +91,7 @@ console.log("\n  a messy student: old copies, class notes mid-set, reloads, deto
        !rec.answers.some((r) => r.answered_at >= d.dealt_at && r.answered_at < rec.deals[i + 1].dealt_at)));
   const report = check(rec);
   for (const r of report.results) {
-    if (r.id === "dealt") continue;
+    if (r.id === "dealt" || LUCK.has(r.id)) continue;
     ck(`${r.title}: passes`, r.status === "pass", `${r.status}: ${r.summary}${r.details.length ? " — " + r.details[0] : ""}`);
   }
   const known = detourRepeats(rec, report);
@@ -342,7 +350,7 @@ console.log("\n  following the app's rules");
   for (const id of ["due-first", "new-order"]) {
     ck(`before the database update, "${result(r, id).title}" waits rather than fails`, result(r, id).status === "wait" && /database update/.test(result(r, id).summary), result(r, id).summary);
   }
-  ck("  and nothing is failed for it", r.ok);
+  ck("  and nothing is failed for it", r.results.every((x) => LUCK.has(x.id) || x.status !== "fail"), r.results.filter((x) => x.status === "fail").map((x) => x.id).join(", "));
 }
 
 // ── How well it's working ──────────────────────────────────────────────

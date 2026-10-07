@@ -5,7 +5,8 @@
 //   1. slice   the notes cut into classes, one per date line
 //   2. plan    which lines are new; this also takes the student's turn to have
 //              their notes read, so the daily check can't read the same class
-//              at the same moment
+//              at the same moment. `mode` goes along: only the doc's own text
+//              ("url") can be compared with the linked notebook's fingerprints
 //   3. read    only classes with new lines, in chunks, through
 //              /api/cahier-parse; a class whose lines were partly read before
 //              goes with its new lines, and Claude makes cards from those only
@@ -27,7 +28,7 @@ export async function runUpload({ post, mode = "text", content, replace = false,
   if (blocks.length === 0) throw new Error("No lessons found in the input.");
 
   onProgress("Checking which classes are new…");
-  const plan = await post("/api/parse-cahier", { action: "plan", blocks, replace });
+  const plan = await post("/api/parse-cahier", { action: "plan", mode, blocks, replace });
   const toRead = (plan.blocks || []).filter((b) => b.read);
 
   const cards = [];
@@ -63,7 +64,7 @@ export async function runUpload({ post, mode = "text", content, replace = false,
 
   if (toRead.length && failedDates.length === toRead.length) {
     // Nothing could be read: give the turn back, and say why.
-    await post("/api/parse-cahier", { action: "commit", runId: plan.runId, blocks, cards: [], failedDates, replace: false })
+    await post("/api/parse-cahier", { action: "commit", mode, runId: plan.runId, blocks, cards: [], failedDates, replace: false })
       .catch(() => {});
     throw new Error(`Couldn't read your lessons: ${firstError || "unknown error"}`);
   }
@@ -71,6 +72,7 @@ export async function runUpload({ post, mode = "text", content, replace = false,
   onProgress(cards.length ? `Saving the new cards to your deck…` : "Checking your deck…");
   const commit = await post("/api/parse-cahier", {
     action: "commit",
+    mode,
     runId: plan.runId,
     replace,
     blocks,

@@ -86,6 +86,9 @@ if (args.includes("--everyone")) {
   let raised = {};
   try { raised = JSON.parse(fs.readFileSync(RAISED_FILE, "utf8")); } catch {}
   const problems = []; // one line each, also the key in RAISED_FILE
+  // What a problem's line leaves out, printed beneath it: text that changes
+  // from day to day, so it can't be part of the key.
+  const detail = new Map();
   let unreadable = false;
 
   const reports = await checkEveryone(db);
@@ -109,7 +112,14 @@ if (args.includes("--everyone")) {
   for (const k of kept.reports || []) {
     const j = k.report?.judging;
     if (!j || (!j.asked && !j.left && !j.error)) continue;
-    if (j.error) problems.push(`${k.user_email}: the daily run couldn't ask Claude about look-alike cards: ${j.error}`);
+    // The error itself goes beneath the line, not in it: it carries a count
+    // of pairs, or an API error's request id, that is different every
+    // morning, and a key that changes daily is raised as new every day.
+    if (j.error) {
+      const line = `${k.user_email}: the daily run couldn't ask Claude about look-alike cards`;
+      problems.push(line);
+      detail.set(line, j.error);
+    }
     judged.push(`  ${k.user_email}, ${String(k.checked_at).slice(0, 10)}: ${judgingText(j).replace(/^Look-alike cards: /, "")}`);
   }
   if (judged.length) console.log(`\nLook-alike cards put to Claude by the daily run:\n${judged.join("\n")}`);
@@ -130,13 +140,14 @@ if (args.includes("--everyone")) {
 
   const fresh = problems.filter((x) => !raised[x]);
   const old = problems.filter((x) => raised[x]);
+  const beneath = (x) => (detail.has(x) ? `\n      ${detail.get(x)}` : "");
   if (fresh.length) {
     console.log(`\nNew since the last morning check (${fresh.length}):`);
-    for (const x of fresh) console.log(`  - ${x}`);
+    for (const x of fresh) console.log(`  - ${x}${beneath(x)}`);
   }
   if (old.length) {
     console.log(`\nRaised with the owner before and still failing (${old.length}):`);
-    for (const x of old) console.log(`  - ${x} (raised ${raised[x]})`);
+    for (const x of old) console.log(`  - ${x} (raised ${raised[x]})${beneath(x)}`);
   }
   if (args.includes("--record")) {
     const today = new Date().toISOString().slice(0, 10);

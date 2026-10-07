@@ -17,7 +17,10 @@
 //
 // The answer decides only whether a card is added: a "same" adds the class
 // date to the card the student has, and nothing else about that card
-// changes.
+// changes. When B is a new list card and A one of its items, a "same" makes
+// A the card for that item only: the list's other words are decided on their
+// own and become cards, so "ensuite" isn't lost when "ensuite / après" is
+// called the same as "après" (src/lib/cardMatch.js, 2026-10-07).
 //
 // If the call fails, or a pair comes back without a clear answer, the card
 // waits and its lines stay unread (src/lib/cardMatch.js). Nothing is added on

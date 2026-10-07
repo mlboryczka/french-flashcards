@@ -211,10 +211,10 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     // check finds every class in the record and stops there.
     const lines = reading.mode === "lines";
     const unrecorded = lines ? blocks.filter((b) => !Array.isArray(reading.classes?.[b.date])) : [];
-    const changed = seedingFrom([], seen, reading.mode).changed;
+    const changed = seedingFrom([], seen, reading.mode, { fromDoc: true }).changed;
     const unknown = unrecorded.some((b) => !(b.date in seen) || changed(b));
     let deck = unknown ? await readDeck(admin, userId) : null;
-    const seed = seedingFrom(deck?.rows || [], seen, reading.mode);
+    const seed = seedingFrom(deck?.rows || [], seen, reading.mode, { fromDoc: true });
     const readDates = lines ? seed.readDates : new Set(Object.keys(seen));
     const plan = planReading({ blocks, classes: reading.classes, readDates, changed: seed.changed, knownLine: deck ? seed.knownLine : null });
     // Newest first: the class you were taught yesterday is worth more than one

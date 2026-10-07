@@ -24,8 +24,24 @@
 //   compared with the cards made from the others. A card only gets a label
 //   in brackets when Claude says it means something different from a card
 //   with the same French.
+//
+//   A list card joins nothing it only holds one item of (2026-10-07). A new
+//   item joins the list card the student has ("à l'heure" joins "à temps /
+//   à l'heure"), but a new list card that holds a card the student has is
+//   decided item by item: the item they have gains the class date, and each
+//   other item becomes a card, unless it too is a card they have, or only
+//   the feminine or plural of the item they have ("bon, bonne" beside "bon"
+//   is the card "bon"; src/lib/sameCard.js's formsOfOneWord). The owner's
+//   "taper" (to hit) was in the deck from April, and "frapper, taper" from
+//   September only added a date to it, so "frapper" was lost; so were the
+//   owner's "une connasse" and another student's "célèbre" and "un(e)
+//   colocataire", 4 of the 31 such pairs in the live decks (25 were forms of
+//   one word, which still only add a date). The same goes when Claude calls
+//   a list card the same as one of its items ("après" and "ensuite /
+//   après"): "ensuite" becomes a card. Each item's own questions are asked
+//   in the same call, in case they are needed.
 
-import { cardIndex, isSureMatch } from "./sameCard.js";
+import { cardIndex, isSureMatch, isNearListPart, listParts, looseKey, formsOfOneWord } from "./sameCard.js";
 
 const isArchivedRow = (row) => typeof row?.source === "string" && row.source.startsWith("archived:");
 const datesOf = (c) => (Array.isArray(c?.dates) ? c.dates.filter((d) => typeof d === "string") : []);
@@ -49,6 +65,8 @@ export function senseLabel(back) {
 //   { card, action: "insert", insert } a new card, with the dates of every
 //                                      other new card that joined it
 //   { card, action: "wait" }           undecided; its classes stay unread
+// A list card decided item by item gives one decision for each item, and
+// each item's `card` has the list card as `from`.
 export async function matchNewCards({ incoming, deck, ask }) {
   const index = cardIndex(deck || []);
   const decisions = [];
@@ -56,29 +74,74 @@ export async function matchNewCards({ incoming, deck, ask }) {
   // A card of this run that is still undecided stands in the index for itself,
   // so later cards are compared with it too.
   const standIn = new Map();
+  // Every card decided, the items of a list card included, and its decision.
+  const decisionOf = new Map();
 
-  for (const card of incoming || []) {
-    if (!card?.front || !card?.back) continue;
-    const d = { card, action: null };
-    decisions.push(d);
-    const row = index.sure(card);
+  // The items of a list card, each a card of its own with the list's English,
+  // category, class dates and source.
+  const itemsOf = (card) => listParts(card).map((front) => ({ ...card, front, from: card.from || card }));
+
+  // One item of a list card whose look-alike may be that same item, decided
+  // as far as it can be before Claude answers. Its own look-alikes are asked
+  // about in the same call; the look-alike that is this very item is judged
+  // with the list card (`tied`).
+  const itemDecision = (item, list) => {
+    const d = { card: item, action: null };
+    decisionOf.set(item, d);
+    const row = index.sure(item);
+    if (row) { d.action = "join"; d.target = row; return d; }
+    const k = looseKey(item.front);
+    const near = index.near(item);
+    d.tied = near.filter((r) => isNearListPart(r, list) && looseKey(r.front) === k);
+    d.near = near.filter((r) => !d.tied.includes(r));
+    d.action = d.near.length || d.tied.length ? "ask" : "insert";
+    if (d.near.length) asking.push(d);
+    return d;
+  };
+
+  const take = (card) => {
+    if (!card?.front || !card?.back) return;
+    const row = index.sure(card, { items: false });
     if (row) {
-      d.action = "join";
-      d.target = row;
-      continue;
+      const d = { card, action: "join", target: row };
+      decisions.push(d);
+      decisionOf.set(card, d);
+      return;
+    }
+    // The student surely has one of this list card's items: each item is
+    // decided as a card of its own, and one that is only another form of an
+    // item they have is that card.
+    if (index.sureAll(card).length) {
+      const items = itemsOf(card);
+      const have = items.map((item) => [item, index.sure(item)]).filter(([, row]) => row);
+      for (const item of items) {
+        const row = have.find(([other, r]) => other === item || formsOfOneWord(item.front, other.front) || formsOfOneWord(item.front, r.front))?.[1];
+        if (!row) { take(item); continue; }
+        const d = { card: item, action: "join", target: row };
+        decisions.push(d);
+        decisionOf.set(item, d);
+      }
+      return;
     }
     const near = index.near(card);
+    const d = { card, action: null };
+    decisions.push(d);
+    decisionOf.set(card, d);
+    // A look-alike that may be one of this list card's items: if Claude calls
+    // them the same card, the list is decided item by item after all.
+    if (near.some((r) => isNearListPart(r, card))) d.items = itemsOf(card).map((item) => itemDecision(item, card));
     const self = { front: card.front, back: card.back, dates: datesOf(card), source: card.source || "cahier-upload" };
     standIn.set(self, d);
     index.add(self);
     if (near.length === 0) {
       d.action = "insert";
-      continue;
+      return;
     }
     d.action = "ask";
     d.near = near;
     asking.push(d);
-  }
+  };
+  for (const card of incoming || []) take(card);
 
   // One question for the whole run.
   const pairs = [];
@@ -98,6 +161,12 @@ export async function matchNewCards({ incoming, deck, ask }) {
     }
   }
   const verdictsFor = (d) => pairs.filter((p) => p.b === d.card);
+  // The card already in the deck before one made this run, and one in study
+  // before one out of it.
+  const best = (same) => {
+    const rank = (c) => (standIn.has(c) ? 2 : 0) + (isArchivedRow(c) ? 1 : 0);
+    return same.slice().sort((x, y) => rank(x) - rank(y))[0];
+  };
 
   // Settle each card, in reading order. A card joined to one of this run's
   // undecided cards follows it.
@@ -108,17 +177,20 @@ export async function matchNewCards({ incoming, deck, ask }) {
     if (settled.has(d)) return settled.get(d);
     let out;
     if (d.action === "join") {
-      out = followTo(d.target);
+      out = followTo(d.target, d.card);
     } else if (d.action === "insert") {
       out = place(d);
     } else {
       const vs = verdictsFor(d);
       const same = vs.filter((p) => p.verdict === "same").map((p) => p.a);
-      if (same.length) {
-        // The card already in the deck before one made this run, and one in
-        // study before one out of it.
-        const rank = (c) => (standIn.has(c) ? 2 : 0) + (isArchivedRow(c) ? 1 : 0);
-        out = followTo(same.slice().sort((x, y) => rank(x) - rank(y))[0]);
+      const whole = d.items ? same.filter((r) => !isNearListPart(r, d.card)) : same;
+      if (whole.length) {
+        out = followTo(best(whole), d.card);
+      } else if (same.length) {
+        // Claude calls the list card the same as one or more of its items:
+        // those items are the cards the student has, and the others are
+        // decided on their own.
+        out = { action: "split", parts: d.items.map((item) => ({ d: item, out: settleItem(item, d, same) })) };
       } else if (vs.some((p) => p.verdict === null)) {
         out = { action: "wait" };
       } else {
@@ -128,12 +200,39 @@ export async function matchNewCards({ incoming, deck, ask }) {
     settled.set(d, out);
     return out;
   };
+  // An item of a list card decided item by item after Claude's answer. One
+  // that is the item Claude called the same card, or only another form of it,
+  // is that card.
+  const settleItem = (item, list, same) => {
+    const k = looseKey(item.card.front);
+    const own = same.find((r) => looseKey(r.front) === k) || same.find((r) => formsOfOneWord(item.card.front, r.front));
+    let out;
+    if (own) out = followTo(own, item.card);
+    else if (item.action === "join") out = followTo(item.target, item.card);
+    else if (item.action === "insert") out = place(item);
+    else {
+      const vs = [...verdictsFor(item), ...verdictsFor(list).filter((p) => item.tied.includes(p.a))];
+      const sameAs = vs.filter((p) => p.verdict === "same").map((p) => p.a);
+      if (sameAs.length) out = followTo(best(sameAs), item.card);
+      else if (vs.some((p) => p.verdict === null)) out = { action: "wait" };
+      else out = place(item, true);
+    }
+    settled.set(item, out);
+    return out;
+  };
   // What joining `target` comes to: a deck row, or whatever became of one of
-  // this run's cards.
-  const followTo = (target) => {
+  // this run's cards. A list card decided item by item is followed to the
+  // item with the same French as `by`, or else to the one made a card.
+  const followTo = (target, by = null) => {
     const d = standIn.get(target);
     if (!d) return { action: "join", row: target };
-    const out = settle(d);
+    let out = settle(d);
+    if (out.action === "split") {
+      const k = by ? looseKey(by.front) : null;
+      const part = out.parts.find((p) => k && looseKey(p.d.card.front) === k) ||
+        out.parts.find((p) => p.out.action === "insert") || out.parts[0];
+      out = part.out;
+    }
     return out.action === "insert" ? { action: "join-new", insert: out.insert } : out;
   };
   // A new card. Its French has to be free: the deck holds one card per front.
@@ -166,27 +265,30 @@ export async function matchNewCards({ incoming, deck, ask }) {
     };
   };
 
-  const out = decisions.map((d) => {
-    const s = settle(d);
-    if (s.action === "join") return { card: d.card, action: "join", row: s.row };
+  const final = (card, s) => {
+    if (s.action === "join") return { card, action: "join", row: s.row };
     if (s.action === "join-new") {
-      s.insert.dates = [...new Set([...s.insert.dates, ...datesOf(d.card)])].sort();
-      return { card: d.card, action: "join-new", insert: s.insert };
+      s.insert.dates = [...new Set([...s.insert.dates, ...datesOf(card)])].sort();
+      return { card, action: "join-new", insert: s.insert };
     }
-    if (s.action === "insert") return { card: d.card, action: "insert", insert: s.insert };
-    return { card: d.card, action: "wait" };
+    if (s.action === "insert") return { card, action: "insert", insert: s.insert };
+    return { card, action: "wait" };
+  };
+  const out = decisions.flatMap((d) => {
+    const s = settle(d);
+    return s.action === "split" ? s.parts.map((p) => final(p.d.card, p.out)) : [final(d.card, s)];
   });
 
   // Every question asked, with what became of both cards, for the record of
   // Claude's verdicts.
   const asked = pairs.map((p) => {
-    const aDecision = standIn.get(p.a);
-    const aOut = aDecision ? settled.get(aDecision) : null;
-    const bOut = settled.get(decisions.find((d) => d.card === p.b));
+    const aFollowed = standIn.has(p.a) ? followTo(p.a, p.b) : null;
+    const bDecision = decisionOf.get(p.b);
+    const bOut = bDecision ? settled.get(bDecision) : null;
     return {
       a: p.a, b: p.b, verdict: p.verdict,
-      aRow: aDecision ? null : p.a,
-      aInsert: aOut?.action === "insert" ? aOut.insert : null,
+      aRow: aFollowed ? null : p.a,
+      aInsert: aFollowed?.action === "join-new" ? aFollowed.insert : null,
       bInsert: bOut?.action === "insert" ? bOut.insert : null,
     };
   });

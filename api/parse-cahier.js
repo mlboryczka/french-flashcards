@@ -261,6 +261,12 @@ async function linkClasses(adminClient, userId) {
   }
 }
 
+// Whether the upload's text is the Google Doc's own export, which the linked
+// notebook's fingerprints were taken from: an upload of the doc's link, whose
+// text the slice step fetched. Pasted text and files never are
+// (api/_lib/notesReading.js's seedingFrom).
+const fromDoc = (req) => req.body?.mode === "url";
+
 export async function handlePlan(req, res, adminClient, userId) {
   const blocks = cleanBlocks(req.body?.blocks);
   if (blocks.length === 0) {
@@ -270,7 +276,7 @@ export async function handlePlan(req, res, adminClient, userId) {
   if (reading.busy) return res.status(409).json({ ok: false, busy: true, error: BUSY_MESSAGE });
   try {
     const deck = await readDeck(adminClient, userId);
-    const plan = planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode) });
+    const plan = planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode, { fromDoc: fromDoc(req) }) });
     const toRead = plan.filter((p) => p.needsReading).length;
     console.log(`[parse-cahier] plan: ${plan.length} classes, ${toRead} with lines not read before (${reading.mode})`);
     return res.status(200).json({
@@ -328,7 +334,7 @@ export async function handleCommit(req, res, adminClient, user) {
     const deck = await readDeck(adminClient, userId);
     const plan = legacy
       ? null
-      : planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode) });
+      : planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode, { fromDoc: fromDoc(req) }) });
     const failed = new Set((Array.isArray(failedDates) ? failedDates : []).filter((d) => typeof d === "string"));
     const incoming = cardsFromExtracted(rawCards);
     const read = legacy
@@ -869,34 +875,58 @@ function isConjugationTable(text) {
 // A card that is one item of another card's list is that card (the owner,
 // 2026-10-07): "à l'heure" and "à temps / à l'heure" in one reading are one
 // card. There the list card is kept whichever came first, since it teaches
-// the item too.
+// the item too, and it takes in every item of it read before it: "à l'heure",
+// then "à temps", then "à temps / à l'heure" is one card, the list card, with
+// all three classes. It used to take the place of only one of them, and the
+// other was left beside it; the card-writer then joined the list card to
+// that item, and "à temps" never became a card.
 export function mergeRepeats(cards) {
   const kept = [];
   const index = cardIndex([]);
   // A kept card the list card took the place of, and that list card.
   const became = new Map();
   const follow = (c) => { while (became.has(c)) c = became.get(c); return c; };
+  const live = new Set();
+  const dated = (...lists) => [...new Set(lists.flat())].sort();
   for (const card of cards || []) {
     if (!card || !card.front || !card.back) continue;
     const dates = Array.isArray(card.dates) ? card.dates : [];
-    const found = index.sure(card);
-    const same = found && follow(found);
-    if (same && same !== card && isListPart(same, card)) {
-      const list = { ...card, dates: [...new Set([...same.dates, ...dates])].sort() };
-      kept[kept.indexOf(same)] = list;
-      became.set(same, list);
+    // The kept cards this one surely is (the same card, or a list card it is
+    // an item of), each followed to the list card that took its place, and
+    // the kept cards that are items of this one, if it is a list card.
+    const whole = [];
+    const items = [];
+    for (const c of index.sureAll(card)) {
+      if (isListPart(c, card)) { if (live.has(c)) items.push(c); continue; }
+      const to = follow(c);
+      if (live.has(to) && !whole.includes(to)) whole.push(to);
+    }
+    if (whole.length) {
+      const same = whole.find((c) => c.front === card.front) || whole[0];
+      same.dates = dated(same.dates, dates);
+      for (const item of items.filter((c) => c !== same && isListPart(c, same))) {
+        same.dates = dated(same.dates, item.dates);
+        kept[kept.indexOf(item)] = null;
+        live.delete(item);
+        became.set(item, same);
+      }
+      continue;
+    }
+    if (items.length) {
+      const list = { ...card, dates: dated(dates, ...items.map((c) => c.dates)) };
+      kept[kept.indexOf(items[0])] = list;
+      for (const item of items.slice(1)) kept[kept.indexOf(item)] = null;
+      for (const item of items) { live.delete(item); became.set(item, list); }
+      live.add(list);
       index.add(list);
       continue;
     }
-    if (same) {
-      same.dates = [...new Set([...same.dates, ...dates])].sort();
-      continue;
-    }
-    const copy = { ...card, dates: [...new Set(dates)].sort() };
+    const copy = { ...card, dates: dated(dates) };
     kept.push(copy);
+    live.add(copy);
     index.add(copy);
   }
-  return kept;
+  return kept.filter(Boolean);
 }
 
 // The old name, for the analysis scripts in tests/simulate/analysis that

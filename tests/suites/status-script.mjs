@@ -215,6 +215,23 @@ console.log("\n  the morning check: --everyone");
   ck("between two runs of the same question a wrong case isn't a slip", /Claude judging whether[^\n]*\n {2}Nothing it got right before is wrong now\./.test(down.out), down.out.match(/Claude judging[^\n]*\n[^\n]*/)?.[0]);
   ck("but a daily run that couldn't ask Claude is said, and needs looking at",
      /Claude couldn't be asked about 200: 529 overloaded\. 675 pairs left for tomorrow\./.test(down.out) && down.code === 1, down.out.match(/student@example\.com, 2026[^\n]*/)?.[0]);
+  // The problem's line is its key in the list of problems raised, so it
+  // can't hold the error, whose count of pairs and request id change every
+  // morning: a run that failed each day was raised as new each day. The error
+  // is printed beneath the line instead.
+  const downLine = `${STUDENT}: the daily run couldn't ask Claude about look-alike cards`;
+  ck("  under a line of its own, with the error itself beneath it",
+     (down.out.split("New since the last morning check")[1] || "").includes(`- ${downLine}\n      Claude couldn't be asked about 200: 529 overloaded`),
+     (down.out.split("New since the last morning check")[1] || "").split("\n").slice(0, 4).join(" / "));
+  await run(["--everyone", "--record"]);
+  state.reports[0].report.judging = { asked: 212, answered: 0, same: 0, left: 690,
+    error: "Claude couldn't be asked about 212: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"},\"request_id\":\"req_011CTd8\"}" };
+  const nextDay = await run(["--everyone"]);
+  ck("the same failure the next morning, with another count and request id, was raised before: not new, and it exits 0",
+     (nextDay.out.split("Raised with the owner before and still failing")[1] || "").includes(`- ${downLine} (raised `) &&
+       nextDay.out.includes("      Claude couldn't be asked about 212: 401") &&
+       !/New since the last morning check/.test(nextDay.out) && nextDay.code === 0,
+     nextDay.out.split("\n").slice(-6).join(" / "));
   state.runs = [];
   state.reports = [];
 }

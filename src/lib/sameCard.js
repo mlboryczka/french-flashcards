@@ -54,6 +54,15 @@
 //    the same spelling ("fin" (the end) and "fin, fine" (thin; fine)). An item
 //    whose English is worded differently ("après" (after) and "ensuite /
 //    après" (then / afterwards)) is left to the near search and Claude.
+//    A new card is joined to a card the student has in one direction only
+//    (src/lib/cardMatch.js): a new item joins the list card they have, but a
+//    new list card never joins one of its items. The owner had "taper" (to
+//    hit) from April, and "frapper, taper" from September joined it, so
+//    "frapper" never became a card. Now the list's items are decided one by
+//    one: "taper" gains the class date, "frapper" becomes a card
+//    (sure(card, { items: false }), listParts). An item that is only the
+//    feminine or plural of the item they have is that card: "bon, bonne"
+//    beside "bon" adds a date to "bon" (formsOfOneWord).
 //
 // 2. The near search (nearCandidates). Fixed rules loose enough to catch the
 //    rest also join words that differ ("un état" and "l'État"), so near
@@ -234,6 +243,65 @@ export function isListPart(card, list) {
   });
 }
 
+// The items of a list card, as written: "frapper, taper" -> "frapper",
+// "taper"; "ils/elles veulent, nous voulons" -> "ils/elles veulent", "nous
+// voulons". The same cut as partsOf, which reads "il/elle" as "il" so it
+// isn't cut in two; here it is put back. None for a drill or a single card.
+export function listParts(card) {
+  const front = String(card?.front ?? "");
+  if (isDrillFront(front) || partsOf(front).length < 2) return [];
+  const held = [];
+  const t = front.replace(/\bils\s*\/\s*elles\b|\bil\s*\/\s*elle(?:\s*\/\s*on)?\b/gi, (m) => `\u0000${held.push(m) - 1}\u0000`);
+  const back = (s) => s.replace(/\u0000(\d+)\u0000/g, (m, i) => held[Number(i)]);
+  const bySlash = t.split(/\s+\/\s+/).map((p) => p.trim()).filter(Boolean);
+  const parts = bySlash.length >= 2 ? bySlash : t.split(/\s*\/\s*|\s*,\s*|\s+=\s+/).map((p) => p.trim()).filter(Boolean);
+  return parts.map(back);
+}
+
+// Two items of one list card that are forms of one word: the same once
+// accents, articles and brackets are set aside, or one is the other with a
+// regular feminine or plural ending: "bon" and "bonne", "japonais" and
+// "japonaise", "un joueur" and "une joueuse", "étranger" and "étrangère",
+// "conservateur" and "conservatrice", "vieux" and "vieille", "un cheveu" and
+// "des cheveux", and a number in digits beside its word ("15 = quinze"). A
+// list card of forms of one word ("bon, bonne") is the card for that word,
+// which the student already has; a list of different words ("frapper,
+// taper", "à temps / à l'heure", "un(e) colocataire, un(e) coloc") is not. "soir" and "soirée", "jour" and "journée" are different
+// words. An irregular form ("un œil", "des yeux") is taken as a different
+// word, which only costs a card. Two different words that differ like a
+// form ("le port", "la porte") are rare on one list card, and only met here
+// when the student's card is surely that list's card, which means the list's
+// English is all in theirs.
+const ENDINGS = [
+  ["", "e"], ["", "s"], ["", "es"], ["", "x"], ["er", "ere"], ["eur", "euse"], ["eur", "rice"], ["eux", "eille"],
+  ["f", "ve"], ["el", "elle"], ["il", "ille"], ["en", "enne"], ["on", "onne"], ["et", "ette"], ["et", "ete"],
+  ["t", "tte"], ["n", "nne"], ["s", "sse"], ["c", "che"], ["c", "que"], ["c", "cque"], ["x", "se"], ["x", "sse"],
+  ["x", "ce"], ["g", "gue"], ["eau", "elle"], ["ou", "olle"], ["al", "aux"], ["ail", "aux"], ["is", "iche"],
+];
+export function formsOfOneWord(a, b) {
+  const x = looseKey(a);
+  const y = looseKey(b);
+  if (!x || !y) return false;
+  // The same, or a number in digits beside its word ("15 = quinze").
+  if (x === y || /^\d+$/.test(x) || /^\d+$/.test(y)) return true;
+  const ends = (m, f) => ENDINGS.some(([from, to]) => {
+    const stem = m.length - from.length;
+    return m.endsWith(from) && stem >= (from ? 1 : 2) && `${m.slice(0, stem)}${to}` === f;
+  });
+  return ends(x, y) || ends(y, x);
+}
+
+// `card` may be one item of `list`'s list: a single card whose French, with
+// accents, articles and brackets set aside, is one of the list's items.
+// "après" (after) and "ensuite / après" (then / afterwards), which the sure
+// rule leaves to Claude. Whether it is the same card is Claude's to say.
+export function isNearListPart(card, list) {
+  if (!card?.front || !list?.front || isDrillFront(card.front) || isDrillFront(list.front)) return false;
+  if (partsOf(card.front).length >= 2) return false;
+  const k = looseKey(card.front);
+  return !!k && partsOf(list.front).some((p) => looseKey(p) === k);
+}
+
 // ── The near search ─────────────────────────────────────────────────────────
 
 const stripAccents = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -366,8 +434,11 @@ export function cardIndex(cards = []) {
   // The card `card` surely is, or null. When several are, one in study comes
   // first, so a class date lands on the card being studied rather than on a
   // copy put away; then the one with the same French exactly.
-  const sure = (card) => {
-    const list = sureAll(card);
+  // `items: false` leaves out a card that is only one item of `card`'s list:
+  // a new list card is not the card the student has for one of its words
+  // (src/lib/cardMatch.js).
+  const sure = (card, { items = true } = {}) => {
+    const list = sureAll(card).filter((c) => items || !isListPart(c, card));
     if (!list.length) return null;
     const rank = (c) => (isArchivedRow(c) ? 2 : 0) + (c.front === card.front ? 0 : 1);
     return list.slice().sort((x, y) => rank(x) - rank(y))[0];
