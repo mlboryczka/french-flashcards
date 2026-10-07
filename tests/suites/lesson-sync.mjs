@@ -9,10 +9,10 @@
 // on serving the same fixed deck, so an insert that never happened and one
 // that silently failed look identical.
 //
-// This suite gives user_cards a real in-memory store instead — GET, upsert and
-// delete — so what the app writes is what it reads back, and the assertions
-// are about what the student ends up with rather than about which requests
-// went out.
+// This suite gives user_cards a real in-memory store instead — GET, upsert,
+// update and delete — so what the app writes is what it reads back, and the
+// assertions are about what the student ends up with rather than about which
+// requests went out.
 import { openApp, finish, checker, settled } from "../harness.mjs";
 import LESSON from "../../src/data/lessons/imperatif.js";
 import { LESSONS } from "../../src/data/lessons/index.js";
@@ -27,13 +27,18 @@ const ck = checker();
 
 // ── A user_cards table that remembers ────────────────────────────────────
 //
-// Enough of PostgREST for this: select, upsert on (user_id, front), and
-// delete by id. Seeded with whatever a given case starts with, so "a new
+// Enough of PostgREST for this: select, upsert on (user_id, front), update
+// by id, and delete by id. Seeded with whatever a given case starts with, so "a new
 // account" and "an account that already has a deck" are the same code.
-function makeStore(seed = []) {
+//
+// `before016`: the database before migration_016, which has no
+// archived_reason column and refuses a request that asks for it, as PostgREST
+// does. `refused` counts those requests.
+function makeStore(seed = [], { before016 = false } = {}) {
   const rows = seed.map((r, i) => ({ id: i + 1, ...r }));
   let nextId = rows.length + 1;
   const writes = [];
+  const reads = { refused: 0, served: 0 };
 
   const install = async (page) => {
     await page.route("**/rest/v1/user_cards**", async (route) => {
@@ -47,7 +52,16 @@ function makeStore(seed = []) {
           body: JSON.stringify(body),
         });
 
-      if (method === "GET") return json(rows);
+      if (method === "GET" && before016 && decodeURIComponent(req.url()).includes("archived_reason")) {
+        reads.refused++;
+        return route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          headers: { "access-control-allow-origin": "*" },
+          body: JSON.stringify({ code: "42703", message: "column user_cards.archived_reason does not exist" }),
+        });
+      }
+      if (method === "GET") { reads.served++; return json(rows); }
 
       if (method === "POST") {
         const sent = JSON.parse(req.postData() || "[]");
@@ -76,7 +90,8 @@ function makeStore(seed = []) {
       }
 
       if (method === "DELETE") {
-        const m = /id=in\.\(([^)]*)\)/.exec(req.url());
+        // Decoded: supabase-js sends "in.(…)" percent-encoded.
+        const m = /[?&]id=in\.\(([^)]*)\)/.exec(decodeURIComponent(req.url()));
         const ids = m ? m[1].split(",").map((s) => Number(s.replace(/"/g, ""))) : [];
         writes.push({ kind: "delete", count: ids.length });
         for (const id of ids) {
@@ -86,7 +101,15 @@ function makeStore(seed = []) {
         return json([]);
       }
 
-      if (method === "PATCH") return json([]);
+      if (method === "PATCH") {
+        const url = decodeURIComponent(req.url());
+        const m = /[?&]id=in\.\(([^)]*)\)/.exec(url) || /[?&]id=eq\.(\d+)/.exec(url);
+        const ids = m ? m[1].split(",").map((s) => Number(s.replace(/"/g, ""))) : [];
+        const body = JSON.parse(req.postData() || "{}");
+        writes.push({ kind: "update", ids, body });
+        for (const id of ids) Object.assign(rows.find((r) => r.id === id) || {}, body);
+        return json([]);
+      }
       return json([]);
     });
     // Lessons nobody has started are off on Cards (lib/lessonChoice.js), and
@@ -107,7 +130,7 @@ function makeStore(seed = []) {
     });
   };
 
-  return { rows, writes, install };
+  return { rows, writes, reads, install };
 }
 
 const lessonRows = (rows) =>
@@ -313,6 +336,87 @@ console.log("\n  an existing deck gains the lesson without losing anything");
        JSON.stringify(act.dates) === JSON.stringify(["2026-03-02"]) && act.reps === 3,
      act ? JSON.stringify({ source: act.source, back: act.back, category: act.category, dates: act.dates }) : "row gone");
 
+  await browser.close();
+}
+
+// ── A lesson card the student removed stays removed ───────────────────────
+//
+// Removing a card archives it (api/_lib/removeCard.js) instead of deleting
+// it, so the lesson's insert, an upsert on the front, would land on it and
+// put it back in study. Since migration_016 the row says why it is out, and
+// a card the student removed stays out (2026-10-06). One a lesson dropped,
+// with no reason recorded, still comes back when the lesson has it again
+// (owner, 2026-09-25). Before migration_016 the deck's request for the reason
+// is refused, and the app must load the deck without it.
+for (const before016 of [false, true]) {
+  console.log(`\n  a lesson card the student removed, ${before016 ? "before" : "after"} migration_016`);
+  const [removedCard, droppedCard] = LESSON.cards;
+  const seed = LESSONS.flatMap((lesson) => lesson.cards.map((card) => {
+    const [front, back, category] = card;
+    const source = `lesson:${lesson.id}#${keyOf(card)}`;
+    const out = card === removedCard ? { archived: "removed" } : card === droppedCard ? { archived: null } : null;
+    return {
+      front, back, category,
+      dates: [], flagged_for_review: false, batch_id: null,
+      source: out ? `archived:${source}` : source,
+      ...(before016 ? {} : { archived_reason: out ? out.archived : null }),
+      next_due_at: null, lapses: 1, stability: 9, difficulty: 5,
+      fsrs_state: 2, reps: 4, last_review: null, last_answer_correct: true,
+    };
+  }));
+  const store = makeStore(seed, { before016 });
+  const before = store.rows.length;
+  const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });
+  const deadline = Date.now() + 15000;
+  const dropped = () => store.rows.find((r) => r.front === droppedCard[0]);
+  const removed = () => store.rows.find((r) => r.front === removedCard[0]);
+  while (Date.now() < deadline && String(dropped()?.source).startsWith("archived:")) await page.waitForTimeout(200);
+  await page.waitForTimeout(800);
+
+  if (before016) {
+    ck("the deck loads though the database has no column for the reason",
+       store.reads.refused >= 1 && store.reads.served >= 1, `${store.reads.refused} refused, ${store.reads.served} served`);
+    ck("and the lesson sync works as it did: both cards come back",
+       !String(removed()?.source).startsWith("archived:") && !String(dropped()?.source).startsWith("archived:"));
+  } else {
+    ck("the deck is read with the reasons, in one go", store.reads.refused === 0 && store.reads.served >= 1);
+    ck("the card the student removed stays out of study",
+       String(removed()?.source).startsWith("archived:") && removed()?.reps === 4, JSON.stringify({ source: removed()?.source }));
+    ck("a card the lesson dropped and has again comes back, history and all",
+       !String(dropped()?.source).startsWith("archived:") && dropped()?.reps === 4, JSON.stringify({ source: dropped()?.source }));
+  }
+  ck("no card is added twice", store.rows.length === before, `${before} before, ${store.rows.length} after`);
+  await browser.close();
+}
+
+// ── A dropped lesson card that a class of the notes landed on ─────────────
+//
+// A word from the student's notes that is a lesson card only adds its class
+// date to it, and the line it came from is recorded as read. When the lesson
+// later drops the card, deleting it lost the word for good: no upload would
+// make it again. It stays, as one of the student's own cards; a dropped card
+// with no class date is still removed (2026-10-06).
+console.log("\n  a dropped lesson card a class of the student's notes landed on stays, as their own");
+{
+  const seed = LESSONS.flatMap((lesson) => lesson.cards.map((card) => ({
+    front: card[0], back: card[1], category: card[2], dates: [], flagged_for_review: false, batch_id: null,
+    source: `lesson:${lesson.id}#${keyOf(card)}`, archived_reason: null,
+    next_due_at: null, lapses: 0, stability: null, difficulty: null, fsrs_state: 0, reps: 0, last_review: null, last_answer_correct: null,
+  })));
+  const extra = (front, back, dates) => ({
+    front, back, category: "V", dates, flagged_for_review: false, batch_id: null,
+    source: `lesson:${LESSON.id}#${lessonCardKey(front)}`, archived_reason: null,
+    next_due_at: null, lapses: 0, stability: null, difficulty: null, fsrs_state: 0, reps: 0, last_review: null, last_answer_correct: null,
+  });
+  const store = makeStore([...seed, extra("une écharpe", "a scarf", ["2026-01-05"]), extra("un mot retiré", "a withdrawn word", [])]);
+  const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });
+  const deadline = Date.now() + 15000;
+  const word = () => store.rows.find((r) => r.front === "une écharpe");
+  const gone = () => !store.rows.some((r) => r.front === "un mot retiré");
+  while (Date.now() < deadline && !(gone() && word()?.source === "cahier-upload")) await page.waitForTimeout(200);
+  ck("the card the notes landed on is kept, now one of the student's own, with its class date",
+     word()?.source === "cahier-upload" && word()?.dates?.includes("2026-01-05"), JSON.stringify({ source: word()?.source, dates: word()?.dates }));
+  ck("a dropped card with no class date is still removed", gone());
   await browser.close();
 }
 

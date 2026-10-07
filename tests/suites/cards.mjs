@@ -99,4 +99,37 @@ const revealed = await page.evaluate(() => {
 });
 ck("nothing typed, so it prints the answer", /^Answer: .+/.test(revealed || ""), revealed || "");
 
+// Remove card takes the card out of study and remembers it; it never erases
+// the row, which used to take every answer on it too (2026-10-06). A student
+// is asked once, in plain words, and not for one of the admin's correction
+// codes, which their account can't log anyway.
+console.log("\n  Remove card keeps the card, out of study, and asks a student nothing else");
+{
+  const removals = [];
+  const deletes = [];
+  const corrections = [];
+  const dialogs = [];
+  await page.route("**/api/admin-update-card", (r) => {
+    removals.push(r.request().postDataJSON());
+    return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, removed: true }) });
+  });
+  await page.route("**/api/parse-corrections", (r) => {
+    corrections.push(r.request().postDataJSON());
+    return r.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "Admin only" }) });
+  });
+  page.on("request", (req) => { if (req.method() === "DELETE" && req.url().includes("/rest/v1/user_cards")) deletes.push(req.url()); });
+  page.on("dialog", (d) => dialogs.push(d.type()));
+  await page.click('button[title="Edit this card"]');
+  await page.waitForSelector('button:has-text("Remove card")', { timeout: 5000 });
+  await page.click('button:has-text("Remove card")');
+  await page.waitForTimeout(1200);
+  ck("it asks the server to remove the card: { action: \"remove\", row_id }",
+     removals.length === 1 && removals[0].action === "remove" && Number.isFinite(Number(removals[0].row_id)) && !("front" in removals[0]),
+     JSON.stringify(removals));
+  ck("and never deletes the row", deletes.length === 0, deletes.join(" | "));
+  ck("a student is asked once, with a plain yes or no, and never for a correction code", JSON.stringify(dialogs) === JSON.stringify(["confirm"]), JSON.stringify(dialogs));
+  ck("and no correction is sent for them", corrections.length === 0, JSON.stringify(corrections));
+  ck("the card's window closes once it is removed", !(await page.$('button:has-text("Remove card")')));
+}
+
 await finish(browser, ck);

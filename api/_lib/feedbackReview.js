@@ -37,6 +37,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { isArchived, archivedSource, ARCHIVE_PREFIX } from "../../src/lib/archive.js";
 import { lessonIdOf } from "../../src/lib/lessonSource.js";
 import { FEEDBACK_REVIEW_VERSION } from "../../src/lib/feedbackReviewVersion.js";
+import { missingColumn } from "../../src/lib/reviewLog.js";
 
 export const FEEDBACK_MODEL = "claude-opus-5-5";
 
@@ -364,6 +365,16 @@ export function supabaseFeedbackStore(db) {
     },
 
     async setSource(rowId, userId, source) {
+      // A card taken out of study says why, as a student's Remove does
+      // (api/_lib/removeCard.js), so nothing brings it back. Before
+      // migration_016 there is no column for the reason, and the card is
+      // archived without it. Coming back, the database clears the reason.
+      if (isArchived({ source })) {
+        const { error } = await db.from("user_cards")
+          .update({ source, archived_reason: "removed", archived_at: new Date().toISOString() })
+          .eq("id", rowId).eq("user_id", userId);
+        if (!missingColumn(error)) return { error };
+      }
       const { error } = await db.from("user_cards").update({ source }).eq("id", rowId).eq("user_id", userId);
       return { error };
     },

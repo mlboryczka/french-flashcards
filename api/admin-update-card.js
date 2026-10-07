@@ -6,11 +6,12 @@
 // returned success with 0 rows affected, the modal would close, and the
 // change would quietly never persist).
 //
-// Request body: { row_id, front, back }
-// Response:     { ok: true, row: <updated row> }
+// Request body: { row_id, front, back }, or { action: "remove", row_id }
+// Response:     { ok: true, row: <updated row> }, or { ok: true, removed: true }
 //               or { error: "..." } on 4xx/5xx
 
 import { createClient } from "@supabase/supabase-js";
+import { removeCard } from "./_lib/removeCard.js";
 
 // Force Vercel to parse JSON bodies for us. Without this, some runtime
 // combinations deliver req.body as undefined or a raw stream.
@@ -30,15 +31,22 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Missing env vars" });
   }
 
-  const authHeader = req.headers.authorization || "";
+  const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return updateCard(admin, req, res);
+}
+
+// The route's work, with the database client passed in, so a test runs
+// exactly this against a stand-in (tests/suites/repeats.mjs). Removing a card
+// is the owner's rule that answers are never lost, so it is tested here, at
+// the route, and not only in api/_lib/removeCard.js (2026-10-06).
+export async function updateCard(admin, req, res) {
+  const authHeader = req.headers?.authorization || "";
   const accessToken = authHeader.replace(/^Bearer\s+/i, "");
   if (!accessToken) {
     return res.status(401).json({ error: "Missing auth token" });
   }
-
-  const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
 
   // Verify the JWT and get the user id. We use this to scope the update
   // to rows owned by the caller — the service role bypasses RLS, so we
@@ -59,6 +67,14 @@ export default async function handler(req, res) {
     body = {};
   }
   console.log("[admin-update-card] body keys:", Object.keys(body));
+
+  // A student removing a card: taken out of study and remembered, never
+  // erased (api/_lib/removeCard.js). Here because the Hobby plan deploys at
+  // most 12 routes and there are 12.
+  if (body.action === "remove") {
+    const { status, json } = await removeCard({ admin, userId, rowId: body.row_id });
+    return res.status(status).json(json);
+  }
 
   const { row_id, front, back, original_front } = body;
   if (typeof front !== "string" || typeof back !== "string") {
@@ -134,7 +150,8 @@ export default async function handler(req, res) {
     // a 500 so the client can render a useful message.
     if (updErr.code === "23505") {
       return res.status(409).json({
-        error: `You already have a card with the French side "${front.trim()}". Edit that one instead, or delete this card first.`,
+        // A card the student removed keeps its French too, out of study.
+        error: `You already have a card with the French side "${front.trim()}", in your deck or among the cards you removed. Edit that one instead, or remove this card.`,
         code: "duplicate_front",
       });
     }

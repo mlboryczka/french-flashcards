@@ -3,11 +3,13 @@ import { supabase } from "./supabase";
 import { T } from "./theme";
 
 import { keyHeaders } from "./lib/anthropicKey";
+import { runUpload } from "./lib/uploadRun";
 // Modal for getting a cahier into the deck. Three modes:
 //   - paste: user pastes raw text into a textarea
 //   - file:  user uploads a .txt, .pdf or .docx file
 //
-// On submit, sends to /api/parse-cahier with the user's auth token.
+// On submit, runs the upload's steps (src/lib/uploadRun.js) with the user's
+// auth token: only lines of the notes not read before are read.
 //
 //   - link:  a Google Doc the app keeps reading. Linking it is not an upload:
 //            from then on each class the teacher adds becomes cards on its own
@@ -203,6 +205,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         linked: true,
         cardsInserted: result.cards,
         datesCovered: result.dates.length,
+        busy: result.busy,
       });
       return;
     }
@@ -227,104 +230,28 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         throw new Error("Not signed in");
       }
 
-      // ── PHASE 1: SLICE ────────────────────────────────────────────────
-      // Server parses the raw text into per-date blocks. Fast (<2s).
-      const sliceData = await callApi(session.access_token, {
-        action: "slice",
+      // Slice, find the new lines, read only those, and save
+      // (src/lib/uploadRun.js). An unchanged re-upload reads nothing and
+      // adds nothing.
+      const result = await runUpload({
+        post: (url, body) => postJson(url, session.access_token, body),
         mode,
         content,
-      });
-      const blocks = sliceData.blocks || [];
-      if (blocks.length === 0) {
-        throw new Error("No lessons found in the input.");
-      }
-
-      // ── PHASE 2: EXTRACT (CHUNKED) ────────────────────────────────────
-      // Slice the blocks into chunks of CHUNK_SIZE and process them one
-      // at a time via /api/cahier-parse. That endpoint injects recent
-      // admin corrections into the Claude prompt as few-shot examples, so
-      // mistakes from previous uploads don't repeat. It creates one
-      // upload_batches row on the first call and reuses it on subsequent
-      // chunks — this way the whole upload ends up under a single batch.
-      //
-      // Sequential (not parallel) on the client because:
-      //   1. Anthropic per-org rate limits — 60+ Haiku calls in flight all
-      //      at once will start hitting 429s
-      //   2. Serial gives us clean progress updates
-      //   3. If one chunk fails we know exactly which one
-      const CHUNK_SIZE = 15;
-      const allCards = [];
-      const allErrors = [];
-      let batchId = null;
-      const totalChunks = Math.ceil(blocks.length / CHUNK_SIZE);
-
-      for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
-        const chunkIndex = Math.floor(i / CHUNK_SIZE) + 1;
-        setProgress(
-          `Extracting cards from your lessons… (chunk ${chunkIndex} of ${totalChunks})`
-        );
-        const chunk = blocks.slice(i, i + CHUNK_SIZE);
-        const parseData = await callCahierParse(session.access_token, {
-          blocks: chunk,
-          batch_id: batchId, // null on first call → server creates the batch
-          source: tab,
-        });
-        if (!batchId && parseData.batch_id) {
-          batchId = parseData.batch_id;
-        }
-        if (Array.isArray(parseData.cards)) {
-          allCards.push(...parseData.cards);
-        }
-        if (Array.isArray(parseData.errors)) {
-          allErrors.push(...parseData.errors);
-        }
-      }
-
-      if (allCards.length === 0) {
-        throw new Error(
-          allErrors.length
-            ? `Extraction failed: ${allErrors[0].error || "unknown"}`
-            : "No cards extracted from any lesson."
-        );
-      }
-
-      // ── PHASE 3: COMMIT ───────────────────────────────────────────────
-      // Send the full set of cards to the server for cross-chunk dedupe,
-      // conjugation expansion, and database insert. batch_id is forwarded
-      // so each inserted user_cards row gets tagged with the upload it
-      // came from.
-      setProgress(
-        `Saving ${allCards.length.toLocaleString()} cards to your deck…`
-      );
-      const commitData = await callApi(session.access_token, {
-        action: "commit",
-        cards: allCards,
         replace,
-        batch_id: batchId, // may be null if the parse endpoint couldn't create one
+        source: tab,
+        onProgress: setProgress,
       });
-
-      // How many cards arrived is recorded on the batch by the commit itself.
 
       setStatus("idle");
-      onSuccess({ ...commitData, batch_id: batchId });
+      onSuccess(result);
     } catch (e) {
       setStatus("error");
       setError(e.message || "Upload failed");
     }
   }
 
-  // Parse-step caller — posts to /api/cahier-parse (the few-shot-enriched
-  // endpoint). Same error handling contract as callApi.
-  async function callCahierParse(accessToken, body) {
-    return await postJson("/api/cahier-parse", accessToken, body);
-  }
-
-  // Shared API caller — handles auth, JSON parsing, and surfaces real
-  // errors instead of letting JSON.parse crash on HTML error pages.
-  async function callApi(accessToken, body) {
-    return await postJson("/api/parse-cahier", accessToken, body);
-  }
-
+  // Handles auth, JSON parsing, and surfaces real errors instead of letting
+  // JSON.parse crash on HTML error pages.
   async function postJson(url, accessToken, body) {
     const res = await fetch(url, {
       method: "POST",
@@ -476,9 +403,9 @@ fonder / créer une entreprise
                 disabled={status === "uploading"}
               />
               <p style={M.linkText}>
-                The app reads the doc when you open it, and once a day. Any class it hasn't
-                seen before becomes cards; classes it has already read are never touched, so
-                nothing you've studied changes.
+                The app reads the doc when you open it, and once a day. Any line it hasn't
+                read before becomes cards. A word you already have only gets the new class
+                date, so nothing you've studied changes.
               </p>
               <p style={M.linkText}>
                 The doc has to be shared so that anyone with the link can view it.
@@ -517,7 +444,7 @@ fonder / créer une entreprise
               onChange={(e) => setReplace(e.target.checked)}
               disabled={status === "uploading"}
             />
-            <span>Replace my existing deck (otherwise merge into it). Cards you've already studied keep their progress.</span>
+            <span>Replace my existing deck: cards from classes that aren't in this upload leave your study, unless you have answered them. Lesson cards and cards from the tutor stay.</span>
           </label>
         )}
 

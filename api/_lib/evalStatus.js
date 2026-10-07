@@ -1,11 +1,18 @@
 // What the Status window and its red dot need from the tests of Claude's work
 // (api/_lib/evalRuns.js): for each test, its last run and the cases a change
 // to how Claude is asked made it get wrong, named in plain words. Read with the
-// service role by /api/admin-users?view=status, for the admin only.
+// service role by /api/admin-users?view=status, for the admin only, and by the
+// morning check (scripts/status-check.mjs --everyone).
+//
+//   answers  Claude's marking of typed answers
+//   notes    Claude reading class notes into cards
+//   repeats  Claude judging whether two look-alike cards are the same card
+//            (since 2026-10-06; api/_lib/repeatsChecks.js)
 
 import { regressions } from "./evalRuns.js";
 import { answerJudge } from "./answerChecks.js";
 import { notesJudge } from "./notesChecks.js";
+import { repeatsJudge, repeatsSlip } from "./repeatsChecks.js";
 import { missingTable } from "../../src/lib/dealLog.js";
 
 const COLUMNS = "id, kind, ran_at, version, model, cases, passed, summary, results";
@@ -49,6 +56,16 @@ export async function evalStatus(db) {
           : `Since the last change to how your cahier is read, Claude is making “${c.original_front}” again, which you corrected to “${c.corrected_front}”.`));
     }
     out.notes = { latest: brief(n.latest), regressions: named };
+  }
+
+  // Each case carries both cards' text, since half of them (the keep-apart
+  // pairs) are no cards in anyone's deck.
+  const r = await lastTwo(db, "repeats");
+  if (r.missing || r.error) out.repeats = { error: r.error || null, regressions: [] };
+  else {
+    const ids = new Set(regressions(r.latest, r.previous, repeatsJudge, (c) => c.says));
+    const named = (r.latest?.results || []).filter((c) => ids.has(c.id)).map(repeatsSlip);
+    out.repeats = { latest: brief(r.latest), regressions: named };
   }
 
   return out;

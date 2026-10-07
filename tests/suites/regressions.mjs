@@ -153,6 +153,10 @@ const ck = checker();
   await page.waitForTimeout(200);
   ck("while an upload still offers it",
      await page.evaluate(() => document.querySelectorAll("input[type=checkbox]").length) === 1);
+  // Replace never takes out a card the student has answered (2026-10-07), and
+  // the box says so.
+  const label = await page.evaluate(() => document.querySelector("input[type=checkbox]")?.closest("label")?.innerText || "");
+  ck("  saying that a card you have answered stays", /leave your study, unless you have answered them\./.test(label), label);
 
   await browser.close();
 }

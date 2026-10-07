@@ -1,16 +1,9 @@
 // Vercel serverless function: POST /api/parse-cahier
 //
-// Takes a raw cahier (text or Google Doc link), extracts structured
-// flashcards via Claude, dedupes across dates, and writes them into the
-// authenticated user's user_cards table.
-//
-// Request body (JSON):
-//   {
-//     mode: "text" | "url",
-//     content: "<raw text>" | "<google doc url>",
-//     replace: true | false     // if true, the deck becomes the upload — but
-//                               // nothing studied is lost: see src/lib/replaceDeck.js
-//   }
+// The upload of a cahier (pasted or from a file): slices it into one block per
+// class, says which lines are new, and saves the cards Claude made from them
+// into the signed-in student's deck. The upload dialog drives it in steps
+// (src/lib/uploadRun.js); see ACTION DISPATCH below.
 //
 // Quality features layered on top of raw extraction:
 //
@@ -20,27 +13,23 @@
 //      vis"). The table card itself is NOT kept once it has drills: its
 //      front lists every answer, so as a card it answers itself.
 //
-//   2. Polysemy splitting — during dedupe, if the same French front appears
-//      with semantically divergent English backs (e.g. "voler" = "to steal"
-//      vs "to fly"), we keep BOTH cards with disambiguator parentheticals
-//      appended to the front instead of merging them.
+//   2. One card per thing to learn (2026-10-06). Only lines of the notes not
+//      read before are read (src/lib/notesLines.js), and every new card is
+//      compared with every card the student has, by the rule in
+//      src/lib/sameCard.js, before it is added (src/lib/cardMatch.js). A word
+//      they already have only gains the class date. Two cards with the same
+//      French get labels in brackets only when Claude says their meanings
+//      differ ("voler (to steal)", "voler (to fly)").
 //
 //   3. Only answerable cards — every card must be one you can answer by
 //      typing something the app can check (the owner's rule, 2026-09-24).
 //      Grammar rules and pronunciation notes are not; keepAnswerable drops
 //      any the model produced anyway. See its comment.
 //
-// Response:
-//   {
-//     ok: true,
-//     cardsInserted: 847,
-//     uniqueCards: 812,
-//     datesCovered: 152,
-//     dateRange: ["2025-05-13", "2026-04-10"],
-//     conjugationDrillsGenerated: 48,
-//     polysemySplits: 6,
-//     errors: []
-//   }
+// The upload used to read every class again on every upload, and to write
+// over the English, category, dates and source of any card whose French it
+// wrote identically. On 4 September that rewrote the English of 1,429 of the
+// owner's cards and added 44 they already had. It does neither now.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
@@ -50,15 +39,17 @@ import { requireUser } from "./_lib/auth.js";
 // reading the doc, slicing it into one block per class, and turning a block
 // into cards. They are exported rather than copied, so the two paths can never
 // drift into parsing the same notebook differently.
-import { requireAnthropicKey } from "./_lib/anthropicKey.js";
+import { requireAnthropicKey, resolveAnthropicKey } from "./_lib/anthropicKey.js";
 // The same two tests the app itself uses, imported rather than copied: what the
 // study screen calls a conjugation drill, and what the Grammar filter calls a
 // rule. If the parser judged cards by different rules from the app, a card it
 // let through could still be one the app treats as a rule.
 import { isConjugationDrill } from "../src/lib/cardInstruction.js";
-import { planReplace } from "../src/lib/replaceDeck.js";
-import { archivedSource } from "../src/lib/archive.js";
 import { isGrammarCard } from "../src/lib/cardTypes.js";
+import { cardIndex, isListPart } from "../src/lib/sameCard.js";
+import { planReading, datesCovered } from "../src/lib/notesLines.js";
+import { claimReading, releaseReading, readDeck, saveRun, seedingFrom } from "./_lib/notesReading.js";
+import { askSameCard } from "./_lib/sameCardQuestion.js";
 export const config = {
   api: {
     bodyParser: { sizeLimit: "10mb" },
@@ -77,7 +68,13 @@ const MONTHS_FR = {
   septembre: "09", octobre: "10", novembre: "11", décembre: "12", decembre: "12",
 };
 
-const DATE_HEADER_RE = /^Le\s+(\d{1,2})(?:er)?\s+([a-zéû]+)\s+(\d{4})\s*$/im;
+// A class's date line: "Le 24 septembre 2026", "Le 1er octobre 2026". A class
+// held over two days is one class, dated its first day: "Le 28 et 29
+// septembre 2026", "Les 28 et 29 septembre 2026", "Le 28 & 29 septembre
+// 2026". The owner's notes have one (2026-10-07); the pattern missed it, so
+// that class's lines were taken as the end of the class above it and cut off
+// with its homework, and no card was ever made from them.
+const DATE_HEADER_RE = /^Les?\s+(\d{1,2})(?:er)?(?:\s*(?:,|et|&)\s*\d{1,2}(?:er)?)*\s+([a-zéû]+)\s+(\d{4})\s*$/im;
 
 const SUBJECT_PRONOUNS = ["je", "tu", "il/elle", "nous", "vous", "ils/elles"];
 
@@ -109,24 +106,29 @@ export default async function handler(req, res) {
   // ═════════════════════════════════════════════════════════════════════
   // ACTION DISPATCH
   // ─────────────────────────────────────────────────────────────────────
-  // Vercel Hobby caps function execution at 60s. To process a year-long
-  // cahier (~150 lessons × ~5s each via Claude Haiku) we'd blow past that.
-  // Instead, the client drives the work in three phases:
+  // A function has five minutes at most, and a year-long cahier is ~150
+  // classes at ~5s each through Claude. So the dialog drives the work in
+  // steps (src/lib/uploadRun.js):
   //
-  //   1. action="slice"   — POST {mode, content} → returns date-keyed blocks
-  //                         The client now has the full work-list and can
-  //                         track progress ("processing chunk 3 of 8").
+  //   1. action="slice"   — POST {mode, content} → the classes, one block per
+  //                         date.
   //
-  //   2. action="extract" — POST {blocks: [...]} → returns extracted cards
-  //                         Called repeatedly with chunks of ~15 blocks.
-  //                         Each call finishes in ~10-15s, well under 60s.
+  //   2. action="plan"    — POST {blocks} → which lines of each class are new.
+  //                         This takes the student's turn to read their notes
+  //                         (one run at a time), and says which classes need
+  //                         reading at all: an unchanged re-upload needs none.
   //
-  //   3. action="commit"  — POST {cards, replace} → dedupes, expands
-  //                         conjugations, writes to Supabase. Cheap, fast.
+  //   3. /api/cahier-parse — the classes with new lines, read by Claude in
+  //                         chunks of ~15, the same way the linked notebook
+  //                         reads them.
   //
-  // The client accumulates cards across multiple extract calls, then sends
-  // them all in one commit. Dedupe runs across the WHOLE cahier so cross-
-  // chunk duplicates and polysemy clusters are handled correctly.
+  //   4. action="commit"  — POST {runId, blocks, cards, replace} → compares
+  //                         every new card with the student's deck, saves the
+  //                         new ones and the lines read, and gives the turn
+  //                         back.
+  //
+  // "extract" is an older reading step nothing calls now, kept so an upload
+  // dialog left open from before still works.
   // ═════════════════════════════════════════════════════════════════════
 
   const action = req.body?.action || "slice";
@@ -140,8 +142,11 @@ export default async function handler(req, res) {
     if (!apiKey) return;
     return await handleExtract(req, res, apiKey);
   }
+  if (action === "plan") {
+    return await handlePlan(req, res, adminClient, userId);
+  }
   if (action === "commit") {
-    return await handleCommit(req, res, adminClient, userId);
+    return await handleCommit(req, res, adminClient, user);
   }
   return res.status(400).json({ error: `Unknown action: ${action}` });
 }
@@ -150,7 +155,7 @@ export default async function handler(req, res) {
 // ACTION 1: SLICE — turn raw cahier text into per-date blocks
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function handleSlice(req, res) {
+export async function handleSlice(req, res) {
   const { mode, content } = req.body || {};
   if (!mode || !content) {
     return res.status(400).json({ error: "Missing mode or content" });
@@ -232,202 +237,188 @@ async function handleExtract(req, res, apiKey) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ACTION 3: COMMIT — dedupe across all cards, expand conjugations, insert
+// ACTION 2b: PLAN — which lines of the upload are new
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function handleCommit(req, res, adminClient, userId) {
-  const { cards: rawCards, replace, batch_id: batchId = null } = req.body || {};
-  if (!Array.isArray(rawCards) || rawCards.length === 0) {
+export const BUSY_MESSAGE =
+  "Your notes are being read already, by the daily check or in another window. Try again in a few minutes.";
+const LOST_TURN_MESSAGE =
+  "This upload took so long that another reading of your notes started. Nothing was saved; upload again.";
+
+const cleanBlocks = (blocks) =>
+  (Array.isArray(blocks) ? blocks : [])
+    .filter((b) => b && typeof b.date === "string" && typeof b.text === "string")
+    .map((b) => ({ date: b.date, text: b.text }));
+
+// The classes the linked notebook has read, which count as read here too,
+// with a fingerprint of each as it was read (src/lib/notesLines.js).
+async function linkClasses(adminClient, userId) {
+  try {
+    const { data, error } = await adminClient.from("cahier_links").select("classes").eq("user_id", userId).maybeSingle();
+    return !error && data?.classes && typeof data.classes === "object" ? data.classes : {};
+  } catch {
+    return {};
+  }
+}
+
+// Whether the upload's text is the Google Doc's own export, which the linked
+// notebook's fingerprints were taken from: an upload of the doc's link, whose
+// text the slice step fetched. Pasted text and files never are
+// (api/_lib/notesReading.js's seedingFrom).
+const fromDoc = (req) => req.body?.mode === "url";
+
+export async function handlePlan(req, res, adminClient, userId) {
+  const blocks = cleanBlocks(req.body?.blocks);
+  if (blocks.length === 0) {
+    return res.status(400).json({ error: "Missing or empty blocks array" });
+  }
+  const reading = await claimReading(adminClient, { userId, kind: "upload" });
+  if (reading.busy) return res.status(409).json({ ok: false, busy: true, error: BUSY_MESSAGE });
+  try {
+    const deck = await readDeck(adminClient, userId);
+    const plan = planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode, { fromDoc: fromDoc(req) }) });
+    const toRead = plan.filter((p) => p.needsReading).length;
+    console.log(`[parse-cahier] plan: ${plan.length} classes, ${toRead} with lines not read before (${reading.mode})`);
+    return res.status(200).json({
+      ok: true,
+      runId: reading.runId,
+      mode: reading.mode,
+      blocks: plan.map((p) => ({ date: p.date, text: p.text, read: p.needsReading, newLines: p.partial ? p.newLines : null })),
+      toRead,
+      unchanged: plan.length - toRead,
+    });
+  } catch (e) {
+    await releaseReading(adminClient, userId, reading.runId);
+    console.error("[parse-cahier] plan failed:", e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION 3: COMMIT — compare every new card with the deck, save, record
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Body: { cards, replace, batch_id, runId, blocks, failedDates }
+//   cards        what /api/cahier-parse returned for the classes read
+//   blocks       every class of the upload, as sliced, so the lines read are
+//                worked out again here rather than taken on trust
+//   failedDates  classes Claude couldn't read; their lines stay unread
+// An upload dialog from before 2026-10-06 sends only cards, replace and
+// batch_id. Its cards are still compared with the deck before anything is
+// added, but no lines are recorded.
+//
+// "Replace my existing deck" works by class (src/lib/replaceDeck.js): a card
+// with none of its classes in the upload is taken out of study, kept, and
+// marked "replaced", unless the student has answered it: an answered card
+// stays in study whatever the classes say. Nothing is ever deleted.
+
+// The question about near look-alikes may take this long from the start of
+// the commit, leaving the function's five minutes room to save.
+const QUESTION_TIME_MS = 180 * 1000;
+
+export async function handleCommit(req, res, adminClient, user) {
+  const startedAt = Date.now();
+  const userId = user.id;
+  const { cards: rawCards = [], replace = false, batch_id: batchId = null, runId = null, failedDates = [] } = req.body || {};
+  const blocks = Array.isArray(req.body?.blocks) ? cleanBlocks(req.body.blocks) : null;
+  const legacy = blocks === null;
+  if (!Array.isArray(rawCards) || (legacy && rawCards.length === 0)) {
     return res.status(400).json({ error: "Missing or empty cards array" });
   }
 
-  const errors = [];
-
-  // Step 0: split // pairs into separate cards. The extraction prompt
-  // asks Claude to do this, but as a safety net we also catch any that
-  // slipped through. "léger // lourd (adj)" → two cards.
-  // The model is told to keep English glosses off the French side, but it
-  // slips — "je suis allé (I went (passé composé))" — and a card whose front
-  // contains its own answer is worse than no card. Enforce it deterministically.
-  const cleanedCards = rawCards.map((c) =>
-    c && c.front && c.back
-      ? { ...c, front: cleanFrenchFront(c.front, c.back) }
-      : c
-  );
-  const splitCards = splitSlashPairs(cleanedCards);
-
-  // Step 1: expand conjugation tables into drill cards
-  const { expanded, drillsGenerated } = expandConjugations(splitCards);
-
-  // Step 1b: drop the rule and pronunciation cards the model produced despite
-  // being told not to, and re-tag as V the plain words it filed under G.
-  // After expansion, so a table has already become its drills.
-  const answerable = keepAnswerable(expanded);
-
-  // Step 2: dedupe with polysemy splitting (cross-chunk: works because
-  // we now have the full set of cards in a single function call)
-  const { deduped, splits } = dedupeWithPolysemy(answerable);
-
-  // Step 3: write to Supabase. A replace used to delete the whole deck here,
-  // first, and every answer with it. It now happens after the upload's cards
-  // are in, and keeps everything the student has answered; see below.
-
-  // batch_id is null for legacy clients that don't pass it. Postgres accepts
-  // the nullable column, and `user_cards` left-joins against `upload_batches`
-  // for any admin-side reporting.
-  const rows = deduped.map((c) => ({
-    user_id: userId,
-    front: c.front,
-    back: c.back,
-    category: c.category,
-    dates: c.dates,
-    source: c.source || "cahier-upload",
-    batch_id: batchId,
-  }));
-
-  // A save is all or nothing: one card Postgres won't take and it refuses the
-  // whole statement. A refused save is tried again in smaller pieces, down to
-  // single cards, so only the cards that really can't be saved are left out.
-  // Those are counted and named in the reply: they used to be hidden behind
-  // "ok", and a student was told 573 cards had arrived when 1,073 should have.
-  // Only a refusal about the cards themselves (codes 21, 22, 23) is worth
-  // splitting; anything else — the database unreachable — fails the lot.
-  let inserted = 0;
-  const failed = [];
-  const saveRows = async (chunk) => {
-    const { error: insErr, count } = await adminClient
-      .from("user_cards")
-      .upsert(chunk, { onConflict: "user_id,front", count: "exact" });
-    if (!insErr) {
-      inserted += count || chunk.length;
-      return;
-    }
-    const aboutTheCards = /^2[123]/.test(String(insErr.code || ""));
-    if (chunk.length > 1 && aboutTheCards) {
-      const size = chunk.length > 50 ? 50 : 1;
-      for (let i = 0; i < chunk.length; i += size) await saveRows(chunk.slice(i, i + size));
-      return;
-    }
-    console.error("upsert refused", chunk.length, "card(s):", insErr);
-    for (const r of chunk) failed.push({ front: r.front, error: insErr.message });
-  };
-  for (let i = 0; i < rows.length; i += 500) await saveRows(rows.slice(i, i + 500));
-  if (failed.length) {
-    errors.push({ step: "upsert", error: `${failed.length} card(s) not saved: ${failed[0].error}` });
+  const reading = await claimReading(adminClient, { userId, kind: "upload", runId });
+  if (reading.busy) {
+    return res.status(409).json({ ok: false, busy: true, error: runId ? LOST_TURN_MESSAGE : BUSY_MESSAGE });
   }
+  try {
+    const deck = await readDeck(adminClient, userId);
+    const plan = legacy
+      ? null
+      : planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode, { fromDoc: fromDoc(req) }) });
+    const failed = new Set((Array.isArray(failedDates) ? failedDates : []).filter((d) => typeof d === "string"));
+    const incoming = cardsFromExtracted(rawCards);
+    const read = legacy
+      ? new Set(incoming.flatMap((c) => c.dates || []))
+      : new Set(plan.filter((p) => p.needsReading && !failed.has(p.date)).map((p) => p.date));
 
-  // How many of the upload's cards arrived, on its batch row. The dialog used
-  // to send this afterwards to /api/upload-batches, which only the admin may
-  // call, so every student's upload was refused it. Best-effort: a miss here
-  // leaves the count empty and nothing else.
-  if (batchId) {
-    const { error: batchErr } = await adminClient
-      .from("upload_batches")
-      .update({ cards_accepted: inserted, cards_edited_post_parse: 0 })
-      .eq("id", batchId)
-      .eq("user_id", userId);
-    if (batchErr) console.warn("[parse-cahier] upload_batches count not saved:", batchErr.message);
-  }
+    // Near look-alikes are put to Claude on the student's own key, as the
+    // reading was. Without one, those cards wait for the next upload.
+    const key = resolveAnthropicKey(req, user);
+    const ask = (pairs) =>
+      key.key ? askSameCard({ apiKey: key.key, pairs, deadline: startedAt + QUESTION_TIME_MS }) : Promise.reject(new Error(key.error));
 
-  // Replace: the cards the upload doesn't have. Only once the upload's own
-  // cards are all in — a replace that failed half way used to leave a deck
-  // emptied and half refilled. See src/lib/replaceDeck.js.
-  let removed = 0;
-  let keptOutOfStudy = 0;
-  if (replace && errors.length === 0) {
-    try {
-      const existing = [];
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await adminClient
-          .from("user_cards")
-          .select("id, front, source, fsrs_state, en_fsrs_state")
-          .eq("user_id", userId)
-          .order("id", { ascending: true })
-          .range(from, from + 999);
-        if (error) throw error;
-        existing.push(...(data || []));
-        if (!data || data.length < 1000) break;
-      }
-      const fronts = rows.map((r) => r.front);
-      // A card put back to never answered by "Reset all progress" still has
-      // its answers on record; it is kept too, not deleted with them.
-      const candidates = planReplace(existing, fronts).remove;
-      const withHistory = new Set();
-      for (let i = 0; i < candidates.length; i += 200) {
-        const { data, error } = await adminClient
-          .from("card_reviews")
-          .select("card_id")
-          .eq("user_id", userId)
-          .in("card_id", candidates.slice(i, i + 200));
-        if (error) throw error;
-        for (const r of data || []) withHistory.add(r.card_id);
-      }
-      const plan = planReplace(existing, fronts, withHistory);
-      for (let i = 0; i < plan.remove.length; i += 200) {
-        // Never answered, checked again by the database itself: a card
-        // answered on another device meanwhile is not deleted.
-        const { error, count } = await adminClient
-          .from("user_cards")
-          .delete({ count: "exact" })
-          .in("id", plan.remove.slice(i, i + 200))
-          .eq("user_id", userId)
-          .eq("fsrs_state", 0)
-          .eq("en_fsrs_state", 0);
-        if (error) throw error;
-        removed += count || 0;
-      }
-      const bySource = new Map();
-      for (const row of plan.archive) {
-        const to = archivedSource(row.source);
-        if (!bySource.has(to)) bySource.set(to, []);
-        bySource.get(to).push(row.id);
-      }
-      for (const [source, ids] of bySource) {
-        for (let i = 0; i < ids.length; i += 200) {
-          const { error } = await adminClient
-            .from("user_cards")
-            .update({ source })
-            .in("id", ids.slice(i, i + 200))
-            .eq("user_id", userId);
-          if (error) throw error;
-        }
-      }
-      keptOutOfStudy = plan.archive.length;
-    } catch (e) {
-      console.error("replace clean-up failed:", e);
-      errors.push({ step: "replace", error: e.message || String(e) });
+    const result = await saveRun({
+      admin: adminClient, userId, reading, deck, plan, incoming, read, failedDates: [...failed], ask,
+      source: "upload", batchId,
+      replaceDates: replace ? (legacy ? read : datesCovered(plan, reading.classes)) : null,
+    });
+
+    // How many of the upload's cards arrived, on its batch row. Best-effort.
+    if (batchId && result.ok) {
+      const { error: batchErr } = await adminClient
+        .from("upload_batches")
+        .update({ cards_accepted: result.added, cards_edited_post_parse: 0 })
+        .eq("id", batchId)
+        .eq("user_id", userId);
+      if (batchErr) console.warn("[parse-cahier] upload_batches count not saved:", batchErr.message);
     }
+
+    const allDates = [...(legacy ? read : new Set(plan.map((p) => p.date)))].sort();
+    const unchanged = plan ? plan.filter((p) => !p.needsReading && !p.unrecorded).length : 0;
+    // Classes this upload can't judge, because its text isn't the linked
+    // doc's own: the next read of the linked notes reads any of their lines
+    // that are on no card (src/lib/notesLines.js, planReading).
+    const leftForLink = plan ? plan.filter((p) => p.unrecorded).length : 0;
+    const drills = result.decisions.filter((d) => d.action === "insert" && d.insert.source === "conjugation-drill").length;
+    console.log(
+      `[parse-cahier] commit (${reading.mode}${legacy ? ", old dialog" : ""}): ${incoming.length} cards from ${read.size} classes read, ` +
+      `${result.added} new, ${result.seenAgain} seen again, ${result.waiting} waiting, ${result.questions} questions, ` +
+      `${unchanged} classes unchanged, replace: ${result.keptOutOfStudy} out, ${result.answeredStay} answered and left in, ${result.broughtBack} back` +
+      (result.replaceWaits ? ` (${result.replaceWaits} left in: no migration_016)` : "") + ", " +
+      `${result.failed?.length || 0} refused` + (result.ok ? "" : `, NOT SAVED: ${result.error}`)
+    );
+    if (!result.ok) {
+      return res.status(result.lostTurn ? 409 : 500).json({
+        ok: false,
+        error: result.lostTurn ? LOST_TURN_MESSAGE : `Your cards couldn't be saved: ${result.error}`,
+      });
+    }
+    return res.status(200).json({
+      ok: true,
+      cardsInserted: result.added,
+      cardsSeenAgain: result.seenAgain,
+      cardsWaiting: result.waiting,
+      classesRead: [...read].filter((d) => !result.waitingDates.includes(d)).length,
+      classesUnchanged: unchanged,
+      classesLeftForLink: leftForLink,
+      // Classes read whose cards wait on Claude's question, to be read again
+      // next time. Classes Claude couldn't read the dialog knows already.
+      waitingClasses: result.waitingDates.filter((d) => !failed.has(d)),
+      cardsFailed: result.failed.length,
+      failedFronts: result.failed.slice(0, 10).map((f) => f.front),
+      uniqueCards: incoming.length,
+      datesCovered: allDates.length,
+      dateRange: allDates.length ? [allDates[0], allDates[allDates.length - 1]] : null,
+      conjugationDrillsGenerated: drills,
+      polysemySplits: result.labelled,
+      questions: result.questions,
+      keptOutOfStudy: result.keptOutOfStudy,
+      broughtBack: result.broughtBack,
+      // Before migration_016 Replace takes nothing out: how many cards it
+      // would have, so the student is told why they are still there.
+      replaceWaits: result.replaceWaits,
+      // Cards from classes not in the upload that stayed in study because
+      // the student has answered them: Replace never takes one out.
+      answeredStay: result.answeredStay,
+      removed: 0,
+      errors: result.failed.length ? [{ step: "save", error: `${result.failed.length} card(s) not saved: ${result.failed[0].error}` }] : [],
+    });
+  } catch (e) {
+    console.error("[parse-cahier] commit failed:", e);
+    return res.status(500).json({ error: e.message || String(e) });
+  } finally {
+    await releaseReading(adminClient, userId, reading.runId);
   }
-
-  const allDates = [...new Set(deduped.flatMap((c) => c.dates))].sort();
-
-  console.log(
-    `[parse-cahier] commit: raw=${rawCards.length} slashSplit=${splitCards.length} expanded=${expanded.length} notAnswerable=${expanded.length - answerable.length} deduped=${deduped.length} inserted=${inserted} drills=${drillsGenerated} splits=${splits} replaced: removed=${removed} keptOutOfStudy=${keptOutOfStudy} errors=${errors.length}`
-  );
-
-  return res.status(200).json({
-    // Not ok only when nothing at all was saved, so the dialog shows an
-    // error; a partial save reports what's missing through cardsFailed.
-    ok: !(inserted === 0 && failed.length > 0),
-    error: inserted === 0 && failed.length > 0
-      ? `None of the ${failed.length} cards could be saved: ${failed[0].error}`
-      : undefined,
-    cardsInserted: inserted,
-    cardsFailed: failed.length,
-    failedFronts: failed.slice(0, 10).map((f) => f.front),
-    uniqueCards: deduped.length,
-    datesCovered: allDates.length,
-    dateRange: allDates.length
-      ? [allDates[0], allDates[allDates.length - 1]]
-      : null,
-    conjugationDrillsGenerated: drillsGenerated,
-    polysemySplits: splits,
-    // A replace: never-answered cards the upload didn't have, deleted; and
-    // answered ones taken out of study with their history kept.
-    removed,
-    keptOutOfStudy,
-    errors: errors.slice(0, 10),
-  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -603,8 +594,24 @@ Here is the lesson text:
 
 export const EXTRACTION_MODEL = "claude-haiku-4-5";
 
-export async function extractCardsFromBlock(anthropic, block) {
+// Added when only some lines of a class are new (src/lib/notesLines.js): the
+// whole class is sent, so Claude has the context, and it is told to make
+// cards from the new lines only. The rest of the class already has its cards,
+// and reading it again is how a word came back spelt another way.
+export const NEW_LINES_NOTE = `Most of this lesson was read before and already has its cards. Make cards ONLY from the new lines listed below; use the rest of the lesson only to understand them. If none of the new lines is flashcard material, return [].
+
+New lines:
+{NEW_LINES}`;
+
+export function extractionPrompt(block) {
   const prompt = EXTRACTION_PROMPT.replace("{BLOCK_TEXT}", block.text);
+  const lines = Array.isArray(block.newLines) ? block.newLines.filter((l) => typeof l === "string" && l.trim()) : [];
+  if (!lines.length) return prompt;
+  return `${prompt}\n\n${NEW_LINES_NOTE.replace("{NEW_LINES}", lines.map((l) => `- ${l.trim()}`).join("\n"))}`;
+}
+
+export async function extractCardsFromBlock(anthropic, block) {
+  const prompt = extractionPrompt(block);
 
   const response = await anthropic.messages.create({
     // Haiku is ~3-5× faster than Sonnet and just as accurate on this task,
@@ -664,7 +671,7 @@ export async function extractCardsFromBlock(anthropic, block) {
 export function cardsFromExtracted(raw) {
   const cleaned = raw.map((c) => (c && c.front && c.back ? { ...c, front: cleanFrenchFront(c.front, c.back) } : c));
   const { expanded } = expandConjugations(splitSlashPairs(cleaned));
-  return dedupeWithPolysemy(keepAnswerable(expanded)).deduped;
+  return mergeRepeats(keepAnswerable(expanded));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -854,166 +861,83 @@ function isConjugationTable(text) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Dedupe with polysemy splitting
+// One card per thing to learn, inside one reading
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// If two entries have the same normalized French front but semantically
-// divergent English backs, keep BOTH as separate cards with disambiguator
-// parentheticals. Otherwise merge (same as plain dedupe).
+// The same word in two classes of one reading becomes one card with both
+// dates, by the same rule that compares a new card with the deck
+// (src/lib/sameCard.js). The first spelling read is the one kept.
 //
-// "Semantically divergent" = Jaccard similarity on content words < 0.3.
-
-export function dedupeWithPolysemy(cards) {
-  const groups = new Map();
-  for (const card of cards) {
-    const key = normalizeKey(card.front);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(card);
-  }
-
-  const deduped = [];
-  let splits = 0;
-
-  for (const [, group] of groups) {
-    if (group.length === 1) {
-      deduped.push({ ...group[0], dates: [...group[0].dates] });
+// This used to merge only cards equal once capitals and accents were set
+// aside, and split a word whose English was worded differently in two
+// classes into two labelled cards, "être assis (to be seated)" and "être
+// assis (to be sitting)", with labels that changed with every reading. In
+// other students' decks 34 of the 39 repeated pairs came from it. Now a card
+// whose French matches another's only loosely, or whose English disagrees,
+// is left for the question to Claude (src/lib/cardMatch.js), and only a
+// "different" answer gives it a label.
+//
+// A card that is one item of another card's list is that card (the owner,
+// 2026-10-07): "à l'heure" and "à temps / à l'heure" in one reading are one
+// card. There the list card is kept whichever came first, since it teaches
+// the item too, and it takes in every item of it read before it: "à l'heure",
+// then "à temps", then "à temps / à l'heure" is one card, the list card, with
+// all three classes. It used to take the place of only one of them, and the
+// other was left beside it; the card-writer then joined the list card to
+// that item, and "à temps" never became a card.
+export function mergeRepeats(cards) {
+  const kept = [];
+  const index = cardIndex([]);
+  // A kept card the list card took the place of, and that list card.
+  const became = new Map();
+  const follow = (c) => { while (became.has(c)) c = became.get(c); return c; };
+  const live = new Set();
+  const dated = (...lists) => [...new Set(lists.flat())].sort();
+  for (const card of cards || []) {
+    if (!card || !card.front || !card.back) continue;
+    const dates = Array.isArray(card.dates) ? card.dates : [];
+    // The kept cards this one surely is (the same card, or a list card it is
+    // an item of), each followed to the list card that took its place, and
+    // the kept cards that are items of this one, if it is a list card.
+    const whole = [];
+    const items = [];
+    for (const c of index.sureAll(card)) {
+      if (isListPart(c, card)) { if (live.has(c)) items.push(c); continue; }
+      const to = follow(c);
+      if (live.has(to) && !whole.includes(to)) whole.push(to);
+    }
+    if (whole.length) {
+      const same = whole.find((c) => c.front === card.front) || whole[0];
+      same.dates = dated(same.dates, dates);
+      for (const item of items.filter((c) => c !== same && isListPart(c, same))) {
+        same.dates = dated(same.dates, item.dates);
+        kept[kept.indexOf(item)] = null;
+        live.delete(item);
+        became.set(item, same);
+      }
       continue;
     }
-
-    const clusters = clusterByBackSimilarity(group);
-
-    if (clusters.length === 1) {
-      deduped.push(mergeCluster(clusters[0]));
-    } else {
-      const senses = clusters.map((cluster) => {
-        const merged = mergeCluster(cluster);
-        merged.front = `${merged.front} (${shortDisambiguator(merged.back)})`;
-        return merged;
-      });
-      // Two senses can come out with the same label — two long glosses that
-      // share their first three words — and that is one card, not two.
-      const distinct = mergeSameFront(senses);
-      splits += distinct.length - 1;
-      deduped.push(...distinct);
+    if (items.length) {
+      const list = { ...card, dates: dated(dates, ...items.map((c) => c.dates)) };
+      kept[kept.indexOf(items[0])] = list;
+      for (const item of items.slice(1)) kept[kept.indexOf(item)] = null;
+      for (const item of items) { live.delete(item); became.set(item, list); }
+      live.add(list);
+      index.add(list);
+      continue;
     }
+    const copy = { ...card, dates: dated(dates) };
+    kept.push(copy);
+    live.add(copy);
+    index.add(copy);
   }
-
-  // No two cards may leave here with the same front. The deck allows one card
-  // per front, and a save holding two is refused whole: every card in it is
-  // lost, not just the repeat. On 2026-09-25 one word taught in three classes
-  // took 499 other cards down with it.
-  return { deduped: mergeSameFront(deduped), splits };
+  return kept.filter(Boolean);
 }
 
-// Cards whose fronts match once case, accents and spacing are set aside,
-// merged into one: the longest back, every date.
-function mergeSameFront(cards) {
-  const byFront = new Map();
-  for (const card of cards) {
-    const key = normalizeKey(card.front);
-    if (!byFront.has(key)) byFront.set(key, []);
-    byFront.get(key).push(card);
-  }
-  return [...byFront.values()].map((group) =>
-    group.length === 1 ? group[0] : { ...mergeCluster(group), front: group[0].front }
-  );
-}
-
-function mergeCluster(cluster) {
-  const mergedDates = [
-    ...new Set(cluster.flatMap((c) => c.dates)),
-  ].sort();
-  const longest = cluster.reduce((a, b) =>
-    b.back.length > a.back.length ? b : a
-  );
-  return {
-    front: longest.front,
-    back: longest.back,
-    category: longest.category,
-    dates: mergedDates,
-    source: longest.source || "cahier-upload",
-  };
-}
-
-function clusterByBackSimilarity(group) {
-  const THRESHOLD = 0.3;
-  const clusters = [];
-  for (const card of group) {
-    let placed = false;
-    for (const cluster of clusters) {
-      if (backSimilarity(card.back, cluster[0].back) >= THRESHOLD) {
-        cluster.push(card);
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) {
-      clusters.push([card]);
-    }
-  }
-  return clusters;
-}
-
-function backSimilarity(a, b) {
-  const sa = contentWords(a);
-  const sb = contentWords(b);
-  // Both glosses are only small words — "not as … as", "it is", "so": the
-  // translation of a little word, not two senses of it. This used to score 0,
-  // even for a gloss against itself, so a word taught in three classes became
-  // three cards with one front.
-  if (sa.size === 0 && sb.size === 0) return 1;
-  // Only one side is small words ("pas": "not" against "step"): compare every
-  // word, small ones included.
-  if (sa.size === 0 || sb.size === 0) return jaccard(allWords(a), allWords(b));
-  return jaccard(sa, sb);
-}
-
-function jaccard(sa, sb) {
-  let intersection = 0;
-  for (const w of sa) if (sb.has(w)) intersection++;
-  const union = sa.size + sb.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
-const STOP_WORDS = new Set([
-  "a", "an", "the", "to", "of", "in", "on", "at", "for", "with", "by",
-  "is", "are", "was", "were", "be", "been", "being",
-  "and", "or", "but", "if", "then", "so",
-  "it", "its", "this", "that", "these", "those",
-  "i", "you", "he", "she", "we", "they", "me", "him", "her", "us", "them",
-  "my", "your", "his", "our", "their",
-  "not", "no", "do", "does", "did",
-  "from", "as", "about", "into", "out", "up", "down",
-]);
-
-function allWords(text) {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^\w\s']/g, " ")
-      .split(/\s+/)
-      .filter(Boolean)
-  );
-}
-
-function contentWords(text) {
-  return new Set([...allWords(text)].filter((w) => w.length >= 2 && !STOP_WORDS.has(w)));
-}
-
-function shortDisambiguator(back) {
-  const trimmed = back.trim();
-  if (trimmed.length <= 30) return trimmed;
-  const words = trimmed.split(/\s+/);
-  return words.slice(0, 3).join(" ");
-}
-
-function normalizeKey(s) {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+// The old name, for the analysis scripts in tests/simulate/analysis that
+// still call it. Nothing is labelled here any more, so `splits` is 0.
+export function dedupeWithPolysemy(cards) {
+  return { deduped: mergeRepeats(cards), splits: 0 };
 }
 
 // ── French-side gloss stripping ─────────────────────────────────────

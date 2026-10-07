@@ -3,6 +3,14 @@ import { supabase } from "./supabase";
 import { CAT_DB_TO_UI } from "./lib/cardCategories";
 import { isArchived } from "./lib/archive";
 import { withLocalAnswers } from "./lib/directions";
+import { missingColumn } from "./lib/reviewLog";
+
+// Since migration_016 a card out of study says why (archived_reason), which
+// the lesson sync needs: a lesson card the student removed stays removed
+// (lib/lessonSync.js). Asked for only while the database has the column.
+// Before the migration the request is refused, and the deck is fetched again
+// without it, once per page.
+let askReasons = true;
 
 // Loads the user's flashcard deck from user_cards.
 //
@@ -153,6 +161,11 @@ export function useUserDeck(user) {
   // block was dealt: the deck it was dealt from may have been the copy saved in
   // the browser, days old, or one that missed answers given on another device.
   const [fetched, setFetched] = useState({ seq: 0, at: null });
+  // The cards out of study (archived), from the latest fetch only, never the
+  // browser's copy: just enough of each, and why it is out, for the lesson
+  // sync to know which cards the student removed, so it doesn't put them back
+  // (lib/lessonSync.js, 2026-10-06).
+  const [archived, setArchived] = useState([]);
   // Answers given on this page in the last hour: row_id -> { cols, at }. A
   // fetch can read a row before its answer's save lands; these are laid back
   // over it (see withLocalAnswers).
@@ -162,6 +175,7 @@ export function useUserDeck(user) {
     let cancelled = false;
     if (!userId) {
       setCards([]);
+      setArchived([]);
       setLoaded(true);
       loadedForUser.current = null;
       return;
@@ -191,7 +205,8 @@ export function useUserDeck(user) {
               "next_due_at, lapses, stability, difficulty, fsrs_state, reps, " +
               "last_review, last_answer_correct, created_at, " +
               "en_next_due_at, en_lapses, en_stability, en_difficulty, en_fsrs_state, " +
-              "en_reps, en_last_review, en_last_answer_correct"
+              "en_reps, en_last_review, en_last_answer_correct" +
+              (askReasons ? ", archived_reason" : "")
           )
           .eq("user_id", userId)
           // ORDER BY is not decoration here. A deck of several thousand cards
@@ -205,6 +220,12 @@ export function useUserDeck(user) {
           .range(from, from + PAGE - 1);
 
         if (cancelled) return;
+        if (error && askReasons && missingColumn(error)) {
+          askReasons = false;
+          allRows = [];
+          from = 0;
+          continue;
+        }
         if (error) {
           console.error("Failed to load user deck:", error);
           // Keep whatever is already on screen. Blanking a cached deck over a
@@ -226,6 +247,9 @@ export function useUserDeck(user) {
       // Archived cards are out of circulation: not studied, listed or counted.
       // See lib/archive.js.
       const shaped = allRows.filter((row) => !isArchived(row)).map(shapeRow);
+      setArchived(allRows.filter(isArchived).map((row) => ({
+        f: row.front, b: row.back, source: row.source, row_id: row.id, reason: row.archived_reason ?? null,
+      })));
         // Sort by frequency desc to match legacy buildDeck ordering
         shaped.sort((a, b) => b.freq - a.freq);
       const hourAgo = Date.now() - 60 * 60 * 1000;
@@ -287,5 +311,5 @@ export function useUserDeck(user) {
     try { if (userId) localStorage.removeItem(CACHE_PREFIX + userId); } catch {}
   }, [userId]);
 
-  return { cards, loaded, reload, patch, patchAll, add, freshSeq: fetched.seq, fetchedAt: fetched.at };
+  return { cards, archived, loaded, reload, patch, patchAll, add, freshSeq: fetched.seq, fetchedAt: fetched.at };
 }

@@ -1,11 +1,12 @@
 # Where Claude is used
 
 Claude is only ever called from the server, never from the browser. It does
-four jobs in the app, and is called again each week to test two of them:
+five jobs in the app, and is called again each week to test two of them:
 
 | Job | Model | Paid for by |
 |---|---|---|
 | Reading class notes into cards | Haiku 4.5 | the owner for the linked notebook; the student for an upload |
+| Settling whether a new card is one the student has | Opus 5.5 | the same as the reading |
 | Judging a disputed mark | Opus 5 | the student |
 | Reviewing feedback | Opus 5.5 | the owner |
 | The tutor | Sonnet 5 | the student |
@@ -22,6 +23,23 @@ A class is a few hundred words, and the job is to pull out the words, phrases
 and conjugations worth a card, so the fastest model does it. The rules for what
 becomes a card, and how the linked notebook is read, are in
 [How class notes become cards](cards-from-notes.md).
+
+## Settling look-alike cards
+
+A new card from the notes is often a word the student already has, written a
+little differently. Fixed rules settle most of them. Where a fixed rule would
+also join words that differ ("un état" and "l'État"), the pair is put to
+Claude: the same card to learn, or different? All of a reading's pairs go in
+one request, or a few side by side for a big first upload. "Same" only adds
+the class date to the student's card. If no answer comes, the card waits for
+the next reading. Every answer is kept with the card pair and a version of the
+question ([details](cards-from-notes.md#one-card-per-thing-to-learn)).
+
+Each morning the server also asks the same question about cards already in a
+deck that look alike and haven't been judged, so a repeat that got in another
+way is caught: two cards Claude calls the same fail the morning status check.
+The question itself is tested on repeats the owner put away and on pairs that
+must stay apart ([Evaluation harness](evaluation-harness.md#judging-look-alike-cards)).
 
 ## Judging a disputed mark
 
@@ -117,6 +135,7 @@ reply capped at 1,000 tokens).
 
 - `api/parse-cahier.js`, `api/cahier-parse.js`, `api/cahier-sync.js` and
   `api/cahier-daily.js`: reading class notes
+- `api/_lib/sameCardQuestion.js`: settling look-alike cards
 - `api/review-answer.js`: judging a disputed mark, and (through
   `api/_lib/feedbackReview.js`) reviewing feedback
 - `api/chat.js`: the tutor

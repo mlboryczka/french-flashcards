@@ -9,6 +9,11 @@
 // student's settings are fitted to them after about 1,000 answers; these keep
 // the starting ones.
 //
+// It also runs the two checks of the deck (2026-10-06): no card twice, and
+// nothing deleted or corrected back. The simulated deck holds each card once,
+// as the app makes it, so the first passes; nothing is deleted or corrected,
+// so the second waits.
+//
 // Each student is also run messy (the habits in student.mjs: an old copy
 // dealing on opening, class notes arriving mid-set, reloads, detours into a
 // lesson), which the checks must take without a false alarm. One thing a
@@ -19,7 +24,7 @@
 //   npm run simulate -- 60 strong    60 days, strong students only
 process.env.TZ = "America/New_York";
 
-const { simulate, TIME_ZONE, STUDENTS, lessonRank, detourRepeats } = await import("./student.mjs");
+const { simulate, TIME_ZONE, STUDENTS, lessonRank, detourRepeats, standInVerdicts } = await import("./student.mjs");
 const { runStatusChecks } = await import("../../src/lib/statusChecks.js");
 
 const args = process.argv.slice(2);
@@ -35,8 +40,11 @@ for (const student of students) {
     const t = Date.now();
     const run = simulate({ days, seed, student, messy });
     const end = Date.parse(run.answers.at(-1).answered_at) + 3600000;
+    // Claude's verdicts on look-alike cards as the morning check keeps them,
+    // from a stand-in that calls every pair different; no corrections.
     const report = runStatusChecks({
       answers: run.answers, deals: run.deals, cards: run.cards, settings: run.settings,
+      pairs: standInVerdicts(run.cards), corrections: [],
       timeZone: TIME_ZONE, lessonRank, now: end,
     });
     const m = run.metrics;
