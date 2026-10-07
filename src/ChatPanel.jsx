@@ -248,6 +248,9 @@ export default function ChatPanel({
   // A narrower window has no room to reflow, so the panel covers the app with
   // a scrim.
   reflow = false,
+  // The scrim starts right of the sidebar, so the sidebar stays usable:
+  // covered, every press on it was lost, the nav toggle included.
+  sidebarWidth = 0,
 }) {
   const threadKey = user?.id || "";
   const [messages, setMessages] = useState(() => readThread(threadKey));
@@ -717,9 +720,11 @@ export default function ChatPanel({
   return createPortal(
     <div style={S.wrap}>
       {/* Dims the app behind an overlay-mode panel. Not a dismissal: see the
-          note above — the ✕ and the nav toggle are the only ways out. */}
+          note above — the ✕ and the nav toggle are the only ways out. Fading
+          out after the ✕ it lets clicks through, or for 420ms it would
+          swallow the next one, invisibly. */}
       {!activeReflow && (
-        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} />
+        <div style={{ ...S.scrim, left: sidebarWidth, opacity: entered ? 1 : 0, pointerEvents: entered ? "auto" : "none" }} />
       )}
       <aside
         ref={panelRef}
@@ -859,12 +864,14 @@ const S = {
   // pointerEvents none so that in reflow mode the app beside the panel stays
   // clickable; the scrim and panel opt themselves back in.
   wrap: { position: "fixed", inset: 0, zIndex: 1000, pointerEvents: "none" },
+  // Longhands: `left` is set per render to clear the sidebar. Its move goes
+  // with the sidebar's own when it is minimized or expanded.
   scrim: {
     position: "absolute",
-    inset: 0,
+    top: 0, right: 0, bottom: 0, left: 0,
     background: "rgba(3,22,50,0.28)",
     pointerEvents: "auto",
-    transition: `opacity ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
+    transition: `opacity ${PANEL_ANIM_MS}ms ${PANEL_EASING}, left ${PANEL_ANIM_MS}ms ${PANEL_EASING}`,
   },
   panel: {
     position: "absolute",
