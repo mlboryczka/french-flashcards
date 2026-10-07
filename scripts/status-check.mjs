@@ -14,6 +14,7 @@
 //   node scripts/status-check.mjs --tz Europe/Paris   time zone for answers saved without one
 //   node scripts/status-check.mjs --all               every detail, not the first six per check
 //   node scripts/status-check.mjs --everyone          every student, and the tests of Claude's work
+//   node scripts/status-check.mjs --everyone --record the same, saving what's been raised (the morning check)
 //
 // The time zone defaults to this computer's; answers saved since migration_013
 // carry their own.
@@ -52,23 +53,39 @@ if (missing.length) {
 // --everyone: the morning check. The same nine checks on every student who has
 // answered anything, run now (api/_lib/statusDaily.js), and whether a change to
 // how Claude is asked has made it get wrong what it got right before
-// (api/_lib/evalStatus.js). Only reads. Exits 1 when anything needs looking at.
+// (api/_lib/evalStatus.js). Reads the database only.
+//
+// Each problem found is told apart as new, or raised before: the list of those
+// already raised with the owner is kept on this Mac, outside the repo, in
+// RAISED_FILE. --record saves today's problems to it (the scheduled morning
+// check passes it); without it the list is only read. A problem that stops
+// failing drops off the list, so if it comes back it's new again.
+//
+// The last line says which: "All clear.", "Nothing new: ..." or "Something new
+// needs looking at."; the exit code is 0, 0 and 1.
 if (args.includes("--everyone")) {
+  const os = await import("node:os");
   const { createClient } = await import("@supabase/supabase-js");
   const { checkEveryone } = await import("../api/_lib/statusDaily.js");
   const { evalStatus } = await import("../api/_lib/evalStatus.js");
   const { statusText } = await import("../src/lib/statusChecks.js");
   const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  let amiss = false;
+  const RAISED_FILE = path.join(os.homedir(), ".claude", "scheduled-tasks", "morning-check", "raised.json");
+  let raised = {};
+  try { raised = JSON.parse(fs.readFileSync(RAISED_FILE, "utf8")); } catch {}
+  const problems = []; // one line each, also the key in RAISED_FILE
+  let unreadable = false;
 
   const reports = await checkEveryone(db);
   console.log(`Every student who has answered (${reports.length}), checked now:`);
   for (const r of [...reports].sort((a, b) => Number(a.ok) - Number(b.ok))) {
-    if (r.error) { amiss = true; console.log(`\n  ${r.user_email}: couldn't be checked: ${r.error}`); continue; }
+    if (r.error) { unreadable = true; console.log(`\n  ${r.user_email}: couldn't be checked: ${r.error}`); continue; }
     if (r.ok) { console.log(`  ${r.user_email}: ${r.answers} answers, every check passes or waits.`); continue; }
-    amiss = true;
     console.log(`\n  ${r.user_email}: ${r.answers} answers, ${r.failing} check${r.failing === 1 ? "" : "s"} failing.`);
     console.log(statusText(r.report).split("\n").map((l) => `    ${l}`).join("\n"));
+    for (const c of r.report.results.filter((x) => x.status === "fail")) {
+      for (const d of c.details.length ? c.details : [c.summary]) problems.push(`${r.user_email}: ${c.title}: ${d}`);
+    }
   }
 
   const evals = await evalStatus(db);
@@ -76,13 +93,33 @@ if (args.includes("--everyone")) {
     const e = evals[kind] || {};
     const last = e.latest ? `last tested ${e.latest.ran_at.slice(0, 10)} (version ${e.latest.version}, ${e.latest.passed} of ${e.latest.cases} right every time)` : "not tested yet";
     console.log(`\n${label}: ${last}.`);
-    if (e.error) { amiss = true; console.log(`  Couldn't read its tests: ${e.error}`); }
-    for (const line of e.regressions || []) { amiss = true; console.log(`  - ${line}`); }
+    if (e.error) { unreadable = true; console.log(`  Couldn't read its tests: ${e.error}`); }
+    for (const line of e.regressions || []) { console.log(`  - ${line}`); problems.push(`${label}: ${line}`); }
     if (!e.error && !(e.regressions || []).length) console.log("  Nothing it got right before is wrong now.");
   }
 
-  console.log(amiss ? "\nSomething needs looking at." : "\nAll clear.");
-  process.exit(amiss ? 1 : 0);
+  const fresh = problems.filter((x) => !raised[x]);
+  const old = problems.filter((x) => raised[x]);
+  if (fresh.length) {
+    console.log(`\nNew since the last morning check (${fresh.length}):`);
+    for (const x of fresh) console.log(`  - ${x}`);
+  }
+  if (old.length) {
+    console.log(`\nRaised with the owner before and still failing (${old.length}):`);
+    for (const x of old) console.log(`  - ${x} (raised ${raised[x]})`);
+  }
+  if (args.includes("--record")) {
+    const today = new Date().toISOString().slice(0, 10);
+    const keep = Object.fromEntries(problems.map((x) => [x, raised[x] || today]));
+    fs.mkdirSync(path.dirname(RAISED_FILE), { recursive: true });
+    fs.writeFileSync(RAISED_FILE, JSON.stringify(keep, null, 2) + "\n");
+  }
+
+  const isNew = fresh.length > 0 || unreadable;
+  console.log(!problems.length && !unreadable ? "\nAll clear."
+    : isNew ? "\nSomething new needs looking at."
+    : "\nNothing new: everything still failing was raised before.");
+  process.exit(isNew ? 1 : 0);
 }
 
 // The admin's account: ADMIN_EMAIL, or the app's own VITE_ADMIN_EMAIL, which a
