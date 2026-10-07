@@ -277,7 +277,12 @@ export function cardIndex(cards = []) {
     for (const p of k.parts) take(byLoose.get(p));
     take(byPart.get(k.loose));
     take(byKB.get(k.kb));
-    for (const d of new Set(k.drop)) take(byDrop.get(d), (c) => sameMeaning(c.back, card.back));
+    // One word more or fewer, with English agreeing. A drill answers in
+    // French, so its answer has to be the same: compared as English, "ils
+    // vivent" and "ils suivent" share "ils", and every "→ ils/elles" drill
+    // paired with every other (95 of the 958 questions the owner's deck
+    // raised, 2026-10-06).
+    for (const d of new Set(k.drop)) take(byDrop.get(d), (c) => englishAgrees(c, card));
     if (k.answer) {
       take(byLoose.get(k.answer));
       take(byAnswer.get(k.answer), (c) => !(isDrillFront(c.front) && isDrillFront(card.front)));

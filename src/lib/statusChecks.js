@@ -21,6 +21,15 @@
 //   3. Is it the best way? That needs the simulations. What the record can
 //      say is whether FSRS's predictions match the student's real results.
 //
+// And since 2026-10-06, two checks of the deck itself, after the owner's
+// "there should be NO duplicates from reuploading an updated cahier" and
+// "make sure the evaluation harness is catching this properly": no card in
+// study twice, and nothing the student deleted or corrected back. They read
+// two more records:
+//
+//   card_pairs        Claude's verdicts on look-alike cards (migration_016)
+//   parse_corrections the owner's corrections of cards (migration_002)
+//
 // Answers before CHECKS_START were scheduled under older rules (UTC days, a
 // three-day minimum, other starting weights) and are read only as history.
 // Every day is the student's own: 4am to 4am, in the time zone the answer was
@@ -35,6 +44,7 @@ import { lessonIdOf } from "./lessonSource.js";
 import { classifyCard } from "./cardTypes.js";
 import { isArchived } from "./archive.js";
 import { CAT_DB_TO_UI } from "./cardCategories.js";
+import { cardIndex, isSureMatch, sureKey } from "./sameCard.js";
 import { forgetting_curve, get_fuzz_range } from "ts-fsrs";
 
 // The first study day checked: the day the current rules and the check
@@ -127,7 +137,40 @@ function indexRecord({ answers, cards, deals, timeZone }) {
     while (j < times.length && times[j] < ms(s.dealt_at)) j++;
     if (j >= times.length || times[j] >= ms(next.dealt_at)) replaced.add(s);
   }
-  return { rows, byItem, deck, sets, tzOf, replaced, classArrived: classArrivals(cards, timeZone) };
+  return { rows, byItem, deck, sets, tzOf, replaced, classArrived: classArrivals(cards, timeZone), datesMoved: datesMoved(cards) };
+}
+
+// Class dates a card may have gained when a repeat of it was put away: the
+// clean-up of 2026-10-06 moved each put-away card's dates onto the card kept,
+// after sets that never saw them there (four of the owner's sets then failed
+// "New cards came in the agreed order" over "lourd (adj)", which had gained
+// a class from "lourd, lourde (adj)"). card row id -> [{ at, dates }].
+//
+// The repeat is the card named by merged_into (migration_016). A card put away
+// before then names nothing, so a card out of study with no reason that the
+// card-writers' rule or near search says looks like the card stands in. When
+// it was put away is archived_at, else the row's last change.
+function datesMoved(rows) {
+  const out = new Map();
+  const add = (id, r) => {
+    const at = Number.isFinite(ms(r.archived_at)) ? ms(r.archived_at) : Number.isFinite(ms(r.updated_at)) ? ms(r.updated_at) : Infinity;
+    if (!out.has(id)) out.set(id, []);
+    out.get(id).push({ at, dates: new Set(r.dates) });
+  };
+  const live = (rows || []).filter((r) => r && r.id != null && r.front && !isArchived(r) && Array.isArray(r.dates) && r.dates.length);
+  const liveIds = new Set(live.map((r) => String(r.id)));
+  const away = (rows || []).filter((r) => r && r.front && isArchived(r) && Array.isArray(r.dates) && r.dates.length);
+  for (const r of away) if (r.merged_into != null && liveIds.has(String(r.merged_into))) add(r.merged_into, r);
+  const unnamed = away.filter((r) => r.merged_into == null && r.archived_reason == null);
+  if (unnamed.length) {
+    const index = cardIndex(unnamed);
+    for (const c of live) {
+      for (const h of [index.sure(c), ...index.near(c)]) {
+        if (h && h.dates.some((d) => c.dates.includes(d))) add(c.id, h);
+      }
+    }
+  }
+  return out;
 }
 
 // When each class's notes arrived: the first card carrying its date that was
@@ -525,13 +568,18 @@ function checkNewOrder(idx, ctx) {
     // notes arrived were faulted for not putting that class first).
     const known = (iso) => labelNo(iso) > today ? "no" : idx.classArrived.get(iso) <= at ? "yes" : "maybe";
     const sure = (iso) => known(iso) === "yes";
+    // A card whose class dates may have changed since the set was dealt (a
+    // repeat put away into it, datesMoved) can't be placed as it stood then.
+    const changed = (card) => (idx.datesMoved.get(card.row_id) || []).some((m) => m.at > at && card.dates.some((d) => m.dates.has(d)));
     const keyed = (card) => ({
       card,
+      changed: changed(card),
       unsure: card.source === "tutor-chat" ? [] : classDaysOf(card).filter((iso) => known(iso) === "maybe"),
       key: newCardKey(card, opts, sure),
     });
     // `w` comes before `x` however the uncertain dates stood.
     const surelyBefore = (w, x) => {
+      if (w.changed || x.changed) return false;
       if (!w.unsure.length && !x.unsure.length) return before(w.key, x.key);
       const unsure = [...new Set([...w.unsure, ...x.unsure])];
       if (unsure.length > 4) return false;
@@ -693,6 +741,229 @@ function checkPredictions(idx, ctx) {
   return { ...out, status: "pass", summary, details: lines };
 }
 
+// ── The deck: no card twice, nothing back ─────────────────────────────
+//
+// Both judge with the code every card-writer uses to decide whether a new
+// card is one the student already has (src/lib/sameCard.js), imported, never
+// copied, so the check and the card-writers can't come to mean different
+// things by "the same card".
+
+// How many look-alike pairs the morning check (api/_lib/statusDaily.js) puts
+// to Claude for one student in a day. A deck read before the 2026-10-06 fix
+// has a backlog (the owner's raised 875 pairs), worked through over a few
+// mornings; after that, the cards a day adds raise a handful.
+export const LOOKALIKES_PER_DAY = 200;
+
+const tidyText = (s) => String(s ?? "").normalize("NFC").replace(/[’‘`]/g, "'").replace(/\s+/g, " ").trim();
+const pairKey = (x, y) => {
+  const [a, b] = [String(x), String(y)].sort((p, q) => (Number(p) - Number(q)) || (p < q ? -1 : p > q ? 1 : 0));
+  return `${a}|${b}`;
+};
+const isLesson = (row) => typeof row?.source === "string" && row.source.startsWith("lesson:");
+const quoted = (row) => `“${row.front}”${isLesson(row) ? " (from a lesson)" : ""}`;
+const listed = (names) => (names.length <= 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
+const TIMES = ["", "once", "twice", "three times", "four times", "five times"];
+
+// The cards in study that are one card twice or more, by the sure rule and by
+// Claude's verdicts, and the look-alike pairs Claude hasn't judged yet.
+//
+//   cards  user_cards rows (archived ones are left out here)
+//   pairs  card_pairs rows: Claude's verdicts, from an upload, the sync or the
+//          morning check
+//
+// A verdict counts only while both cards still read as they did when Claude
+// judged them: a card edited since is a new question. The latest verdict on a
+// pair is the one that counts.
+export function lookalikes({ cards = [], pairs = [] } = {}) {
+  const inStudy = (cards || []).filter((r) => r && r.id != null && r.front && !isArchived(r));
+  const byId = new Map(inStudy.map((r) => [String(r.id), r]));
+
+  // The sure rule, run on every two cards whose French it reads alike.
+  const parent = new Map(inStudy.map((r) => [String(r.id), String(r.id)]));
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  const buckets = new Map();
+  for (const r of inStudy) {
+    const k = sureKey(r.front, r.back).key;
+    if (!k) continue;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(r);
+  }
+  const surely = new Set();
+  for (const list of buckets.values()) {
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      if (!isSureMatch(list[i], list[j])) continue;
+      parent.set(find(String(list[i].id)), find(String(list[j].id)));
+      surely.add(pairKey(list[i].id, list[j].id));
+    }
+  }
+  const comps = new Map();
+  for (const r of inStudy) {
+    const root = find(String(r.id));
+    if (!comps.has(root)) comps.set(root, []);
+    comps.get(root).push(r);
+  }
+  const byAge = (x, y) => (Number(x.id) - Number(y.id)) || (String(x.id) < String(y.id) ? -1 : 1);
+  const groups = [...comps.values()].filter((g) => g.length > 1).map((g) => g.sort(byAge));
+
+  // Claude's verdicts that still hold.
+  const verdicts = new Map();
+  const reads = (row, front, back) => tidyText(row.front) === tidyText(front) && tidyText(row.back) === tidyText(back);
+  for (const p of pairs || []) {
+    if (!p || p.card_a == null || p.card_b == null || (p.verdict !== "same" && p.verdict !== "different")) continue;
+    const a = byId.get(String(p.card_a));
+    const b = byId.get(String(p.card_b));
+    if (!a || !b || a === b || !reads(a, p.a_front, p.a_back) || !reads(b, p.b_front, p.b_back)) continue;
+    const key = pairKey(a.id, b.id);
+    const at = ms(p.asked_at);
+    const had = verdicts.get(key);
+    if (!had || (Number.isFinite(at) && !(at < had.at))) verdicts.set(key, { verdict: p.verdict, at, a, b });
+  }
+  const same = [...verdicts.entries()]
+    .filter(([key, v]) => v.verdict === "same" && !surely.has(key))
+    .map(([, v]) => ({ a: [v.a, v.b].sort(byAge)[0], b: [v.a, v.b].sort(byAge)[1], at: v.at }));
+
+  // The near search, as a new card meets it: every two cards in study that
+  // look alike without being surely one card.
+  const index = cardIndex(inStudy);
+  const near = new Map();
+  for (const r of inStudy) {
+    for (const n of index.near(r)) {
+      if (n.id == null || !byId.has(String(n.id))) continue;
+      const key = pairKey(r.id, n.id);
+      if (!near.has(key)) near.set(key, [r, n].sort(byAge));
+    }
+  }
+  // Newest cards first: those are the likeliest new repeats.
+  const unjudged = [...near.entries()].filter(([key]) => !verdicts.has(key)).map(([, [a, b]]) => ({ a, b }))
+    .sort((x, y) => byAge(y.b, x.b) || byAge(y.a, x.a));
+  return { inStudy, groups, same, unjudged, judged: near.size - unjudged.length, verdicts: verdicts.size };
+}
+
+function checkNoRepeats(cards, ctx) {
+  const out = { id: "repeats", title: "No card is in your deck twice" };
+  const rep = lookalikes({ cards, pairs: ctx.pairs || [] });
+  if (!rep.inStudy.length) return { ...out, status: "wait", summary: "No cards in study yet.", details: [] };
+  const bad = [];
+  for (const g of rep.groups) {
+    bad.push(`${listed(g.map(quoted))} are one card ${TIMES[g.length] || `${g.length} times`}: the same French, and English that agrees.`);
+  }
+  for (const p of rep.same) {
+    const on = Number.isFinite(p.at) ? ` on ${when(p.at, ctx.timeZone)}` : "";
+    bad.push(`${quoted(p.a)} and ${quoted(p.b)} are one card twice: Claude judged them the same card to learn${on}.`);
+  }
+  if (bad.length) {
+    const extra = rep.groups.reduce((n, g) => n + g.length - 1, 0) + rep.same.length;
+    return { ...out, status: "fail", summary: `${plural(extra, "card")} in study ${extra === 1 ? "repeats" : "repeat"} another card.`, details: bad };
+  }
+  const n = rep.inStudy.length;
+  const sure = `No two of your ${plural(n, "card")} in study are surely the same card`;
+  if (!ctx.pairsTable) {
+    return { ...out, status: "wait", summary: `${sure}. Look-alikes wait for the database update (migration_016), which keeps Claude's verdicts on them.`, details: [] };
+  }
+  if (!ctx.pairs) return { ...out, status: "wait", summary: `${sure}. Claude's verdicts on look-alikes weren't read.`, details: [] };
+  if (rep.unjudged.length) {
+    const left = rep.unjudged.length;
+    return {
+      ...out, status: "wait",
+      summary: `${sure}, and none Claude has judged the same. ${plural(left, "look-alike pair")} ${left === 1 ? "is" : "are"} still to be put to Claude; the morning check asks about up to ${LOOKALIKES_PER_DAY} a day.`,
+      details: [],
+    };
+  }
+  const how = rep.judged
+    ? `by the rule, and Claude judged ${rep.judged === 1 ? "the one look-alike pair" : `all ${rep.judged} look-alike pairs`} different`
+    : "by the rule, and none look alike";
+  return { ...out, status: "pass", summary: `None of your ${plural(n, "card")} in study is there twice: ${how}.`, details: [] };
+}
+
+// What the student took out or put right, and must not see again:
+//   a card they removed in the app (archived_reason "removed", migration_016);
+//   a card the owner deleted, logged in parse_corrections before Remove kept
+//   the row (Naza, deleted in April, was back on 4 September);
+//   the form a card had before the owner corrected it ("Je parle jamais de
+//   Pierre." with its full stop, also back on 4 September). A form a later
+//   correction put back is wanted again, and isn't watched.
+function unwanted(cards, corrections) {
+  const out = [];
+  for (const r of cards || []) {
+    if (r && isArchived(r) && r.archived_reason === "removed") {
+      out.push({ kind: "removed", front: r.front, back: r.back, at: ms(r.archived_at), id: r.id });
+    }
+  }
+  const rows = (corrections || []).filter((c) => c && (c.action === "delete" || c.action === "edit") && c.original_front)
+    .sort((a, b) => ms(a.created_at) - ms(b.created_at));
+  rows.forEach((c, i) => {
+    const at = ms(c.created_at);
+    if (c.action === "delete") {
+      out.push({ kind: "deleted", front: c.original_front, back: c.original_back, at, id: c.card_id });
+      return;
+    }
+    const frontChanged = tidyText(c.original_front) !== tidyText(c.corrected_front);
+    const backChanged = tidyText(c.original_back) !== tidyText(c.corrected_back);
+    if (!frontChanged && !backChanged) return; // a save that changed nothing
+    const putBack = rows.slice(i + 1).some((l) => l.action === "edit" &&
+      tidyText(l.corrected_front) === tidyText(c.original_front) &&
+      (frontChanged || tidyText(l.corrected_back) === tidyText(c.original_back)));
+    if (putBack) return;
+    out.push({
+      kind: "corrected", front: c.original_front, back: c.original_back, at, id: c.card_id,
+      to: { front: c.corrected_front, back: c.corrected_back }, frontChanged,
+      // Whether the rule can tell the two Frenches apart. When it can't (a
+      // full stop, a capital, a label), only the exact French is the wrong one.
+      ruleTells: sureKey(c.original_front, c.original_back).key !== sureKey(c.corrected_front, c.corrected_back).key,
+    });
+  });
+  return out;
+}
+
+// Whether card `r`, in study, is `u` back. A card made before `u` was taken
+// out or corrected isn't: it was there already (the card a duplicate was
+// deleted beside, or the corrected card itself).
+function isBack(r, u) {
+  const made = ms(r.created_at);
+  const madeAfter = Number.isFinite(made) && Number.isFinite(u.at) && made > u.at;
+  const itself = u.id != null && String(r.id) === String(u.id);
+  if (u.kind !== "corrected") return itself || (madeAfter && isSureMatch(r, u));
+  if (!itself && !madeAfter) return false;
+  if (!u.frontChanged) return tidyText(r.front) === tidyText(u.front) && tidyText(r.back) === tidyText(u.back);
+  if (itself || !u.ruleTells) return tidyText(r.front) === tidyText(u.front);
+  return isSureMatch(r, u) && !isSureMatch(r, u.to);
+}
+
+function checkNothingBack(cards, ctx) {
+  const out = { id: "nothing-back", title: "Nothing you deleted or corrected came back" };
+  const watch = unwanted(cards, ctx.corrections);
+  const inStudy = (cards || []).filter((r) => r && r.id != null && r.front && !isArchived(r));
+  const bad = [];
+  for (const r of inStudy) {
+    const u = watch.find((x) => isBack(r, x));
+    if (!u) continue;
+    const on = Number.isFinite(u.at) ? ` on ${when(u.at, ctx.timeZone)}` : "";
+    const made = Number.isFinite(ms(r.created_at)) ? when(ms(r.created_at), ctx.timeZone) : null;
+    const itself = u.id != null && String(r.id) === String(u.id);
+    if (u.kind === "corrected" && !u.frontChanged) {
+      bad.push(`“${r.front}” has its English back as “${r.back}”, which you corrected to “${u.to.back}”${on}.`);
+    } else if (u.kind === "corrected") {
+      bad.push(`“${r.front}” is back in study as it was before you corrected it to “${u.to.front}”${on}${!itself && made ? `; it was made again on ${made}` : ""}.`);
+    } else if (itself) {
+      bad.push(`“${r.front}” is in study, though you ${u.kind === "removed" ? "removed" : "deleted"} it${on}.`);
+    } else {
+      const was = tidyText(r.front) === tidyText(u.front) ? "it" : `“${u.front}”`;
+      bad.push(`“${r.front}” is back in study: you ${u.kind === "removed" ? "removed" : "deleted"} ${was}${on}, and ${was === "it" ? "it" : "this"} was made again${made ? ` on ${made}` : ""}.`);
+    }
+  }
+  if (bad.length) {
+    return { ...out, status: "fail", summary: `${plural(bad.length, "card")} you deleted or corrected ${bad.length === 1 ? "is" : "are"} back in study.`, details: bad };
+  }
+  const none = !watch.length ? ""
+    : watch.length === 1 ? "The card you deleted or corrected isn't back."
+      : `None of the ${watch.length} cards you deleted or corrected is back.`;
+  if (!ctx.pairsTable) {
+    return { ...out, status: "wait", summary: `${none ? `${none} ` : ""}Cards removed in the app wait for the database update (migration_016), which keeps why a card was taken out.`, details: [] };
+  }
+  if (!watch.length) return { ...out, status: "wait", summary: "Nothing deleted, removed or corrected yet.", details: [] };
+  return { ...out, status: "pass", summary: none, details: [] };
+}
+
 // ── Running them ───────────────────────────────────────────────────────
 //
 //   answers   card_reviews rows (all of them: earlier ones are history)
@@ -704,9 +975,15 @@ function checkPredictions(idx, ctx) {
 //   lessonRank  the lessons' teaching order (data/lessons)
 //   from      the first study day judged (YYYY-MM-DD)
 //   examples  how many details to keep per check
+//   pairs     card_pairs rows: Claude's verdicts on look-alike cards; null
+//             when they weren't read
+//   pairsTable  false when the database hasn't migration_016 yet: no
+//             card_pairs, and no record of why a card was taken out
+//   corrections  parse_corrections rows for this student; null when unread
 export function runStatusChecks({
   answers = [], deals = [], cards = [], settings = null, timeZone = null,
   now = Date.now(), dealsTable = true, lessonRank = null, from = CHECKS_START, examples = EXAMPLES,
+  pairs = null, pairsTable = true, corrections = null,
 } = {}) {
   const idx = indexRecord({ answers, cards, deals, timeZone });
   const startDay = labelNo(from);
@@ -718,7 +995,7 @@ export function runStatusChecks({
   const dealsFromDay = firstDealDay == null ? null : Math.max(startDay, firstDealDay + 1);
   const dealsOn = dealsTable && dealsFromDay != null && idx.rows.some((r) => dayNo(ms(r.answered_at), idx.tzOf(r)) >= dealsFromDay);
   const ctx = {
-    now, settings, lessonRank, inWindow, dealsOn, timeZone,
+    now, settings, lessonRank, inWindow, dealsOn, timeZone, pairs, pairsTable, corrections,
     dealsWaiting: !dealsTable
       ? "Waiting for the database update."
       : "Starts the day after the first set is recorded.",
@@ -737,6 +1014,8 @@ export function runStatusChecks({
     checkFirstMeetings(idx, ctx),
     checkDealt(idx, ctx),
     checkPredictions(idx, ctx),
+    checkNoRepeats(cards, ctx),
+    checkNothingBack(cards, ctx),
   ].map((r) => ({ ...r, details: r.details.slice(0, examples), more: Math.max(0, r.details.length - examples) }));
   const counted = idx.rows.filter((r) => r.counted && inWindow(r)).length;
   const week = idx.rows.filter((r) => ms(r.answered_at) >= now - 7 * DAY);
@@ -759,5 +1038,18 @@ export function statusText(report) {
     for (const d of r.details) lines.push(`  - ${d}`);
     if (r.more) lines.push(`  - and ${r.more} more`);
   }
+  if (report.judging) lines.push(`\n${judgingText(report.judging)}`);
   return lines.join("\n");
+}
+
+// What the morning check's questions to Claude came to (api/_lib/statusDaily.js
+// keeps it on the report as `judging`): how many look-alike pairs it asked
+// about, what Claude said, and how many wait for tomorrow.
+export function judgingText(j) {
+  if (!j) return "";
+  if (j.skipped) return `Look-alike cards: none put to Claude this morning (${j.skipped}).`;
+  const said = j.answered ? ` Claude judged ${plural(j.same || 0, "pair")} the same card and ${j.answered - (j.same || 0)} different.` : "";
+  const left = j.left ? ` ${plural(j.left, "pair")} left for tomorrow.` : " None left.";
+  const failed = j.error ? ` ${String(j.error).replace(/[.\s]+$/, "")}.` : "";
+  return `Look-alike cards: ${plural(j.asked || 0, "pair")} put to Claude this morning.${said}${failed}${left}`;
 }

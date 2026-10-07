@@ -23,6 +23,8 @@ import { RAW } from "../../src/data/cards.js";
 import { LESSONS, lessonRank } from "../../src/data/lessons/index.js";
 import { lessonSource, lessonCardKey, lessonIdOf } from "../../src/lib/lessonSource.js";
 import { CAT_DB_TO_UI, CAT_UI_TO_DB } from "../../src/lib/cardCategories.js";
+import { cardIndex } from "../../src/lib/sameCard.js";
+import { lookalikes } from "../../src/lib/statusChecks.js";
 
 export const TIME_ZONE = "America/New_York";
 export const USER_ID = "00000000-0000-0000-0000-00000000beef";
@@ -57,6 +59,15 @@ const BLANK = {
 // The demo deck and the lessons, shaped as useUserDeck shapes rows. Class
 // dates are moved so the latest class was the day before the student starts,
 // as a real notebook's would be: some classes are "recent", most older.
+//
+// The deck holds each card once, as the app makes it (2026-10-06): a word
+// the notebook has twice is one card with both classes' dates, as a reading
+// merges it (src/lib/cardMatch.js: "une marque" and "la marque"), and a lesson
+// card the student already has from their notes isn't added, as the lesson
+// sync leaves it out (src/lib/lessonSync.js: "des écouteurs (m)"). Both by the
+// rule every card-writer uses (src/lib/sameCard.js), so the status check's
+// "No card is in your deck twice" passes on a simulated record for the reason
+// it passes on a real one.
 export function makeDeck({ start, cards: limit = Infinity } = {}) {
   const latest = RAW.flatMap((r) => r[3] || []).sort().pop();
   const shift = Math.round((start - DAY - Date.parse(`${latest}T12:00:00`)) / DAY);
@@ -69,18 +80,27 @@ export function makeDeck({ start, cards: limit = Infinity } = {}) {
   const blank = BLANK;
   const seen = new Set();
   const cards = [];
+  const own = cardIndex([]);
   let rowId = 1;
   for (const [f, b, cat, dates] of RAW) {
     const id = f.toLowerCase().trim();
     if (seen.has(id) || cards.length >= limit) continue;
-    seen.add(id);
     const ds = (dates || []).map(move);
-    cards.push({ f, b, cat, dates: ds, freq: ds.length, id, row_id: rowId++, source: "cahier-upload", created_at: created, ...blank });
+    const twin = own.sure({ front: f, back: b });
+    if (twin) {
+      twin.card.dates = [...new Set([...twin.card.dates, ...ds])].sort();
+      twin.card.freq = twin.card.dates.length;
+      continue;
+    }
+    seen.add(id);
+    const card = { f, b, cat, dates: ds, freq: ds.length, id, row_id: rowId++, source: "cahier-upload", created_at: created, ...blank };
+    cards.push(card);
+    own.add({ front: f, back: b, card });
   }
   for (const lesson of LESSONS) {
     for (const [front, back, cat, , was] of lesson.cards) {
       const id = front.toLowerCase().trim();
-      if (seen.has(id)) continue;
+      if (seen.has(id) || own.sure({ front, back })) continue;
       seen.add(id);
       cards.push({
         f: front, b: back, cat: CAT_DB_TO_UI[cat] || "gram", dates: [], freq: 0, id, row_id: rowId++,
@@ -89,6 +109,17 @@ export function makeDeck({ start, cards: limit = Infinity } = {}) {
     }
   }
   return cards;
+}
+
+// The verdicts the server's morning check would have kept for a simulated
+// deck (api/_lib/statusDaily.js asks Claude about every two cards in study
+// that look alike): with a stand-in for Claude that calls every pair
+// different, which is right for a deck that holds each card once (makeDeck).
+export function standInVerdicts(cards, at = null) {
+  return lookalikes({ cards, pairs: [] }).unjudged.map(({ a, b }) => ({
+    card_a: a.id, card_b: b.id, a_front: a.front, a_back: a.back, b_front: b.front, b_back: b.back,
+    verdict: "different", asked_at: at,
+  }));
 }
 
 // A shaped card back into a user_cards row, as the database would hold it:

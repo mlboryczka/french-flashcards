@@ -65,10 +65,16 @@
 -- 4. card_pairs: every same-or-different question Claude answered about two
 --    look-alike cards (api/_lib/sameCardQuestion.js): the two cards (ids, and
 --    their text as Claude saw it, since a card judged "same" is never saved
---    and has no id), the verdict, and the version of the question. What the
---    status checks test Claude's verdicts against.
+--    and has no id), the verdict, and the version of the question. The
+--    upload and the sync keep the verdicts they ask for, and the morning
+--    check asks about cards already in study that look alike (source
+--    'check', api/_lib/statusDaily.js); "No card is in your deck twice"
+--    fails on two cards in study Claude judged the same.
 --
--- 5. eval_runs.kind may be 'repeats' too: the checks for repeated cards.
+-- 5. eval_runs.kind may be 'repeats' too: the test of Claude's
+--    same-or-different question (api/_lib/repeatsChecks.js), whose cases are
+--    the cards put away as a repeat (archived_reason 'duplicate', with
+--    merged_into) and fixed pairs that must stay apart.
 --
 -- Nothing existing is changed or deleted: new columns are empty, new tables
 -- are empty. The app works before this is run (it then knows classes by date
@@ -134,7 +140,7 @@ create table if not exists public.card_pairs (
   verdict text not null check (verdict in ('same', 'different')),
   version text,
   model text,
-  -- 'upload' or 'sync'
+  -- 'upload', 'sync', or 'check' (the morning check)
   source text,
   asked_at timestamptz not null default now()
 );

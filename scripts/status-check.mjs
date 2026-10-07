@@ -1,9 +1,18 @@
 #!/usr/bin/env node
 // The status check on a student's real record, from the command line: the
-// same nine checks the server runs on every student each day
+// same eleven checks the server runs on every student each day
 // (src/lib/statusChecks.js), for looking into what they report. Claude runs
 // it each morning on this Mac (a scheduled task) and tells the owner only
 // when something needs their decision; the app itself shows no Status line.
+//
+// Two of the checks look at the deck itself (2026-10-06): no card in study
+// twice, by the rule every card-writer uses and by Claude's verdicts on
+// look-alike cards (card_pairs), and nothing the student deleted or corrected
+// back (the reason a card was taken out, on user_cards, and the owner's
+// corrections, parse_corrections). Both are read here for every student.
+// Claude's verdicts come from the server's daily run, which asks about
+// look-alikes not judged yet before it checks; this script never asks
+// Claude anything.
 //
 // It only reads. Every request below is a GET, to the database's tables and to
 // the list of accounts; nothing is written anywhere.
@@ -49,15 +58,17 @@ if (missing.length) {
   console.error(`Missing: ${missing.join(", ")}\nPut them in .env.local or the environment.`);
   process.exit(1);
 }
-// --everyone: the morning check. The same nine checks on every student who has
-// answered anything, run now (api/_lib/statusDaily.js), and whether a change to
-// how Claude is asked has made it get wrong what it got right before
-// (api/_lib/evalStatus.js). Only reads. Exits 1 when anything needs looking at.
+// --everyone: the morning check. The same eleven checks on every student who
+// has answered anything, run now (api/_lib/statusDaily.js); what the server's
+// daily run last asked Claude about look-alike cards, from its kept reports;
+// and whether a change to how Claude is asked has made it get wrong what it
+// got right before (api/_lib/evalStatus.js), for each of the three tests of
+// Claude's work. Only reads. Exits 1 when anything needs looking at.
 if (args.includes("--everyone")) {
   const { createClient } = await import("@supabase/supabase-js");
-  const { checkEveryone } = await import("../api/_lib/statusDaily.js");
+  const { checkEveryone, latestReports } = await import("../api/_lib/statusDaily.js");
   const { evalStatus } = await import("../api/_lib/evalStatus.js");
-  const { statusText } = await import("../src/lib/statusChecks.js");
+  const { statusText, judgingText } = await import("../src/lib/statusChecks.js");
   const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   let amiss = false;
 
@@ -71,8 +82,26 @@ if (args.includes("--everyone")) {
     console.log(statusText(r.report).split("\n").map((l) => `    ${l}`).join("\n"));
   }
 
+  // The server's daily run asks Claude about look-alike cards before it
+  // checks; its last report for each student says how that went. A question
+  // Claude couldn't answer leaves those cards unjudged, which the check
+  // above shows only as waiting, so it is said here.
+  const kept = await latestReports(db);
+  const judged = [];
+  for (const k of kept.reports || []) {
+    const j = k.report?.judging;
+    if (!j || (!j.asked && !j.left && !j.error)) continue;
+    if (j.error) amiss = true;
+    judged.push(`  ${k.user_email}, ${String(k.checked_at).slice(0, 10)}: ${judgingText(j).replace(/^Look-alike cards: /, "")}`);
+  }
+  if (judged.length) console.log(`\nLook-alike cards put to Claude by the daily run:\n${judged.join("\n")}`);
+
   const evals = await evalStatus(db);
-  for (const [kind, label] of [["answers", "Claude's marking of typed answers"], ["notes", "Claude reading class notes into cards"]]) {
+  for (const [kind, label] of [
+    ["answers", "Claude's marking of typed answers"],
+    ["notes", "Claude reading class notes into cards"],
+    ["repeats", "Claude judging whether two look-alike cards are the same card"],
+  ]) {
     const e = evals[kind] || {};
     const last = e.latest ? `last tested ${e.latest.ran_at.slice(0, 10)} (version ${e.latest.version}, ${e.latest.passed} of ${e.latest.cases} right every time)` : "not tested yet";
     console.log(`\n${label}: ${last}.`);
@@ -132,11 +161,13 @@ if (!user) {
   process.exit(1);
 }
 
-const [answers, cards, deals, settingsRows] = await Promise.all([
+const [answers, cards, deals, settingsRows, pairs, corrections] = await Promise.all([
   readAll("card_reviews", user.id),
   readAll("user_cards", user.id),
   readAll("dealt_sets", user.id),
   get(`${BASE}/rest/v1/fsrs_settings?select=*&user_id=eq.${user.id}`),
+  readAll("card_pairs", user.id),
+  readAll("parse_corrections", user.id),
 ]);
 const settings = settingsRows.ok && Array.isArray(settingsRows.body) ? settingsRows.body[0] || null : null;
 
@@ -146,6 +177,9 @@ const report = runStatusChecks({
   deals: deals || [],
   dealsTable: deals !== null,
   settings,
+  pairs,
+  pairsTable: pairs !== null,
+  corrections,
   timeZone: TZ,
   lessonRank,
   from: argVal("--from") || CHECKS_START,
@@ -155,6 +189,12 @@ const report = runStatusChecks({
 const withSettings = (answers || []).filter((r) => r.counted && Array.isArray(r.weights)).length;
 console.log(`${EMAIL}: ${answers?.length ?? 0} answers on record (${withSettings} saved with their settings), ${cards?.length ?? 0} cards, ` +
   `${deals === null ? "no dealt_sets table yet (migration_013 not run)" : `${deals.length} sets recorded`}; time zone ${TZ}.`);
+const removed = (cards || []).filter((c) => c.archived_reason === "removed").length;
+const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const fixes = corrections === null ? "no parse_corrections table" : count(corrections.length, "correction");
+console.log(pairs === null
+  ? `No card_pairs table yet (migration_016 not run): no verdicts of Claude's on look-alike cards, and no record of cards removed; ${fixes}.`
+  : `${count(pairs.length, "verdict")} of Claude's on look-alike cards, ${count(removed, "card")} removed, ${fixes}.`);
 console.log(settings
   ? `Settings: ${settings.target_mode === "fixed" ? `fixed at ${Math.round(settings.target * 100)}%` : `automatic, now ${Math.round(settings.target * 100)}%`}; ${settings.weights ? `own weights since ${settings.fitted_at}` : "starting weights"}.`
   : "Settings: none saved (starting settings, 90%).");
