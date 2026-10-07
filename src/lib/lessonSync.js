@@ -14,6 +14,18 @@
 import { lessonSource, lessonIdOf, lessonCardKeyOf, lessonCardKey } from "./lessonSource.js";
 import { DIRECTIONS, sideOf } from "./directions.js";
 import { cardIndex } from "./sameCard.js";
+import { ARCHIVE_PREFIX, isArchived } from "./archive.js";
+
+// An archived row as it was before it was archived, so its lesson and key can
+// be read: "archived:lesson:lecon1#k9" -> "lesson:lecon1#k9".
+const unarchived = (card) => ({ ...card, source: String(card.source).slice(ARCHIVE_PREFIX.length) });
+
+// Why a card out of study stays out whatever a lesson has: the student
+// removed it, or it was put away as a repeat of another card (archived_reason,
+// migration_016). A card out of study for no recorded reason is one a lesson
+// dropped, among others, and comes back if the lesson brings it back (owner,
+// 2026-09-25).
+const STAYS_OUT = new Set(["removed", "duplicate"]);
 
 // Answered at least once, either way round: the card carries the student's
 // history, and nothing a lesson does may delete it.
@@ -22,7 +34,9 @@ const studied = (card) => DIRECTIONS.some((d) => (sideOf(card, d).fsrs_state ?? 
 /**
  * @param {Array} lessons   the catalogue (LESSONS)
  * @param {Array} deckCards shaped deck rows from useUserDeck
- * @returns {{ missing: Array, rekey: Array, retext: Array, stale: number[], archive: number[], unkeyed: Array }}
+ * @param {Array} archivedCards the rows out of study ({ f, b, source, reason }),
+ *             from useUserDeck's `archived`
+ * @returns {{ missing: Array, rekey: Array, retext: Array, stale: number[], archive: number[], unkeyed: Array, taken: Array, away: Array }}
  *   missing — lesson cards this deck has no row for, ready for insert
  *             (the caller adds user_id)
  *   rekey   — legacy rows that DO match a lesson card, re-upserted on the same
@@ -41,9 +55,6 @@ const studied = (card) => DIRECTIONS.some((d) => (sideOf(card, d).fsrs_state ?? 
  *             HAS answered. Taken out of study, not deleted: deleting a card
  *             deletes every answer recorded against it, and a lesson update
  *             must never cost a student their history (the owner, 2026-09-25).
- *             If the card comes back to the lesson with the same front, the
- *             insert lands on the archived row and brings it back, history
- *             and all (see lib/archive.js).
  *   unkeyed — legacy rows matching no lesson card. NOT deleted: a row written
  *             before keys existed is indistinguishable from an edited one, and
  *             deleting a card someone corrected is worse than leaving one the
@@ -55,9 +66,21 @@ const studied = (card) => DIRECTIONS.some((d) => (sideOf(card, d).fsrs_state ?? 
  *             into the lesson's — new back, new category, and its class dates
  *             replaced by none. A single-word lesson front ("actuellement",
  *             in the adverb lesson) can easily already be in a cahier deck.
- *             The student keeps their card; the lesson goes without it.
+ *             The student keeps their card; the lesson goes without it. A card
+ *             of their own they removed counts too (2026-10-06): it is a word
+ *             they didn't want, and a lesson must not bring it back under
+ *             another card.
+ *   away    — lesson cards NOT inserted because the student removed their row
+ *             for it, or it was put away as a repeat (2026-10-06). Removing a
+ *             card archives it rather than deleting it (api/_lib/removeCard.js),
+ *             and the insert, an upsert on the front, would land on the
+ *             archived row and put it back in study: a card the student
+ *             removed would never stay removed. Known by the reason the row
+ *             gives (archived_reason, migration_016); before the migration no
+ *             row gives one, and a removed lesson card comes back, as a
+ *             deleted one did before.
  */
-export function reconcileLessons(lessons, deckCards) {
+export function reconcileLessons(lessons, deckCards, archivedCards = []) {
   const missing = [];
   const rekey = [];
   const retext = [];
@@ -65,11 +88,18 @@ export function reconcileLessons(lessons, deckCards) {
   const archive = [];
   const unkeyed = [];
   const taken = [];
-  // The deck's own cards, not a lesson's. "Already has this card" is the same
-  // rule every card-writer uses (src/lib/sameCard.js), not the exact front:
-  // the owner had "rends-moi mon livre" from their notes, and the lesson added
-  // "Rends-moi mon livre !" beside it (2026-10-06).
-  const ownCards = (deckCards || []).filter((card) => !lessonIdOf(card));
+  const away = [];
+  // The rows out of study that must stay out.
+  const shelved = (archivedCards || []).filter((card) => isArchived(card) && STAYS_OUT.has(card.reason)).map(unarchived);
+  // Their fronts: a lesson card inserted on one of them would put that row
+  // back in study.
+  const shelvedFronts = new Set(shelved.map((card) => card.f));
+  // The deck's own cards, not a lesson's, in study or removed. "Already has
+  // this card" is the same rule every card-writer uses (src/lib/sameCard.js),
+  // not the exact front: the owner had "rends-moi mon livre" from their
+  // notes, and the lesson added "Rends-moi mon livre !" beside it
+  // (2026-10-06).
+  const ownCards = [...(deckCards || []), ...shelved].filter((card) => !lessonIdOf(card));
   const own = new Set(ownCards.map((card) => card.f));
   const ownIndex = cardIndex(ownCards.map((card) => ({ front: card.f, back: card.b, source: card.source })));
   const ownHas = (c) => own.has(c.f) || !!ownIndex.sure({ front: c.f, back: c.b });
@@ -80,6 +110,11 @@ export function reconcileLessons(lessons, deckCards) {
     );
     const have = (deckCards || []).filter((card) => lessonIdOf(card) === lesson.id);
     const claimed = new Set();
+    // This lesson's cards out of study, by key (or, written before keys, by
+    // front).
+    const shelvedKeys = new Set(
+      shelved.filter((card) => lessonIdOf(card) === lesson.id).map((card) => lessonCardKeyOf(card) || lessonCardKey(card.f))
+    );
 
     for (const card of have) {
       const stored = lessonCardKeyOf(card);
@@ -113,6 +148,7 @@ export function reconcileLessons(lessons, deckCards) {
 
     for (const [key, c] of want) {
       if (claimed.has(key)) continue;
+      if (shelvedKeys.has(key) || shelvedFronts.has(c.f)) { away.push({ lesson: lesson.id, front: c.f }); continue; }
       if (ownHas(c)) { taken.push({ lesson: lesson.id, front: c.f }); continue; }
       missing.push({
         front: c.f,
@@ -124,5 +160,5 @@ export function reconcileLessons(lessons, deckCards) {
     }
   }
 
-  return { missing, rekey, retext, stale, archive, unkeyed, taken };
+  return { missing, rekey, retext, stale, archive, unkeyed, taken, away };
 }

@@ -24,6 +24,13 @@ import Anthropic from "@anthropic-ai/sdk";
 export const SAME_CARD_MODEL = "claude-opus-5-5";
 // Pairs per call. A new class of about 30 cards raises roughly a dozen.
 export const PAIRS_PER_CALL = 50;
+// Calls made at once. A first upload of a year's notes raises far more: on a
+// copy of the owner's notes read from nothing, 890 pairs, 18 calls (measured
+// 2026-10-06). One after another they would outlast the function's five
+// minutes, and nothing would be saved.
+export const CALLS_AT_ONCE = 4;
+// How long the question may take when the caller sets no time.
+export const DEFAULT_TIME_MS = 120 * 1000;
 
 export const SAME_CARD_SYSTEM = `You help a French learner keep one flashcard for each thing they learn. Their cards come from their class notes, and the same word is often written a little differently from one class to the next.
 
@@ -107,17 +114,17 @@ export function readVerdicts(text, count) {
   return out;
 }
 
-async function askOnce(client, pairs) {
+async function askOnce(client, pairs, signal) {
   const response = await client.beta.messages.create({
     model: SAME_CARD_MODEL,
-    max_tokens: 4000,
+    max_tokens: 16000,
     // If the model declines, another one answers in the same call.
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: "default",
     output_config: { effort: "medium", format: { type: "json_schema", schema: SCHEMA } },
     system: SAME_CARD_SYSTEM,
     messages: [{ role: "user", content: sameCardPrompt(pairs) }],
-  });
+  }, { signal });
   if (response.stop_reason === "refusal") throw new Error("Claude declined to compare the cards.");
   if (response.stop_reason === "max_tokens") throw new Error("Claude's comparison of the cards was cut off.");
   const text = (response.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
@@ -125,13 +132,37 @@ async function askOnce(client, pairs) {
 }
 
 // [{ a: {front, back}, b: {front, back} }] -> ["same" | "different" | null].
-// Throws when Claude can't be reached; the caller's cards then wait.
-export async function askSameCard({ apiKey, pairs }) {
+//
+// The pairs go in calls of PAIRS_PER_CALL, CALLS_AT_ONCE at a time, and no
+// call runs past `deadline` (a time in ms), so the reading that asked can
+// still save before its function is stopped. A call that fails or runs out of
+// time leaves its pairs null: those cards wait, and their lines stay unread
+// for the next run. Throws only when no call got an answer, so the caller can
+// say why.
+export async function askSameCard({ apiKey, pairs, deadline = Date.now() + DEFAULT_TIME_MS }) {
   if (!apiKey) throw new Error("No Anthropic key to compare the cards with.");
-  const client = new Anthropic({ apiKey });
-  const out = [];
-  for (let i = 0; i < pairs.length; i += PAIRS_PER_CALL) {
-    out.push(...(await askOnce(client, pairs.slice(i, i + PAIRS_PER_CALL))));
-  }
+  const out = new Array(pairs.length).fill(null);
+  if (!pairs.length) return out;
+  const client = new Anthropic({ apiKey, maxRetries: 1 });
+  const chunks = [];
+  for (let i = 0; i < pairs.length; i += PAIRS_PER_CALL) chunks.push(i);
+  const errors = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const start = chunks[next++];
+      const left = deadline - Date.now();
+      if (left < 5000) { errors.push(new Error("There wasn't time to compare the cards.")); continue; }
+      try {
+        const verdicts = await askOnce(client, pairs.slice(start, start + PAIRS_PER_CALL), AbortSignal.timeout(left));
+        verdicts.forEach((v, j) => { out[start + j] = v; });
+      } catch (e) {
+        errors.push(e);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CALLS_AT_ONCE, chunks.length) }, worker));
+  if (errors.length === chunks.length) throw errors[0];
+  if (errors.length) console.warn(`[same-card] ${errors.length} of ${chunks.length} calls unanswered; their cards wait:`, errors[0]?.message || errors[0]);
   return out;
 }

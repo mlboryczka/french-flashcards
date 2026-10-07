@@ -191,11 +191,13 @@ export function fakeSupabase({ tables = {}, migrated = true, faults = {}, now = 
   // ── migration_016's functions ─────────────────────────────────────────
   const merged = (a, b) => [...new Set([...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])])].sort();
   const fns = {
-    claim_notes_reading({ p_user_id, p_run_id, p_kind, p_lease_seconds = 600 }) {
+    claim_notes_reading({ p_user_id, p_run_id, p_kind, p_lease_seconds = 600, p_renew = false }) {
       let row = db.notes_read.find((r) => r.user_id === p_user_id);
       if (!row) { row = withDefaults("notes_read", { user_id: p_user_id }); db.notes_read.push(row); }
       const t = now();
-      const free = row.run_id == null || row.run_id === p_run_id || row.run_expires_at == null || Date.parse(row.run_expires_at) < t;
+      // Renewing takes only this run's own turn, never a free one.
+      const free = row.run_id === p_run_id ||
+        (!p_renew && (row.run_id == null || row.run_expires_at == null || Date.parse(row.run_expires_at) < t));
       if (!free) return { data: { claimed: false, run_kind: row.run_kind, run_started_at: row.run_started_at, run_expires_at: row.run_expires_at } };
       if (row.run_id !== p_run_id) row.run_started_at = new Date(t).toISOString();
       row.run_id = p_run_id;
@@ -206,14 +208,16 @@ export function fakeSupabase({ tables = {}, migrated = true, faults = {}, now = 
     save_notes_reading({ p_user_id, p_run_id, p_inserts = [], p_dates = [], p_archive = [], p_restore = [], p_pairs = [], p_classes = null, p_finish = true }) {
       const rec = db.notes_read.find((r) => r.user_id === p_user_id && r.run_id === p_run_id);
       if (!rec) return { error: err("NR409", "This reading of the notes lost its turn: another one started after it ran out of time.") };
-      const out = { inserted: 0, joined: 0, dated: 0, archived: 0, restored: 0, pairs: 0 };
+      const out = { inserted: 0, joined: 0, dated: 0, archived: 0, restored: 0, pairs: 0, refused: [] };
+      // A card the database can't hold is left out and named, inside the step
+      // (the function's one-at-a-time fallback); the rest is saved.
       for (const x of p_inserts || []) {
         const row = withDefaults("user_cards", {
           user_id: p_user_id, front: x.front, back: x.back, category: x.category ?? "V",
           dates: x.dates ?? [], source: x.source ?? null, batch_id: x.batch_id ?? null,
         });
         const bad = refuse("user_cards", row);
-        if (bad) throw bad;
+        if (bad) { out.refused.push({ front: x.front, error: bad.message, code: bad.code }); continue; }
         const found = db.user_cards.find((r) => r.user_id === p_user_id && r.front === x.front);
         if (found) { found.dates = merged(found.dates, x.dates); out.joined++; } else { db.user_cards.push(row); out.inserted++; }
       }

@@ -136,11 +136,18 @@ export default async function handler(req, res) {
   }
 }
 
+// How long into a run the question about near look-alikes may still be
+// asked, so the run can save inside the function's five minutes.
+const QUESTION_TIME_MS = 240 * 1000;
+
 // The whole sync for one student. Exported so the daily check can call it for
 // every linked doc without going back through HTTP.
 //
 // `ask` replaces Claude's same-or-different question; only tests pass it.
-export async function syncUser({ admin, apiKey, userId, url, limit, force = false, now = new Date(), ask = null }) {
+// `deadline` (a time in ms) is when the question must stop; the daily check
+// passes its own, shared by every student it reads.
+export async function syncUser({ admin, apiKey, userId, url, limit, force = false, now = new Date(), ask = null, deadline = null }) {
+  const questionsUntil = deadline ?? Date.now() + QUESTION_TIME_MS;
   const take = Math.min(Math.max(1, Number(limit) || DEFAULT_LIMIT), MAX_LIMIT);
 
   let link = await loadLink(admin, userId);
@@ -189,7 +196,7 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
   const reading = await claimReading(admin, { userId, kind: "sync" });
   if (reading.busy) {
     return {
-      ok: true, linked: true, skipped: "your notes are being read already",
+      ok: true, linked: true, busy: true, skipped: "your notes are being read already",
       checkedAt: link.last_checked_at || null, newClasses: [], cardsAdded: 0,
       remaining: null, lastResult: link.last_result || null,
     };
@@ -253,7 +260,7 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
     const result = await saveRun({
       admin, userId, reading, deck, plan, incoming,
       read: new Set(parsed.map((p) => p.date)), failedDates,
-      ask: ask || ((pairs) => askSameCard({ apiKey, pairs })),
+      ask: ask || ((pairs) => askSameCard({ apiKey, pairs, deadline: questionsUntil })),
       source: "sync",
     });
     if (!result.ok) throw new Error(`Couldn't save the new cards: ${result.error}`);

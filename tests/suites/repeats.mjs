@@ -90,7 +90,13 @@ const ONE_CARD = new Set([
 ].map(([a, b]) => pairKey(a, b)));
 
 // ── The stand-in Claude ───────────────────────────────────────────────────
-const claude = { reads: [], questions: [], pairsAsked: [], questionFails: false, readFails: false, judge: null, seen: new Map() };
+const claude = {
+  reads: [], questions: [], pairsAsked: [], questionFails: false, readFails: false, judge: null, seen: new Map(),
+  // For the question's own checks: fail every call whose pairs `failIf`
+  // picks (retries included), hold each answer this long, and the most calls
+  // seen at once.
+  failIf: null, holdMs: 0, inFlight: 0, mostAtOnce: 0,
+};
 const resetCalls = () => { claude.reads = []; claude.questions = []; claude.pairsAsked = []; };
 const unquote = (s) => JSON.parse(s);
 const server = createServer((req, res) => {
@@ -108,7 +114,15 @@ const server = createServer((req, res) => {
     const content = typeof json.messages?.[0]?.content === "string" ? json.messages[0].content : "";
     if (String(json.system || "").includes("keep one flashcard for each thing they learn")) {
       claude.questions.push(content);
-      if (claude.questionFails) return reply("", 500);
+      if (claude.questionFails || claude.failIf?.(content)) return reply("", 500);
+      if (claude.holdMs) {
+        claude.inFlight++;
+        claude.mostAtOnce = Math.max(claude.mostAtOnce, claude.inFlight);
+        return setTimeout(() => { claude.inFlight--; answerQuestion(); }, claude.holdMs);
+      }
+      return answerQuestion();
+    }
+    function answerQuestion() {
       const pairs = [...content.matchAll(/Pair (\d+)\n {2}A: (".*?") = (".*?")\n {2}B: (".*?") = (".*?")(?:\n|$)/g)]
         .map((m) => ({ n: Number(m[1]), a: unquote(m[2]), b: unquote(m[4]) }));
       claude.pairsAsked.push(...pairs);
@@ -165,6 +179,9 @@ const { removeCard } = await import("../../api/_lib/removeCard.js");
 const { runUpload } = await import("../../src/lib/uploadRun.js");
 const { isSureMatch, cardIndex } = await import("../../src/lib/sameCard.js");
 const { reconcileLessons } = await import("../../src/lib/lessonSync.js");
+const { lessonCardKey } = await import("../../src/lib/lessonSource.js");
+const { askSameCard, PAIRS_PER_CALL, CALLS_AT_ONCE } = await import("../../api/_lib/sameCardQuestion.js");
+const { supabaseFeedbackStore } = await import("../../api/_lib/feedbackReview.js");
 
 const USER = "00000000-0000-0000-0000-00000000000a";
 const KEY = "sk-ant-test-key-0123456789abcdef";
@@ -428,7 +445,8 @@ console.log("\n  two runs at once");
   const up = upload(admin, NOTEBOOK_2, { pauseAfterPlan: async () => { syncDuring = await sync(admin); } });
   const r = await up;
   ck("a sync while an upload is reading is told to wait, and reads nothing",
-     syncDuring?.ok && /being read already/.test(syncDuring.skipped || "") && syncDuring.cardsAdded === 0, JSON.stringify(syncDuring));
+     syncDuring?.ok && syncDuring.busy === true && /being read already/.test(syncDuring.skipped || "") && syncDuring.cardsAdded === 0,
+     JSON.stringify(syncDuring));
   ck("the upload finishes", r.ok !== false, JSON.stringify(r).slice(0, 160));
   headline("upload with a sync in the middle", admin, before);
   const both = await Promise.all([sync(admin), sync(admin)]);
@@ -456,6 +474,27 @@ console.log("\n  two runs at once");
   const after = await syncAll(admin3);
   ck("an upload that never finished holds the turn only until it runs out",
      !!plan.runId && /being read already/.test(blocked.skipped || "") && after.ok && after.cardsAdded === 5, JSON.stringify({ blocked: blocked.skipped, after: after.cardsAdded }));
+
+  // An upload whose turn runs out while it reads, and the daily check comes,
+  // reads and saves meanwhile: the upload has lost its turn, even though the
+  // check has given it back, and saves nothing. The record changed under it.
+  const admin4 = await usedDeck();
+  const before4 = snapshot(admin4);
+  admin4.tables.cahier_links.push({ user_id: USER, doc_id: "DOC1", doc_url: URL_1, classes: {}, last_checked_at: null });
+  doc.text = NOTEBOOK_2;
+  resetCalls();
+  let meanwhile = null;
+  const lostTurn = await upload(admin4, NOTEBOOK_2, {
+    pauseAfterPlan: async () => {
+      admin4.tables.notes_read[0].run_expires_at = new Date(Date.now() - 1000).toISOString();
+      meanwhile = await syncAll(admin4);
+    },
+  });
+  ck("an upload whose turn was taken meanwhile saves nothing, and says to upload again",
+     lostTurn.ok === false && /another reading of your notes started/.test(lostTurn.error) && meanwhile?.ok && meanwhile.cardsAdded === 5,
+     JSON.stringify({ upload: lostTurn.error, sync: meanwhile?.cardsAdded }));
+  headline("an upload that lost its turn to the daily check", admin4, before4, { readCheck: false });
+  await secondTimeAsksNothing("after the lost turn", admin4, () => upload(admin4, NOTEBOOK_2));
 }
 
 console.log("\n  a failure between saving the cards and recording the lines");
@@ -493,8 +532,11 @@ console.log("\n  one card the database refuses");
   const tooLong = `une phrase ${"très ".repeat(700)}longue`;
   const withBad = notebook(C1, C2, C3, C4b, C5b, C6b, { ...C7, lines: [...C7.lines, `${tooLong} = a long sentence`] }, C8);
   resetCalls();
+  const saves = admin.calls.filter((c) => c.rpc === "save_notes_reading").length;
   const r = await upload(admin, withBad);
   ck("the refused card is reported, by its French", r.ok !== false && r.cardsFailed === 1 && r.failedFronts?.[0]?.startsWith("une phrase"), JSON.stringify({ failed: r.cardsFailed }));
+  ck("and the rest is saved with the lines read in one step, not two",
+     admin.calls.filter((c) => c.rpc === "save_notes_reading").length - saves === 1);
   headline("one card refused", admin, before);
   await secondTimeAsksNothing("one card refused", admin, () => upload(admin, withBad));
   // Replace still works when a card is refused; it used to quietly become an add.
@@ -581,6 +623,58 @@ console.log("\n  the lesson sync uses the same rule");
   const { missing, taken } = reconcileLessons([lesson], own);
   ck("a lesson card the student already has, written another way, is not added", taken.some((t) => t.front === "Rends-moi mon livre !") && !missing.some((m) => m.front === "Rends-moi mon livre !"));
   ck("and the lesson's other cards are", missing.some((m) => m.front === "Viens ici !"));
+
+  const lecon = { id: "lecon1", cards: [["Je vais bien", "I'm fine", "V"], ["Bonjour", "Hello", "V"], ["Salut !", "Hi!", "V"]] };
+  const out = [
+    { f: "Je vais bien", b: "I'm fine", source: `archived:lesson:lecon1#${lessonCardKey("Je vais bien")}`, row_id: 7, reason: "removed" },
+    { f: "salut", b: "hi", source: "archived:cahier-upload", row_id: 8, reason: "removed" },
+    { f: "Bonjour", b: "Hello", source: `archived:lesson:lecon1#${lessonCardKey("Bonjour")}`, row_id: 9, reason: null },
+  ];
+  const r = reconcileLessons([lecon], [], out);
+  ck("a lesson card the student removed is not put back in study", r.away.some((a) => a.front === "Je vais bien") && !r.missing.some((m) => m.front === "Je vais bien"),
+     JSON.stringify(r.missing.map((m) => m.front)));
+  ck("nor one that is a card of their own they removed", r.taken.some((t) => t.front === "Salut !") && !r.missing.some((m) => m.front === "Salut !"));
+  ck("a card a lesson dropped and brings back still comes back, history and all (owner, 2026-09-25)", r.missing.some((m) => m.front === "Bonjour"));
+  ck("before migration_016 no row says why, and nothing changes", reconcileLessons([lecon], [], out.map((c) => ({ ...c, reason: null }))).missing.length === 3);
+}
+
+console.log("\n  Remove card in View feedback says why, as a student's Remove does");
+for (const migrated of [true, false]) {
+  const db = fakeSupabase({ migrated });
+  db.tables.user_cards.push({ id: 77, user_id: USER, front: "estar", back: "to be", source: "cahier-upload", dates: [] });
+  const store = supabaseFeedbackStore(db);
+  const row = () => db.tables.user_cards.find((c) => c.id === 77);
+  const off = await store.setSource(77, USER, "archived:cahier-upload");
+  ck(`${migrated ? "after" : "before"} migration_016: the card is out of study${migrated ? ", marked removed" : ""}`,
+     !off.error && isOut(row()) && (migrated ? row().archived_reason === "removed" : row().archived_reason === undefined), JSON.stringify(row()));
+  const on = await store.setSource(77, USER, "cahier-upload");
+  ck(`${migrated ? "after" : "before"} migration_016: Revert puts it back with no reason left on it`, !on.error && !isOut(row()) && (row().archived_reason ?? null) === null);
+}
+
+console.log("\n  the question: calls side by side, a failed call's cards wait, and a time limit");
+{
+  const many = Array.from({ length: PAIRS_PER_CALL * 3 }, (_, i) => ({ a: { front: `mot${i}`, back: `word ${i}` }, b: { front: `un mot${i}`, back: `a word ${i}` } }));
+  resetCalls();
+  claude.holdMs = 80;
+  claude.mostAtOnce = 0;
+  claude.failIf = (content) => content.includes('"un mot60"');
+  const verdicts = await askSameCard({ apiKey: KEY, pairs: many });
+  claude.failIf = null;
+  claude.holdMs = 0;
+  ck("the pairs go in calls of 50, several at a time", claude.mostAtOnce >= 2 && claude.mostAtOnce <= CALLS_AT_ONCE, `${claude.mostAtOnce} at once`);
+  const unanswered = verdicts.map((v, i) => (v === null ? i : -1)).filter((i) => i >= 0);
+  ck("a call that fails leaves only its own pairs unanswered, to wait",
+     unanswered.length === PAIRS_PER_CALL && unanswered[0] === PAIRS_PER_CALL && verdicts.filter(Boolean).length === PAIRS_PER_CALL * 2,
+     `${unanswered.length} unanswered, from ${unanswered[0]}`);
+  resetCalls();
+  let late = null;
+  await askSameCard({ apiKey: KEY, pairs: many.slice(0, 3), deadline: Date.now() + 1000 }).catch((e) => { late = e.message; });
+  ck("with no time left it asks nothing and says why, so the cards wait", /time/.test(late || "") && claude.questions.length === 0, late);
+  claude.questionFails = true;
+  let down = null;
+  await askSameCard({ apiKey: KEY, pairs: many.slice(0, 3) }).catch((e) => { down = e.message; });
+  claude.questionFails = false;
+  ck("when no call is answered it says so", !!down, down);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

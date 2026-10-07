@@ -283,7 +283,11 @@ const AREA_LABEL = Object.freeze({ recent: "Last two weeks of class", earlier: "
 // "Your class of 24 September: 31 new cards" — said in classes, because that
 // is what the student recognises, with the count second.
 // What linking a cahier did, said in classes rather than in lessons parsed.
-function uploadDoneText({ cardsInserted = 0, datesCovered = 0 }) {
+function uploadDoneText({ cardsInserted = 0, datesCovered = 0, busy = false }) {
+  // Only one reading of a student's notes runs at a time (2026-10-06).
+  if (busy && cardsInserted === 0) {
+    return "Your cahier is linked. Your notes are being read right now, by an upload or the daily check, so its new classes will be added on the next check.\n\nFrom now on, each class Laura adds becomes cards on its own.";
+  }
   if (cardsInserted === 0) {
     return "Your cahier is linked. Nothing new to add yet — every class in it is already in your deck.\n\nFrom now on, each class Laura adds becomes cards on its own.";
   }
@@ -341,7 +345,7 @@ function typedGotIt(typeResult) {
 
 export default function FlashcardApp({ user, onSignOut }) {
   const { progress, loaded: progressLoaded, updateCard, resetAll: resetAllProgress } = useProgress(user);
-  const { cards: userCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, patchAll: patchAllDeckCards, add: addDeckCard, freshSeq: deckFreshSeq, fetchedAt: deckFetchedAt } = useUserDeck(user);
+  const { cards: userCards, archived: archivedCards, loaded: deckLoaded, reload: reloadDeck, patch: patchDeckCard, patchAll: patchAllDeckCards, add: addDeckCard, freshSeq: deckFreshSeq, fetchedAt: deckFetchedAt } = useUserDeck(user);
   // The linked cahier, read again when the app opens: a class taught after
   // the last visit is already cards by the time the student studies.
   const cahier = useCahierSync(user);
@@ -2244,7 +2248,12 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user || !deckLoaded || !deckFreshSeq || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const { missing, rekey, retext, stale, archive, unkeyed, taken } = reconcileLessons(LESSONS, userCards);
+      const { missing, rekey, retext, stale, archive, unkeyed, taken, away } = reconcileLessons(LESSONS, userCards, archivedCards);
+      if (away.length) {
+        // Out of study: the student removed them, or they were put away as a
+        // repeat. Putting them back would undo that. See reconcileLessons.
+        console.info(`[lessons] ${away.length} lesson card(s) out of study left out:`, away.map((t) => t.front));
+      }
       if (taken.length) {
         // The deck already has its own card with that front; the lesson card
         // would have overwritten it. See reconcileLessons.
@@ -3023,7 +3032,7 @@ export default function FlashcardApp({ user, onSignOut }) {
               "other",
             ];
             const categoryInput = window.prompt(
-              `Why are you deleting this card?\n\nPick one:\n  ${CATEGORY_MENU.join(
+              `Why are you removing this card?\n\nPick one:\n  ${CATEGORY_MENU.join(
                 "\n  "
               )}\n\n(press Enter to accept the default)`,
               "duplicate_detected"

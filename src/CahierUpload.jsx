@@ -205,6 +205,7 @@ export function CahierUpload({ open, onClose, onSuccess, hasExisting, initialTab
         linked: true,
         cardsInserted: result.cards,
         datesCovered: result.dates.length,
+        busy: result.busy,
       });
       return;
     }

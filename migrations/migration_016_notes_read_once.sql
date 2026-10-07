@@ -33,13 +33,20 @@
 --    itself (a few minutes for the sync, twenty for an upload).
 --
 -- 2. Two functions, which only the server may call:
---    claim_notes_reading  takes the student's turn, or says who has it
+--    claim_notes_reading  takes the student's turn, or says who has it. An
+--                         upload, which spans several requests, renews its
+--                         own turn and nobody else's: if its turn ran out and
+--                         another reading came and went meanwhile, the
+--                         upload has lost it and saves nothing.
 --    save_notes_reading   in one step: adds the new cards, adds class dates to
 --                         cards the student already has (and nothing else
 --                         about them), takes out of study or brings back what
 --                         "Replace my existing deck" decided, keeps Claude's
 --                         verdicts, writes the record of lines read, and gives
---                         the turn back. Either all of it is saved or none.
+--                         the turn back. Either all of it is saved or none. A
+--                         card the database can't hold (a French side too
+--                         long for the deck's index) is left out and named
+--                         in the reply, inside that same step.
 --
 -- 3. On user_cards, why a card is out of study:
 --      archived_reason  'removed'   the student removed it (Delete used to
@@ -139,11 +146,17 @@ alter table public.card_pairs enable row level security;
 
 -- 2. The two functions ------------------------------------------------------
 
+-- An earlier draft of this file had claim_notes_reading without p_renew;
+-- dropped so a second run leaves one function, not two.
+drop function if exists public.claim_notes_reading(uuid, uuid, text, integer);
+
 create or replace function public.claim_notes_reading(
   p_user_id uuid,
   p_run_id uuid,
   p_kind text,
-  p_lease_seconds integer default 600
+  p_lease_seconds integer default 600,
+  -- true: only renew this run's own turn, never take a free one
+  p_renew boolean default false
 ) returns jsonb
 language plpgsql
 set search_path = public
@@ -154,15 +167,19 @@ begin
   insert into public.notes_read (user_id) values (p_user_id)
     on conflict (user_id) do nothing;
 
-  -- Free, ours already, or run out: take it. Two runs asking at once queue on
-  -- the row, and the second finds it taken.
+  -- Ours already, or (for a new run) free or run out: take it. Two runs
+  -- asking at once queue on the row, and the second finds it taken. A run
+  -- renewing its turn finds it gone if another reading took it, even one that
+  -- has finished since: the record may have changed under it.
   update public.notes_read
      set run_id = p_run_id,
          run_kind = p_kind,
          run_started_at = case when run_id = p_run_id then run_started_at else now() end,
          run_expires_at = now() + make_interval(secs => greatest(coalesce(p_lease_seconds, 600), 30))
    where user_id = p_user_id
-     and (run_id is null or run_id = p_run_id or run_expires_at is null or run_expires_at < now())
+     and (run_id = p_run_id
+          or (not coalesce(p_renew, false)
+              and (run_id is null or run_expires_at is null or run_expires_at < now())))
   returning * into r;
 
   if not found then
@@ -203,6 +220,9 @@ declare
   v_archived integer := 0;
   v_restored integer := 0;
   v_pairs integer := 0;
+  v_refused jsonb := '[]'::jsonb;
+  v_fresh boolean;
+  v_card record;
 begin
   -- Only the run whose turn it is may save. One that ran out of time and lost
   -- its turn saves nothing.
@@ -217,22 +237,55 @@ begin
   -- New cards. A card that already holds the same French (written meanwhile
   -- by something else) only gains the class dates: nothing about it is
   -- written over.
-  with incoming as (
-    select x.front, x.back, coalesce(x.category, 'V') as category,
-           coalesce(x.dates, '[]'::jsonb) as dates, x.source, x.batch_id
-    from jsonb_to_recordset(coalesce(p_inserts, '[]'::jsonb))
-      as x(front text, back text, category text, dates jsonb, source text, batch_id uuid)
-  ), written as (
-    insert into public.user_cards as c (user_id, front, back, category, dates, source, batch_id)
-    select p_user_id, front, back, category, dates, source, batch_id from incoming
-    on conflict (user_id, front) do update
-      set dates = (select coalesce(jsonb_agg(d order by d), '[]'::jsonb)
-                   from (select distinct jsonb_array_elements_text(c.dates || excluded.dates) as d) s)
-    returning (xmax = 0) as fresh
-  )
-  select count(*) filter (where fresh), count(*) filter (where not fresh)
-    into v_inserted, v_joined
-    from written;
+  --
+  -- All at once, and if the database refuses any card (a French side too
+  -- long for the deck's index, say), one at a time: the others are saved and
+  -- the refused ones named in the reply. Both happen inside this one step, so
+  -- a refused card can never leave the rest saved and the lines unread. That
+  -- used to be possible, and the next reading then added Claude's new
+  -- spellings beside the saved cards.
+  begin
+    with incoming as (
+      select x.front, x.back, coalesce(x.category, 'V') as category,
+             coalesce(x.dates, '[]'::jsonb) as dates, x.source, x.batch_id
+      from jsonb_to_recordset(coalesce(p_inserts, '[]'::jsonb))
+        as x(front text, back text, category text, dates jsonb, source text, batch_id uuid)
+    ), written as (
+      insert into public.user_cards as c (user_id, front, back, category, dates, source, batch_id)
+      select p_user_id, front, back, category, dates, source, batch_id from incoming
+      on conflict (user_id, front) do update
+        set dates = (select coalesce(jsonb_agg(d order by d), '[]'::jsonb)
+                     from (select distinct jsonb_array_elements_text(c.dates || excluded.dates) as d) s)
+      returning (xmax = 0) as fresh
+    )
+    select count(*) filter (where fresh), count(*) filter (where not fresh)
+      into v_inserted, v_joined
+      from written;
+  exception
+    when data_exception or integrity_constraint_violation or program_limit_exceeded or cardinality_violation then
+      v_inserted := 0;
+      v_joined := 0;
+      for v_card in
+        select r.front, r.back, coalesce(r.category, 'V') as category,
+               coalesce(r.dates, '[]'::jsonb) as dates, r.source, r.batch_id
+        from jsonb_to_recordset(coalesce(p_inserts, '[]'::jsonb))
+          as r(front text, back text, category text, dates jsonb, source text, batch_id uuid)
+      loop
+        begin
+          insert into public.user_cards as c (user_id, front, back, category, dates, source, batch_id)
+          values (p_user_id, v_card.front, v_card.back, v_card.category, v_card.dates, v_card.source, v_card.batch_id)
+          on conflict (user_id, front) do update
+            set dates = (select coalesce(jsonb_agg(d order by d), '[]'::jsonb)
+                         from (select distinct jsonb_array_elements_text(c.dates || excluded.dates) as d) s)
+          returning (xmax = 0) into v_fresh;
+          if v_fresh then v_inserted := v_inserted + 1; else v_joined := v_joined + 1; end if;
+        exception
+          when data_exception or integrity_constraint_violation or program_limit_exceeded or cardinality_violation then
+            v_refused := v_refused || jsonb_build_array(
+              jsonb_build_object('front', v_card.front, 'error', sqlerrm, 'code', sqlstate));
+        end;
+      end loop;
+  end;
 
   -- Class dates added to cards the student already has.
   with u as (
@@ -303,7 +356,7 @@ begin
    where user_id = p_user_id;
 
   return jsonb_build_object('inserted', v_inserted, 'joined', v_joined, 'dated', v_dated,
-    'archived', v_archived, 'restored', v_restored, 'pairs', v_pairs);
+    'archived', v_archived, 'restored', v_restored, 'pairs', v_pairs, 'refused', v_refused);
 end;
 $$;
 
@@ -311,9 +364,9 @@ $$;
 -- functions work wherever this is run.
 grant all on table public.notes_read, public.card_pairs to service_role;
 
-revoke all on function public.claim_notes_reading(uuid, uuid, text, integer) from public, anon, authenticated;
+revoke all on function public.claim_notes_reading(uuid, uuid, text, integer, boolean) from public, anon, authenticated;
 revoke all on function public.save_notes_reading(uuid, uuid, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, boolean) from public, anon, authenticated;
-grant execute on function public.claim_notes_reading(uuid, uuid, text, integer) to service_role;
+grant execute on function public.claim_notes_reading(uuid, uuid, text, integer, boolean) to service_role;
 grant execute on function public.save_notes_reading(uuid, uuid, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, boolean) to service_role;
 
 -- 5. The checks for repeated cards keep their runs with the others ---------

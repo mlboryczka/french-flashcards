@@ -300,7 +300,12 @@ export async function handlePlan(req, res, adminClient, userId) {
 // with none of its classes in the upload is taken out of study, kept, and
 // marked "replaced". Nothing is ever deleted.
 
+// The question about near look-alikes may take this long from the start of
+// the commit, leaving the function's five minutes room to save.
+const QUESTION_TIME_MS = 180 * 1000;
+
 export async function handleCommit(req, res, adminClient, user) {
+  const startedAt = Date.now();
   const userId = user.id;
   const { cards: rawCards = [], replace = false, batch_id: batchId = null, runId = null, failedDates = [] } = req.body || {};
   const blocks = Array.isArray(req.body?.blocks) ? cleanBlocks(req.body.blocks) : null;
@@ -327,7 +332,8 @@ export async function handleCommit(req, res, adminClient, user) {
     // Near look-alikes are put to Claude on the student's own key, as the
     // reading was. Without one, those cards wait for the next upload.
     const key = resolveAnthropicKey(req, user);
-    const ask = (pairs) => (key.key ? askSameCard({ apiKey: key.key, pairs }) : Promise.reject(new Error(key.error)));
+    const ask = (pairs) =>
+      key.key ? askSameCard({ apiKey: key.key, pairs, deadline: startedAt + QUESTION_TIME_MS }) : Promise.reject(new Error(key.error));
 
     const result = await saveRun({
       admin: adminClient, userId, reading, deck, plan, incoming, read, failedDates: [...failed], ask,

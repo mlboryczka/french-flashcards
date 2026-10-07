@@ -38,20 +38,28 @@ const PAGE = 1000;
 
 // A refusal about the cards themselves (Postgres classes 21, 22, 23, and 54,
 // which is a French side too long for the deck's index), as opposed to the
-// database being unreachable.
+// database being unreachable. Only the step-by-step save before migration_016
+// meets these: after it, save_notes_reading leaves such a card out itself and
+// names it.
 const aboutTheCards = (error) => /^(?:2[123]|54)/.test(String(error?.code || ""));
-// Postgres refuses a NUL character in text; a card can't hold one anyway.
-const clean = (s) => (typeof s === "string" ? s.replace(/\u0000/g, "") : s);
+// Text Postgres can't take: a NUL character, and half of a surrogate pair
+// (JSON can carry one; jsonb refuses it). A card can't hold either anyway.
+const clean = (s) =>
+  typeof s === "string"
+    ? s.replace(/\u0000/g, "").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
+    : s;
 
 // The student's turn to read their notes. Returns
 //   { mode: "lines", runId, classes }   the turn, and the record of lines read
 //   { busy: true, kind, since }         another run has it
 //   { mode: "dates", runId: null, classes: {} }  before migration_016
-// Passing the runId an earlier call returned renews that same turn.
+// Passing the runId an earlier call returned renews that same turn, and only
+// that one: an upload whose turn ran out while another reading came and went
+// has lost it (the record may have changed under it), and gets busy back.
 export async function claimReading(admin, { userId, kind, runId = null }) {
   const id = runId || randomUUID();
   const { data, error } = await admin.rpc("claim_notes_reading", {
-    p_user_id: userId, p_run_id: id, p_kind: kind, p_lease_seconds: LEASE_SECONDS[kind] || 600,
+    p_user_id: userId, p_run_id: id, p_kind: kind, p_lease_seconds: LEASE_SECONDS[kind] || 600, p_renew: !!runId,
   });
   if (error) {
     if (missingFunction(error) || missingTable(error)) return { mode: "dates", runId: null, classes: {} };
@@ -107,42 +115,22 @@ function pairRows(asked, source) {
   }));
 }
 
-// After migration_016: everything in one step, and the turn given back.
+// After migration_016: everything in one step, and the turn given back. A
+// card the database can't hold is left out by the step itself and named in
+// its reply (`refused`), so the rest is still saved with the lines read.
 async function saveInOneStep(admin, { userId, runId, inserts, updates, archive, restore, pairs, classes }) {
-  const params = {
+  const { data, error } = await admin.rpc("save_notes_reading", {
     p_user_id: userId, p_run_id: runId,
     p_inserts: inserts, p_dates: updates.map((u) => ({ id: u.id, dates: u.dates })),
     p_archive: archive.map((r) => ({ id: r.id, reason: r.reason })), p_restore: restore.map((r) => r.id),
     p_pairs: pairs, p_classes: classes, p_finish: true,
-  };
-  const { data, error } = await admin.rpc("save_notes_reading", params);
-  if (!error) return { ok: true, inserted: data?.inserted ?? inserts.length, dated: data?.dated ?? updates.length, failed: [] };
-  if (error.code === "NR409") return { ok: false, lostTurn: true, error: error.message, inserted: 0, failed: [] };
-  if (!aboutTheCards(error)) return { ok: false, error: error.message, inserted: 0, failed: [] };
-
-  // The database refused a card. Find it, save the others, and then the rest
-  // of the run: a card it can't hold is reported, not tried for ever.
-  const failed = [];
-  let inserted = 0;
-  const tryCards = async (list) => {
-    const r = await admin.rpc("save_notes_reading", {
-      p_user_id: userId, p_run_id: runId, p_inserts: list, p_classes: null, p_finish: false,
-    });
-    if (!r.error) { inserted += r.data?.inserted ?? list.length; return null; }
-    if (!aboutTheCards(r.error)) return r.error;
-    if (list.length === 1) { failed.push({ front: list[0].front, error: r.error.message }); return null; }
-    const size = list.length > 50 ? 50 : 1;
-    for (let i = 0; i < list.length; i += size) {
-      const stop = await tryCards(list.slice(i, i + size));
-      if (stop) return stop;
-    }
-    return null;
-  };
-  const stop = await tryCards(inserts);
-  if (stop) return { ok: false, error: stop.message, inserted, failed };
-  const rest = await admin.rpc("save_notes_reading", { ...params, p_inserts: [] });
-  if (rest.error) return { ok: false, error: rest.error.message, inserted, failed };
-  return { ok: true, inserted, dated: rest.data?.dated ?? updates.length, failed };
+  });
+  if (error) {
+    if (error.code === "NR409") return { ok: false, lostTurn: true, error: error.message, inserted: 0, failed: [] };
+    return { ok: false, error: error.message, inserted: 0, failed: [] };
+  }
+  const failed = (Array.isArray(data?.refused) ? data.refused : []).map((r) => ({ front: r.front, error: r.error }));
+  return { ok: true, inserted: data?.inserted ?? inserts.length - failed.length, dated: data?.dated ?? updates.length, failed };
 }
 
 // Before migration_016: one statement at a time, as the app always did. A card

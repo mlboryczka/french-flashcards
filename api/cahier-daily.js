@@ -52,6 +52,14 @@ export const config = { maxDuration: 300 };
 // consecutive runs rather than the same few docs being read every time.
 const STUDENTS_PER_RUN = 40;
 const CLASSES_PER_STUDENT = 10;
+// Since 2026-10-06 a sync can end with a question to Claude about cards that
+// look like ones the student has (api/_lib/sameCardQuestion.js). No student's
+// question runs past SYNC_QUESTIONS_UNTIL_MS into the run, and no student's
+// sync starts after SYNC_START_UNTIL_MS, so the run ends inside the
+// function's five minutes. Students not reached come first tomorrow: the
+// list is ordered by when each doc was last checked.
+const SYNC_START_UNTIL_MS = 200 * 1000;
+const SYNC_QUESTIONS_UNTIL_MS = 265 * 1000;
 
 export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY, CRON_SECRET } = process.env;
@@ -123,14 +131,19 @@ export default async function handler(req, res) {
   }
 
   const results = [];
+  const started = Date.now();
   for (const { user_id: userId } of links || []) {
+    if (Date.now() - started > SYNC_START_UNTIL_MS) {
+      console.log(`[cahier-daily] out of time; ${(links?.length || 0) - results.length} cahiers left for the next run`);
+      break;
+    }
     try {
       // One student's doc being unreadable — sharing turned off, doc deleted —
       // must not stop the rest. The reason is stored on their own row for the
       // app to show them.
       const r = await syncUser({
         admin, apiKey: ANTHROPIC_API_KEY, userId,
-        limit: CLASSES_PER_STUDENT, force: true,
+        limit: CLASSES_PER_STUDENT, force: true, deadline: started + SYNC_QUESTIONS_UNTIL_MS,
       });
       results.push({ userId, ok: r.ok, classes: r.newClasses?.length || 0, cards: r.cardsAdded || 0, remaining: r.remaining ?? null, error: r.error || null });
     } catch (e) {
