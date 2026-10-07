@@ -135,7 +135,7 @@ they change to `backups/` before writing.
 
 | Script | Does |
 |---|---|
-| `fix-multi-sense.mjs` | Scans the whole deck for cards teaching two headwords (`les frais` = costs AND fresh), asks Claude split-or-keep, rewrites the original as the first sense keeping its FSRS history and inserts the rest as new cards. Shares the prompt and schema with `api/split-senses.js` rather than forking them. |
+| `fix-multi-sense.mjs` | Scans the whole deck for cards teaching two headwords (`les frais` = costs AND fresh), asks Claude split-or-keep, rewrites the original as the first sense keeping its FSRS history and inserts the rest as new cards. Shares the prompt and schema with `api/_lib/splitSenses.js` rather than forking them. |
 | `resolve-disputes.mjs` | Works the unresolved backlog in `feedback_submissions`: adjudicates each, adds accepted answers to `card_alternates`, marks the row. Anything it calls "uncertain" is left alone. Detects whether the table marks completion with `reviewed`/`action` or `status`, because the app and `schema.sql` disagree. |
 | `sort-grammar-cards.mjs` | Sorts every deck's grammar and pronunciation cards: conjugation drills stay, a rule card with real French under it becomes an ordinary card, the rest are archived. The owner's hand-made sort (`scripts/data/grammar-sort-decisions.json`) decides the cards it covers; Claude is asked only about the rest, and an answer that fails its checks is left undecided. A dry run writes a proposal file; `--apply <proposal>` writes exactly that file. Lesson and archived cards are skipped. Covered by the `grammar-sort` suite. |
 | `reset-fsrs-seed.mjs` | Puts cards still due at the instant the FSRS switch stamped them (never answered since) back to not yet seen. |
