@@ -444,7 +444,7 @@ fonder / créer une entreprise
               onChange={(e) => setReplace(e.target.checked)}
               disabled={status === "uploading"}
             />
-            <span>Replace my existing deck: cards from classes that aren't in this upload leave your study, with their progress kept. Lesson cards and cards from the tutor stay.</span>
+            <span>Replace my existing deck: cards from classes that aren't in this upload leave your study, unless you have answered them. Lesson cards and cards from the tutor stay.</span>
           </label>
         )}
 
