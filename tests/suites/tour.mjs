@@ -202,9 +202,9 @@ ck("the settings menu has closed", await page.evaluate(() => {
   const m = document.querySelector("[data-settings-menu]");
   return !m || getComputedStyle(m).display === "none";
 }));
-ck("studying the lesson switched it on, and the caption says so",
+ck("the lesson's switch is on, and the caption says so",
   (await page.getAttribute(`[data-lesson-include="${LESSON.id}"]`, "aria-checked")) === "true"
-  && /is now switched on/.test((await caption(page))?.text || ""));
+  && /switched on, so/.test((await caption(page))?.text || ""));
 await next(page);
 ck("Cards, to come back to every day", (await waitForTitle(page, "Come back every day")) === "Come back every day"
   && (await lit(page, '[data-tour="nav-cards"]')));
