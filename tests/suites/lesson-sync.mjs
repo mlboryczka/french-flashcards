@@ -9,10 +9,10 @@
 // on serving the same fixed deck, so an insert that never happened and one
 // that silently failed look identical.
 //
-// This suite gives user_cards a real in-memory store instead — GET, upsert and
-// delete — so what the app writes is what it reads back, and the assertions
-// are about what the student ends up with rather than about which requests
-// went out.
+// This suite gives user_cards a real in-memory store instead — GET, upsert,
+// update and delete — so what the app writes is what it reads back, and the
+// assertions are about what the student ends up with rather than about which
+// requests went out.
 import { openApp, finish, checker, settled } from "../harness.mjs";
 import LESSON from "../../src/data/lessons/imperatif.js";
 import { LESSONS } from "../../src/data/lessons/index.js";
@@ -27,8 +27,8 @@ const ck = checker();
 
 // ── A user_cards table that remembers ────────────────────────────────────
 //
-// Enough of PostgREST for this: select, upsert on (user_id, front), and
-// delete by id. Seeded with whatever a given case starts with, so "a new
+// Enough of PostgREST for this: select, upsert on (user_id, front), update
+// by id, and delete by id. Seeded with whatever a given case starts with, so "a new
 // account" and "an account that already has a deck" are the same code.
 //
 // `before016`: the database before migration_016, which has no
@@ -90,7 +90,8 @@ function makeStore(seed = [], { before016 = false } = {}) {
       }
 
       if (method === "DELETE") {
-        const m = /id=in\.\(([^)]*)\)/.exec(req.url());
+        // Decoded: supabase-js sends "in.(…)" percent-encoded.
+        const m = /[?&]id=in\.\(([^)]*)\)/.exec(decodeURIComponent(req.url()));
         const ids = m ? m[1].split(",").map((s) => Number(s.replace(/"/g, ""))) : [];
         writes.push({ kind: "delete", count: ids.length });
         for (const id of ids) {
@@ -100,7 +101,15 @@ function makeStore(seed = [], { before016 = false } = {}) {
         return json([]);
       }
 
-      if (method === "PATCH") return json([]);
+      if (method === "PATCH") {
+        const url = decodeURIComponent(req.url());
+        const m = /[?&]id=in\.\(([^)]*)\)/.exec(url) || /[?&]id=eq\.(\d+)/.exec(url);
+        const ids = m ? m[1].split(",").map((s) => Number(s.replace(/"/g, ""))) : [];
+        const body = JSON.parse(req.postData() || "{}");
+        writes.push({ kind: "update", ids, body });
+        for (const id of ids) Object.assign(rows.find((r) => r.id === id) || {}, body);
+        return json([]);
+      }
       return json([]);
     });
     // Lessons nobody has started are off on Cards (lib/lessonChoice.js), and
@@ -377,6 +386,37 @@ for (const before016 of [false, true]) {
        !String(dropped()?.source).startsWith("archived:") && dropped()?.reps === 4, JSON.stringify({ source: dropped()?.source }));
   }
   ck("no card is added twice", store.rows.length === before, `${before} before, ${store.rows.length} after`);
+  await browser.close();
+}
+
+// ── A dropped lesson card that a class of the notes landed on ─────────────
+//
+// A word from the student's notes that is a lesson card only adds its class
+// date to it, and the line it came from is recorded as read. When the lesson
+// later drops the card, deleting it lost the word for good: no upload would
+// make it again. It stays, as one of the student's own cards; a dropped card
+// with no class date is still removed (2026-10-06).
+console.log("\n  a dropped lesson card a class of the student's notes landed on stays, as their own");
+{
+  const seed = LESSONS.flatMap((lesson) => lesson.cards.map((card) => ({
+    front: card[0], back: card[1], category: card[2], dates: [], flagged_for_review: false, batch_id: null,
+    source: `lesson:${lesson.id}#${keyOf(card)}`, archived_reason: null,
+    next_due_at: null, lapses: 0, stability: null, difficulty: null, fsrs_state: 0, reps: 0, last_review: null, last_answer_correct: null,
+  })));
+  const extra = (front, back, dates) => ({
+    front, back, category: "V", dates, flagged_for_review: false, batch_id: null,
+    source: `lesson:${LESSON.id}#${lessonCardKey(front)}`, archived_reason: null,
+    next_due_at: null, lapses: 0, stability: null, difficulty: null, fsrs_state: 0, reps: 0, last_review: null, last_answer_correct: null,
+  });
+  const store = makeStore([...seed, extra("une écharpe", "a scarf", ["2026-01-05"]), extra("un mot retiré", "a withdrawn word", [])]);
+  const { browser, page } = await openApp({ width: 1400, height: 900, route: store.install });
+  const deadline = Date.now() + 15000;
+  const word = () => store.rows.find((r) => r.front === "une écharpe");
+  const gone = () => !store.rows.some((r) => r.front === "un mot retiré");
+  while (Date.now() < deadline && !(gone() && word()?.source === "cahier-upload")) await page.waitForTimeout(200);
+  ck("the card the notes landed on is kept, now one of the student's own, with its class date",
+     word()?.source === "cahier-upload" && word()?.dates?.includes("2026-01-05"), JSON.stringify({ source: word()?.source, dates: word()?.dates }));
+  ck("a dropped card with no class date is still removed", gone());
   await browser.close();
 }
 

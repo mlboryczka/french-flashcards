@@ -51,7 +51,9 @@ ended up with 73 cards that repeated another one. The owner's rule since then:
   fingerprint of each line, grouped by class. The linked doc, the daily
   check, an upload, a second upload of the same notebook, relinking, and
   linking a copy of the doc all share it. An unchanged notebook uploaded again
-  asks Claude nothing and adds nothing.
+  asks Claude nothing and adds nothing. A class whose date line is corrected
+  is known by its lines, even when its old or new date is another class's
+  too, so it isn't read again.
 - **One reading at a time.** The daily check and an upload can't read the
   same student's notes at the same moment; the second is told to wait.
 - **Saved together.** The new cards and the record of the lines read are
@@ -63,8 +65,9 @@ ended up with 73 cards that repeated another one. The owner's rule since then:
   the lessons' cards included. Small differences that never change what is
   learnt (capitals, a final full stop, an article of the same gender, a label
   like "(adj)", "œ" for "oe") settle it at once. A closer call, such as "le
-  cas" beside "un cas", "manquer" beside "manquer / rater", or a typo fixed,
-  is put to Claude as one question: the same card to learn, or different?
+  cas" beside "un cas", "manquer" beside "manquer / rater", "rater /
+  manquer" beside "manquer / rater", or a typo fixed, is put to Claude as one
+  question: the same card to learn, or different?
   Claude is told what stays apart: "ou" and "où", "la poste" (the post office)
   and "le poste" (the job), "fin" (the end) and "fin (adj)" (thin), a "(fam)"
   meaning beside the ordinary one. If the question can't be answered, those
@@ -84,8 +87,18 @@ used to erase the card and its answers, and the next upload made it again.
 
 "Replace my existing deck", ticked on an upload, takes out of study the cards
 from classes that aren't in the upload, and keeps them. A later Replace upload
-that has their class again brings them back. Lesson cards and cards added from
-the tutor are left alone.
+that has their class again brings them back, unless the same card is in study
+by then (a lesson's copy of it, say), which gains their class dates instead.
+Lesson cards and cards added from the tutor are left alone. Until the database
+update that came with this (migration_016) is run, Replace takes nothing out,
+and the upload's message says so.
+
+After an upload, the message says what was added, which classes were already
+read, and, by date, any class Claude couldn't read (upload the same notes
+again to add it) or whose cards wait on the same-or-different question.
+
+When a lesson drops a card that a word from the student's notes had landed
+on, the card stays, as one of the student's own.
 
 ## What becomes a card
 

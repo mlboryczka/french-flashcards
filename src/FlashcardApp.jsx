@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import { RAW } from "./data/cards"; // only used for the admin "seed demo deck" action
 import { LESSONS, LESSON_GROUPS, LESSONS_SHOWN, lessonIdOf, lessonRank, cardInstructionFor, lessonBackFor } from "./data/lessons";
-import { reconcileLessons } from "./lib/lessonSync";
+import { reconcileLessons, ADOPTED_SOURCE } from "./lib/lessonSync";
 import { archivedSource } from "./lib/archive";
 import { readPlace, writePlace, dropSets, packSet, unpackEntries } from "./lib/studyPlace";
 import { CHOICE_KEY, choicesOf, startedLessons, lessonsInCards, onCards, setKeyOf, dealScopeOf } from "./lib/lessonChoice";
@@ -75,6 +75,7 @@ import { RE_QUEUE_OFFSET, State, settingsInUse } from "./lib/spacedRepetition";
 import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, resetColumns } from "./lib/directions";
 import { newReviewId, reviewRow, withoutExtras, missingColumn } from "./lib/reviewLog";
 import { dealRow, missingTable } from "./lib/dealLog";
+import { uploadResultText } from "./lib/uploadText";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
 
@@ -292,30 +293,6 @@ function uploadDoneText({ cardsInserted = 0, datesCovered = 0, busy = false }) {
     return "Your cahier is linked. Nothing new to add yet — every class in it is already in your deck.\n\nFrom now on, each class Laura adds becomes cards on its own.";
   }
   return `Your cahier is linked.\n\n${cardsInserted} cards from ${datesCovered} ${datesCovered === 1 ? "class" : "classes"} you hadn't studied yet. They join your deck as new cards, so they arrive once your reviews are done.\n\nFrom now on, each class Laura adds becomes cards on its own.`;
-}
-
-// Cards an upload couldn't save. Said plainly: the upload once reported
-// success with 500 of its cards missing. A line is read once, so uploading
-// the same notes again doesn't retry it; changing the line does.
-function uploadFailedText({ cardsFailed = 0, failedFronts = [] } = {}) {
-  if (!cardsFailed) return "";
-  const example = failedFronts[0] ? ` (for example "${failedFronts[0]}")` : "";
-  return `\n\n${cardsFailed} ${cardsFailed === 1 ? "card" : "cards"} couldn't be saved${example}. Check that line in your notes: once it is changed, the next upload reads it again.`;
-}
-
-// What an upload did, in classes, said plainly (2026-10-06). An upload reads
-// only lines it hasn't read before, so an unchanged one adds nothing.
-function uploadResultText(r = {}) {
-  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
-  const lines = [];
-  if (r.cardsInserted) lines.push(`${n(r.cardsInserted, "new card", "new cards")} added to your deck.`);
-  else lines.push("No new cards: everything in these notes is already in your deck.");
-  if (r.classesUnchanged) lines.push(`${n(r.classesUnchanged, "class was", "classes were")} already read and left as they are.`);
-  if (r.cardsSeenAgain) lines.push(`${n(r.cardsSeenAgain, "word you already have", "words you already have")} got the new class date.`);
-  if (r.cardsWaiting) lines.push(`${n(r.cardsWaiting, "card waits", "cards wait")} until your next upload: they look like cards you have, and that couldn't be checked this time.`);
-  if (r.keptOutOfStudy) lines.push(`${n(r.keptOutOfStudy, "card is", "cards are")} from classes not in this upload: out of study now, with their progress kept.`);
-  if (r.broughtBack) lines.push(`${n(r.broughtBack, "card", "cards")} taken out by an earlier replace came back.`);
-  return `Done!\n\n${lines.join("\n")}${uploadFailedText(r)}`;
 }
 
 function cahierArrivalText({ dates = [], cards = 0 } = {}) {
@@ -2248,7 +2225,7 @@ export default function FlashcardApp({ user, onSignOut }) {
     if (!user || !deckLoaded || !deckFreshSeq || lessonsSynced.current) return;
     lessonsSynced.current = true;
     (async () => {
-      const { missing, rekey, retext, stale, archive, unkeyed, taken, away } = reconcileLessons(LESSONS, userCards, archivedCards);
+      const { missing, rekey, retext, stale, archive, adopt, unkeyed, taken, away } = reconcileLessons(LESSONS, userCards, archivedCards);
       if (away.length) {
         // Out of study: the student removed them, or they were put away as a
         // repeat. Putting them back would undo that. See reconcileLessons.
@@ -2268,7 +2245,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           unkeyed.map((c) => c.f)
         );
       }
-      if (!missing.length && !rekey.length && !retext.length && !stale.length && !archive.length) return;
+      if (!missing.length && !rekey.length && !retext.length && !stale.length && !archive.length && !adopt.length) return;
       const owned = (rows) => rows.map((r) => ({ ...r, user_id: user.id }));
       try {
         if (missing.length) {
@@ -2315,9 +2292,20 @@ export default function FlashcardApp({ user, onSignOut }) {
             .eq("user_id", user.id);
           if (error) throw error;
         }
+        // A card the lesson dropped that a class in the student's notes had
+        // landed on: it stays, as one of their own cards. See reconcileLessons.
+        if (adopt.length) {
+          const { error } = await supabase
+            .from("user_cards")
+            .update({ source: ADOPTED_SOURCE })
+            .in("id", adopt)
+            .eq("user_id", user.id);
+          if (error) throw error;
+        }
         console.info(
           `[lessons] synced: +${missing.length} card(s), ${rekey.length} re-keyed, ${retext.length} renamed, ` +
-            `-${stale.length} never answered and removed, ${archive.length} answered and kept out of study`
+            `-${stale.length} never answered and removed, ${archive.length} answered and kept out of study, ` +
+            `${adopt.length} kept as cards from your notes`
         );
         reloadDeck();
       } catch (e) {
@@ -3017,41 +3005,47 @@ export default function FlashcardApp({ user, onSignOut }) {
           onDelete={async () => {
             if (!confirm("Remove this card from your deck? Your answers on it are kept, and the same word in your notes won't bring it back.")) return;
 
-            // Prompt admin for a correction category. Default to
-            // duplicate_detected since that's by far the most common
-            // deletion reason. Admin can override with any other code from
-            // the menu; anything unrecognized falls back to the default.
-            const CATEGORY_MENU = [
-              "duplicate_detected",
-              "should_split_polysemy",
-              "should_merge_gendered",
-              "wrong_disambiguator",
-              "wrong_card_type",
-              "reversed_front_back",
-              "spelling_correction",
-              "other",
-            ];
-            const categoryInput = window.prompt(
-              `Why are you removing this card?\n\nPick one:\n  ${CATEGORY_MENU.join(
-                "\n  "
-              )}\n\n(press Enter to accept the default)`,
-              "duplicate_detected"
-            );
-            // Pressing Cancel returns null — treat as abort.
-            if (categoryInput === null) return;
-            const category = CATEGORY_MENU.includes(categoryInput.trim())
-              ? categoryInput.trim()
-              : "duplicate_detected";
+            // Only the admin is asked why, in the correction codes the notes
+            // checks read, and only the admin's correction is logged
+            // (/api/parse-corrections accepts no one else). A student used to
+            // get the list of codes too, and their pick was refused without a
+            // word; Cancel on it called off a removal they had just said yes
+            // to (2026-10-06).
+            if (isAdmin) {
+              // duplicate_detected is the default: by far the commonest
+              // reason. Anything not on the menu falls back to it.
+              const CATEGORY_MENU = [
+                "duplicate_detected",
+                "should_split_polysemy",
+                "should_merge_gendered",
+                "wrong_disambiguator",
+                "wrong_card_type",
+                "reversed_front_back",
+                "spelling_correction",
+                "other",
+              ];
+              const categoryInput = window.prompt(
+                `Why are you removing this card?\n\nPick one:\n  ${CATEGORY_MENU.join(
+                  "\n  "
+                )}\n\n(press Enter to accept the default)`,
+                "duplicate_detected"
+              );
+              // Pressing Cancel returns null — treat as abort.
+              if (categoryInput === null) return;
+              const category = CATEGORY_MENU.includes(categoryInput.trim())
+                ? categoryInput.trim()
+                : "duplicate_detected";
 
-            // Logged first, as the removal is a correction of Claude's reading.
-            logCorrection({
-              category,
-              action: CORRECTION_ACTIONS.DELETE,
-              card_id: editingCard.row_id,
-              batch_id: editingCard.batch_id || null,
-              original_front: editingCard.f,
-              original_back: editingCard.b,
-            });
+              // Logged first, as the removal is a correction of Claude's reading.
+              logCorrection({
+                category,
+                action: CORRECTION_ACTIONS.DELETE,
+                card_id: editingCard.row_id,
+                batch_id: editingCard.batch_id || null,
+                original_front: editingCard.f,
+                original_back: editingCard.b,
+              });
+            }
 
             const ok = await deleteCard(editingCard.row_id);
             if (ok) setEditingCard(null);

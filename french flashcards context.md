@@ -509,9 +509,13 @@ dashes, capitals, a list bullet and a final full stop set aside. A file that
 breaks the notes into lines differently (a .pdf can) has those lines read
 again, and the matching rule below keeps their cards to one each; this is
 reasoned from the code, not tested on a real file. A class whose date line was
-retyped is known by
-its lines (most of them recorded under a date no longer in the notes) and
-makes no card. Where the record has no lines for a class, it counts as read if
+retyped is known by its lines and makes no card: at least 80% of them (and at
+least 2) are left over under one date, recorded under it and in no class that
+still has that date. That covers a class moved onto a date another class
+already has, and one of two classes sharing a date being corrected (the
+owner's linked notes have "Le 27 octobre 2025" twice, the first almost
+certainly meant for the 28th); until 2026-10-06 only a date gone from the
+notes counted, and the corrected class was read again from scratch. Where the record has no lines for a class, it counts as read if
 its date is on any card, archived ones too, or the link read it; that is how
 the record fills itself the first time, without reading anything. A line
 added to such a class before its first run can't be told apart. Before
@@ -546,13 +550,22 @@ by one rule shared by every path that writes a card from notes
    stop, "?" or "…", hyphens, an article of the same gender, (e)/(s)
    markers, the labels (adj), (adv), (subj), (imparfait), (m), (f), (pl),
    braces like {fiss}, œ for oe, "..." for "…", a bracket repeating the
-   card's own English, and in drills "il" for "il/elle" and "que je" for
-   "je"; and English that shares a word of substance or is word for word the
-   same ("so", "to go"). A final "!" counts only when the English has the
-   same words: "Je pense !" (I think so!) is not "je pense" (I think).
+   card's own English when the other card's English has one of its words
+   too, and in drills "il" for "il/elle" and "que je" for "je"; and English
+   that shares a word of substance or is word for word the same ("so", "to
+   go"). Filler like "quite", "was", "not" or "how" is no word of substance.
+   A final "!" counts only when the English has the same words: "Je pense !"
+   (I think so!) is not "je pense" (I think). The bracket and filler rules
+   are from 2026-10-06: demarajackson's "pas mal" (not bad; quite good) and
+   "pas mal (quite a lot;)" (quite a lot; a good deal) were joined through
+   the shared "quite", and her "ça allait" (it was okay) and "ça allait ?"
+   (how was it going?) through "was". Both are now near look-alikes.
 2. Near look-alikes (accents, "ne", articles or brackets set aside; half of a
-   list card; one word more or fewer; a number in digits; a typo of one or two
-   letters) are put to Claude as one question per run, "the same card to
+   list card; the same words or list parts in another order, such as foisydm's
+   "amener / apporter" and "apporter, amener (ici)"; "il/elle" for "il", as in
+   nguyen's "ils/elles veulent" and "ils veulent"; one word more or fewer; a
+   number in digits; a typo of one or two letters) are put to Claude as one
+   question per run, "the same card to
    learn, or different" (`api/_lib/sameCardQuestion.js`, `claude-opus-5-5`,
    versioned like the answer checks). It is told what stays apart: ou/où, la
    poste/le poste, fin/fin (adj), un état/l'État, a (fam) meaning, masculine
@@ -743,8 +756,12 @@ one. `api/_lib/` is shared code, not a route.
 - "Replace my existing deck" works by class and deletes nothing
   (`src/lib/replaceDeck.js`, since 2026-10-06): a card with none of its
   classes in the upload leaves study, marked "replaced", answers kept; a later
-  Replace with its class brings it back; lesson and tutor cards are left
-  alone; a card the database refuses no longer turns it into an add.
+  Replace with its class brings it back, unless the same card is in study by
+  then (a lesson's copy, say), which gains its class dates instead; lesson and
+  tutor cards are left alone; a card the database refuses no longer turns it
+  into an add. Before migration_016 Replace takes nothing out and the upload
+  says so: a card taken out then could never say a Replace took it, so it
+  would never come back.
 
 ### Which model each route runs
 
@@ -1296,17 +1313,28 @@ Eighteen need no browser:
   turn to the daily check, a failed or lost save, a refused card and a failed
   question; every time exactly the new words arrive, no unchanged class is
   read, every old card keeps its id, text, schedule and answers and gains its
-  dates, and the same notes again ask Claude nothing. Also the keep-apart
-  pairs, Replace by class, the first run after the fix, the question's calls
-  side by side and its time limit, the lesson sync leaving removed cards out,
-  View feedback's Remove card, and before migration_016.
+  dates, and the same notes again ask Claude nothing. Its stand-in Claude adds
+  "(fam)" to a line of a class it reads a second time, which the rule can't
+  join, so any reading of a line already read shows up as an extra card; and
+  every path checks that a class with a line added went to Claude with that
+  line only. Also the keep-apart pairs ("pas mal" and "pas mal (quite a lot)"
+  among them), the same words in another order put to Claude, Replace by
+  class and beside a lesson's copy, a class Claude couldn't read (on the
+  upload and the sync: none of its words added, none of its lines recorded,
+  read alone next time) and every class failing, a class moved onto a date
+  another class has, the first run after the fix, the question's calls side
+  by side and its time limit, the lesson sync leaving removed cards out and
+  keeping a dropped lesson card a class landed on, Remove card through its
+  route, View feedback's Remove card, the message an upload shows, and before
+  migration_016 (Replace taking nothing out).
 - `repeat-checks`: the harness for repeated cards: the morning check asking
   Claude about look-alikes (the cap, newest first, verdicts kept and judged
   with, a failed call's pairs left for tomorrow, nothing asked before
   migration_016 or by the read-only check), the test of the same-or-different
   question and the schedule that runs it, the red dot's rule for it, drills of
-  different verbs not being look-alikes, and
-  `scripts/record-cleanup-reasons.mjs`.
+  different verbs not being look-alikes, the same words in another order
+  being look-alikes, "pas mal" and "pas mal (quite a lot;)" not called one
+  card, and `scripts/record-cleanup-reasons.mjs`.
 
 Eighteen drive the app in a browser. `openApp` opens every one as a student
 who has seen the first-visit tour, unless it passes `tour: true`; `ready`
@@ -1321,9 +1349,12 @@ says what to wait for when a page has no "Previous card".
   the tutor keeps pace with the page.
 - `reflow`: nothing jumps while a panel opens or closes, sampled every frame.
   Start here when a panel looks wrong.
+- `cards`: among other things, Remove card posting `{ action: "remove" }`,
+  never deleting the row, and asking a student only a plain yes or no.
 - `lesson-sync`: new and existing decks get every lesson and keep their own
   cards, against a working in-memory `user_cards`; a lesson card the student
-  removed stays out while one a lesson dropped comes back; and before
+  removed stays out while one a lesson dropped comes back; a dropped lesson
+  card a class of the notes landed on stays as the student's own; and before
   migration_016, whose column the deck load asks for, the deck still loads.
 - `lessons`: L'impératif's notes panel, its set starting at card 1, and the
   top-bar figure.
@@ -2382,6 +2413,30 @@ View feedback records the reason too; linking while the notes are being read
 says so; and `lesson-sync` checks, in the browser, that a removed lesson card
 stays out and that the deck loads before migration_016.
 
+A review of the build found eleven more gaps, all fixed the same evening. A
+class moved onto a date another class still has, or one of two classes
+sharing a date corrected, was read again from scratch; a moved class is now
+known by the lines left over under its old date. The near search missed the
+same words in another order ("une vendeuse / un vendeur") and "ils/elles" for
+"ils", and so did the morning check, which uses it. The sure rule called
+"pas mal" (not bad) and "pas mal (quite a lot;)" one card. Replace could bring
+a card back beside a lesson's copy of it. A word that landed on a lesson card
+was lost when the lesson dropped the card; that card now becomes the
+student's own. A Replace before migration_016 took cards out for good, so it
+now takes nothing out until then. The message after an upload said
+"everything is already in your deck" when a class couldn't be read or waited,
+and now names those classes (`src/lib/uploadText.js`). Remove card asked
+every student for one of the admin's correction codes; only the admin is
+asked now. And the tests gained what would have caught each of these: a
+class Claude can't read, the sync's new lines, Remove card at its route and
+in the browser, a dropped lesson card in the browser, and a stand-in Claude
+whose second reading of a line makes an extra card. Each fix was checked by
+putting its bug back in a scratch copy and seeing a suite fail. Run on the
+read-only copy of the live tables taken after the clean-up, the owner's
+look-alike pairs for Claude went from 875 to 836 (a drill ending "→ il/elle"
+or "→ ils/elles" is no longer paired with the card "elle" or "elles", and
+filler words no longer count as English that agrees), and demarajackson's repeats by the rule from 19 to 16.
+
 ### 2026-10-06 — The harness catches repeated cards
 
 The owner asked to "make sure the evaluation harness is catching this
@@ -2423,8 +2478,8 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 - **Run `migrations/migration_016_notes_read_once.sql`** in the Supabase SQL
   editor. Until then uploads and the sync know classes by date only: an
   unchanged re-upload still reads nothing new, but a line added to an old
-  class waits for it, two runs at once aren't stopped, a removed card keeps
-  no reason, and a removed lesson card comes back with its lesson. The checks
+  class waits for it, two runs at once aren't stopped, Replace takes nothing
+  out of study (it says so), a removed card keeps no reason, and a removed lesson card comes back with its lesson. The checks
   of repeated cards wait for it too: no look-alike is put to Claude and no
   removal can be judged.
 - **Then record why the 2026-10-06 clean-up put cards away**:
@@ -2474,14 +2529,16 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 - **Repeats made inside one reading are still in some decks**, and the
   morning check now fails on them. The clean-up of 2026-10-06 put away only
   repeats from reading notes again. By the rule, on 2026-10-06:
-  demarajackson 19 and laura.caufour 3, both with answers, so check 10 fails
+  demarajackson 16 and laura.caufour 3, both with answers, so check 10 fails
   for them every morning until they are put away; foisydm 18, nguyen.t12090 1
-  and sammy 1, who have no answers and aren't checked. A few of
-  demarajackson's are pairs the old reading labelled as two meanings that the
-  rule joins ("pas mal" / "pas mal (quite a lot;)", "ça allait" / "ça allait
-  ?"). The owner's deck has drill-and-word pairs and partial list overlaps
-  left for them to decide; those are look-alikes, which the morning run puts
-  to Claude.
+  and sammy 1, who have no answers and aren't checked. demarajackson had 19
+  until the rule was corrected that evening: three were pairs the old reading
+  labelled as two meanings ("pas mal" / "pas mal (quite a lot;)", "ça allait"
+  / "ça allait ?", and two "venir chercher" cards), which are now look-alikes
+  for Claude rather than repeats (counted on the read-only snapshot taken
+  after the clean-up). The owner's
+  deck has drill-and-word pairs and partial list overlaps left for them to
+  decide; those are look-alikes, which the morning run puts to Claude.
 - **A few rules in the owner's deck are filed as words or phrases**, such as
   "voie passive" and "double pronoms (COD + COI)", so they are asked both ways.
   The grammar sort only read cards filed `G` or `P`. These few need re-filing

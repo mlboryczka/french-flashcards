@@ -357,7 +357,8 @@ export async function handleCommit(req, res, adminClient, user) {
     console.log(
       `[parse-cahier] commit (${reading.mode}${legacy ? ", old dialog" : ""}): ${incoming.length} cards from ${read.size} classes read, ` +
       `${result.added} new, ${result.seenAgain} seen again, ${result.waiting} waiting, ${result.questions} questions, ` +
-      `${unchanged} classes unchanged, replace: ${result.keptOutOfStudy} out, ${result.broughtBack} back, ` +
+      `${unchanged} classes unchanged, replace: ${result.keptOutOfStudy} out, ${result.broughtBack} back` +
+      (result.replaceWaits ? ` (${result.replaceWaits} left in: no migration_016)` : "") + ", " +
       `${result.failed?.length || 0} refused` + (result.ok ? "" : `, NOT SAVED: ${result.error}`)
     );
     if (!result.ok) {
@@ -373,6 +374,9 @@ export async function handleCommit(req, res, adminClient, user) {
       cardsWaiting: result.waiting,
       classesRead: [...read].filter((d) => !result.waitingDates.includes(d)).length,
       classesUnchanged: unchanged,
+      // Classes read whose cards wait on Claude's question, to be read again
+      // next time. Classes Claude couldn't read the dialog knows already.
+      waitingClasses: result.waitingDates.filter((d) => !failed.has(d)),
       cardsFailed: result.failed.length,
       failedFronts: result.failed.slice(0, 10).map((f) => f.front),
       uniqueCards: incoming.length,
@@ -383,6 +387,9 @@ export async function handleCommit(req, res, adminClient, user) {
       questions: result.questions,
       keptOutOfStudy: result.keptOutOfStudy,
       broughtBack: result.broughtBack,
+      // Before migration_016 Replace takes nothing out: how many cards it
+      // would have, so the student is told why they are still there.
+      replaceWaits: result.replaceWaits,
       removed: 0,
       errors: result.failed.length ? [{ step: "save", error: `${result.failed.length} card(s) not saved: ${result.failed[0].error}` }] : [],
     });

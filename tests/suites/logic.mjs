@@ -370,6 +370,20 @@ console.log("\n  reconcileLessons — a card the student has answered is kept, n
   ]);
   ck("a dropped card never answered is removed", r.stale.length === 1 && r.stale[0] === 2, r.stale.join(","));
   ck("a dropped card the student has answered is kept out of study instead", r.archive.join(",") === "3,4", r.archive.join(","));
+
+  // A dropped card that a class of the student's notes landed on (it carries
+  // the class date) is their notes card too: the line is recorded as read,
+  // so nothing would make it again. It becomes an ordinary card, answered or
+  // not (2026-10-06).
+  const n = reconcileLessons([LESSON], [
+    keyed("parler → tu", 1),
+    keyed("actuellement", 5, { dates: ["2026-01-05"] }),
+    keyed("lentement", 6, { dates: ["2026-01-05"], fsrs_state: 2, stability: 3 }),
+    keyed("doucement", 7, { dates: [] }),
+  ]);
+  ck("a dropped card with class dates from the notes is kept as the student's own, answered or not",
+     n.adopt.join(",") === "5,6" && !n.stale.includes(5) && !n.archive.includes(6), JSON.stringify({ adopt: n.adopt, stale: n.stale, archive: n.archive }));
+  ck("one with no class date is still removed", n.stale.join(",") === "7", n.stale.join(","));
 }
 
 // Every lesson card ever released stays recognisable. A deck knows a lesson
@@ -423,6 +437,21 @@ console.log("\n  replacing the deck works by class and never deletes a card");
   ck("a card the student removed never does", !plan.restore.some((r) => r.id === 7));
   const blind = planReplace(existing, ["2026-01-05"], { reasons: false });
   ck("before migration_016, when the reason isn't known, nothing comes back", blind.restore.length === 0);
+
+  // A card a Replace took out doesn't come back beside a card in study that
+  // is the same card: a lesson card added meanwhile, or another copy it is
+  // bringing back. The card in study gains its dates (2026-10-06).
+  const twins = [
+    row(1, "je vais bien", ["2026-01-05"], { source: "archived:cahier-upload", archived_reason: "replaced", fsrs_state: 2 }),
+    row(2, "Je vais bien", [], { source: lessonSource("lecon1", "k") }),
+    row(3, "une écharpe", ["2026-01-05"], { source: "archived:cahier-upload", archived_reason: "replaced" }),
+    row(4, "Une écharpe", ["2026-01-05"], { source: "archived:cahier-upload", archived_reason: "replaced" }),
+  ].map((r) => ({ ...r, back: { 1: "I'm fine", 2: "I'm fine", 3: "a scarf", 4: "a scarf" }[r.id] }));
+  const t = planReplace(twins, ["2026-01-05"]);
+  ck("a card whose word is in study on another card stays out, and that card is named to gain its dates",
+     !t.restore.some((r) => r.id === 1) && t.kept.some((k) => k.row.id === 1 && k.into.id === 2), JSON.stringify(t.kept.map((k) => [k.row.id, k.into.id])));
+  ck("of two copies a Replace took out, one comes back", t.restore.map((r) => r.id).join(",") === "3" && t.kept.some((k) => k.row.id === 4 && k.into.id === 3),
+     JSON.stringify({ restore: t.restore.map((r) => r.id), kept: t.kept.map((k) => [k.row.id, k.into.id]) }));
 }
 
 // A lesson may reword a card. The reworded card must keep its row — and its

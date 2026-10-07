@@ -23,12 +23,18 @@
 //      a pronunciation respelling in braces ("un fils {fiss}");
 //      the labels (m), (f) and (pl) ("des écouteurs (m)");
 //      a bracket that only repeats the card's own English ("tout d'un coup
-//      (suddenly; all at once)");
+//      (suddenly; all at once)"), when the other card's English has one of
+//      its words too. A bracket can be the label that tells two meanings
+//      apart: "pas mal (quite a lot;)" = "quite a lot; a good deal" is not
+//      "pas mal" = "not bad; quite good" (demarajackson, 2026-10-06);
 //      in a drill, "il" for "il/elle" and "que je" for "je".
 //    English agrees when the two share a word of substance, or when it is
 //    word for word the same once a/an/the/to are set aside, which is what
-//    catches "so", "to go" and "it is". A drill's answer is French, so two
-//    drills agree only when their answers are the same.
+//    catches "so", "to go" and "it is". Filler words like "quite", "was",
+//    "not" and "how" are not words of substance: "ça allait" (it was okay)
+//    and "ça allait ?" (how was it going?) shared only "was". A drill's
+//    answer is French, so two drills agree only when their answers are the
+//    same.
 //    One change goes the other way: a final "!" is kept, because "Je pense !"
 //    (I think so!) is not "je pense" (I think). Two fronts that differ only by
 //    it are the same card when their English has the same words: "Rends-moi
@@ -44,9 +50,12 @@
 //    sameCardQuestion.js). A near look-alike is: the same words once accents,
 //    "ne", articles and brackets are set aside; one half of a list card
 //    ("manquer" and "manquer / rater"; "japonais" and "japonais, japonaise");
-//    brackets around a French word; one word more or fewer in a phrase of
-//    three or more, with English agreeing; a number and its word; or a typo
-//    of one or two letters, with English agreeing. On the owner's 63 groups of
+//    the same words or list parts in another order ("une vendeuse / un
+//    vendeur" and "un vendeur / une vendeuse"; foisydm's "amener / apporter"
+//    and "apporter, amener (ici)"); "il/elle" for "il" ("ils/elles veulent"
+//    and "ils veulent"); brackets around a French word; one word more or
+//    fewer in a phrase of three or more, with English agreeing; a number and
+//    its word; or a typo of one or two letters, with English agreeing. On the owner's 63 groups of
 //    repeated cards (2026-10-06) the two steps together reached all 63.
 
 const LABELS = /\((?:adj|adjectif|adv|adverbe|subj|subjonctif|imparfait)\.?\)/gi;
@@ -64,10 +73,15 @@ export function sameCardKey(front) {
   return s;
 }
 
+// Words that say nothing about what a card means. The second line was added
+// on 2026-10-06: "pas mal" (not bad; quite good) and "pas mal (quite a lot)"
+// agreed through "quite", and "ça allait" and "ça allait ?" through "was".
+const FILLER = ["quite", "was", "were", "not", "how", "very", "really"];
 const STOP = new Set([
   "a", "an", "the", "to", "of", "in", "on", "at", "for", "with", "by", "is", "are", "be",
   "and", "or", "but", "it", "its", "this", "that", "one", "some", "someone", "something",
   "adj", "adv", "noun", "verb", "etc",
+  ...FILLER,
 ]);
 const words = (text) =>
   new Set(String(text ?? "").toLowerCase().split(/[^a-z']+/).filter((w) => w.length >= 3 && !STOP.has(w)));
@@ -83,7 +97,7 @@ export function sameMeaning(backA, backB) {
 
 // ── English, compared ──────────────────────────────────────────────────────
 
-const EN_STOP = new Set(["a", "an", "the", "to", "of", "is", "it", "be", "so", "and", "or", "for", "with", "in", "on", "at"]);
+const EN_STOP = new Set(["a", "an", "the", "to", "of", "is", "it", "be", "so", "and", "or", "for", "with", "in", "on", "at", ...FILLER]);
 const enWords = (s) => String(s ?? "").toLowerCase().replace(/\([^)]*\)/g, " ").split(/[^a-z']+/).filter(Boolean);
 const enNorm = (s) => enWords(s).filter((w) => !["a", "an", "the", "to"].includes(w)).join(" ");
 const glossWordsOf = (s) => new Set(enWords(s).filter((w) => w.length >= 3 && !EN_STOP.has(w)));
@@ -117,9 +131,10 @@ export function sameWords(backA, backB) {
 
 const GENDER_LABELS = /\((?:m|f|n|nm|nf|pl|m\/f|masc|fém|fem)\.?\)/gi;
 
-// The French of a card as the sure rule compares it, and whether it ends in
-// "!". `back` is needed because a bracket that only repeats the card's own
-// English is set aside.
+// The French of a card as the sure rule compares it, whether it ends in "!",
+// and the words of each bracket set aside. `back` is needed because a bracket
+// that only repeats the card's own English is set aside; isSureMatch then
+// checks the other card's English has one of its words.
 export function sureKey(front, back) {
   let s = String(front ?? "").normalize("NFC")
     .replace(/œ/g, "oe").replace(/Œ/g, "Oe").replace(/æ/g, "ae").replace(/Æ/g, "Ae")
@@ -127,9 +142,12 @@ export function sureKey(front, back) {
   s = s.replace(/\{[^}]*\}/g, " ");
   s = s.replace(GENDER_LABELS, " ");
   const gloss = glossWordsOf(back);
+  const glosses = [];
   s = s.replace(/\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, (m, inner) => {
     const w = enWords(inner).filter((x) => x.length >= 3 && !EN_STOP.has(x));
-    return w.length && w.every((x) => gloss.has(x)) ? " " : m;
+    if (!w.length || !w.every((x) => gloss.has(x))) return m;
+    glosses.push(w);
+    return " ";
   });
   s = s.replace(/\s*…\s*/g, " ");
   const bang = /!$/.test(s.replace(/[\s.]+$/, ""));
@@ -140,14 +158,22 @@ export function sureKey(front, back) {
     .replace(/→ qu'(?:ils\/elles|ils|elles)$/, "→ ils/elles")
     .replace(/→ (?:il|elle|on|il\/elle\/on)$/, "→ il/elle")
     .replace(/→ (?:ils|elles)$/, "→ ils/elles");
-  return { key: k.replace(/\s+/g, " ").trim(), bang };
+  return { key: k.replace(/\s+/g, " ").trim(), bang, glosses };
 }
+
+// Each bracket one card set aside has a word in the other card's English.
+const glossesShared = (glosses, otherBack) => {
+  if (!glosses?.length) return true;
+  const other = glossWordsOf(otherBack);
+  return glosses.every((w) => w.some((x) => other.has(x)));
+};
 
 // Two cards are surely the same card to learn.
 export function isSureMatch(a, b) {
   const pa = sureKey(a?.front, a?.back);
   const pb = sureKey(b?.front, b?.back);
   if (!pa.key || pa.key !== pb.key) return false;
+  if (!glossesShared(pa.glosses, b?.back) || !glossesShared(pb.glosses, a?.back)) return false;
   if (!englishAgrees(a, b)) return false;
   return pa.bang === pb.bang || sameWords(a?.back, b?.back);
 }
@@ -156,10 +182,16 @@ export function isSureMatch(a, b) {
 
 const stripAccents = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
 
+// "il/elle" read as "il", and "ils/elles" as "ils", so nguyen's "ils/elles
+// veulent" and "ils veulent" are near look-alikes for Claude (2026-10-06).
+// Nor is "il/elle" a list of two parts.
+const onePronoun = (s) =>
+  s.replace(/\bils\s*\/\s*elles\b/gi, "ils").replace(/\bil\s*\/\s*elle(?:\s*\/\s*on)?\b/gi, "il");
+
 // The French with accents, "ne", articles, brackets, braces and punctuation
-// set aside, and l'/d'/j'/qu' spelt out.
+// set aside, l'/d'/j'/qu' spelt out, and "il/elle" as "il".
 export function looseKey(front) {
-  let s = String(front ?? "").normalize("NFC").toLowerCase().replace(/[’‘`]/g, "'").replace(/œ/g, "oe").replace(/æ/g, "ae");
+  let s = onePronoun(String(front ?? "").normalize("NFC").toLowerCase().replace(/[’‘`]/g, "'").replace(/œ/g, "oe").replace(/æ/g, "ae"));
   s = s.replace(/\{[^}]*\}/g, " ").replace(/\([^)]*\)/g, " ");
   s = stripAccents(s)
     .replace(/\bj'/g, "je ").replace(/\bn'/g, " ").replace(/\bne\b/g, " ")
@@ -171,7 +203,7 @@ const looseKeepBrackets = (front) => looseKey(String(front ?? "").replace(/[()]/
 
 // The parts of a list card: "manquer / rater", "japonais, japonaise".
 export function partsOf(front) {
-  const t = String(front ?? "");
+  const t = onePronoun(String(front ?? ""));
   const bySlash = t.split(/\s+\/\s+/).map((p) => p.trim()).filter(Boolean);
   if (bySlash.length >= 2) return bySlash;
   const ps = t.split(/\s*\/\s*|\s*,\s*|\s+=\s+/).map((p) => p.trim()).filter(Boolean);
@@ -207,11 +239,21 @@ function keysOf(card) {
   const sure = sureKey(card.front, card.back);
   const loose = looseKey(card.front);
   const lw = loose ? loose.split(" ") : [];
+  const parts = partsOf(card.front).map(looseKey).filter(Boolean);
+  // The same words, or the same parts of a list, in any order: "rater /
+  // manquer" and "manquer / rater", "vieille, vieux" and "vieux, vieille".
+  // Not for drills, whose words are a verb, a tense and a person.
+  const order = new Set();
+  if (!isDrillFront(card.front)) {
+    if (parts.length >= 2) order.add(`| ${[...parts].sort().join(" | ")}`);
+    if (lw.length >= 2 && lw.length <= 6) order.add([...lw].sort().join(" "));
+  }
   k = {
     sure: sure.key,
     loose,
     kb: looseKeepBrackets(card.front),
-    parts: partsOf(card.front).map(looseKey).filter(Boolean),
+    parts,
+    order: [...order],
     drop: lw.length >= 3 ? [loose, ...lw.map((_, i) => lw.filter((__, j) => j !== i).join(" "))] : [],
     answer: startsWithNumber(card.front) || isDrillFront(card.front) ? looseKey(card.back) : "",
     typo: loose.length >= 5 && !isDrillFront(card.front) ? loose : "",
@@ -236,6 +278,7 @@ export function cardIndex(cards = []) {
   const byLoose = new Map();
   const byKB = new Map();
   const byPart = new Map();
+  const byOrder = new Map();
   const byDrop = new Map();
   const byAnswer = new Map();
   const byLen = new Map();
@@ -246,6 +289,7 @@ export function cardIndex(cards = []) {
     push(byLoose, k.loose, card);
     push(byKB, k.kb, card);
     for (const p of k.parts) push(byPart, p, card);
+    for (const o of k.order) push(byOrder, o, card);
     for (const d of new Set(k.drop)) push(byDrop, d, card);
     push(byAnswer, k.answer, card);
     if (k.typo) push(byLen, k.typo.length, card);
@@ -276,6 +320,7 @@ export function cardIndex(cards = []) {
     take(byLoose.get(k.loose));
     for (const p of k.parts) take(byLoose.get(p));
     take(byPart.get(k.loose));
+    for (const o of k.order) take(byOrder.get(o));
     take(byKB.get(k.kb));
     // One word more or fewer, with English agreeing. A drill answers in
     // French, so its answer has to be the same: compared as English, "ils

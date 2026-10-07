@@ -136,7 +136,8 @@ nothing), and the class behind every one of them was found.
 ### Judging look-alike cards
 
 A word is often written a little differently from one class to the next: "le
-cas" and "un cas", "japonais" and "japonais, japonaise". Fixed rules settle
+cas" and "un cas", "japonais" and "japonais, japonaise", "amener / apporter"
+and "apporter, amener (ici)". Fixed rules settle
 most new cards, but rules loose enough to catch the rest would also join
 words that differ, such as "un état" (a condition) and "l'État" (the State).
 So near look-alikes are put to Claude as one question: the same card to learn,

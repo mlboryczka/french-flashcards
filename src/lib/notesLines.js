@@ -17,7 +17,7 @@
 //   a corrected line is read once, and its card then goes through the
 //   matching rule (src/lib/sameCard.js), so a fixed typo adds no card;
 //   a class whose date line was retyped is recognised by its lines and makes
-//   no card.
+//   no card, even when its new date, or its old one, is another class's too.
 //
 // The record fills itself the first time, without reading anything: a class
 // whose date is on any of the student's cards (archived ones too), or that
@@ -98,12 +98,34 @@ export function readDatesFrom(rows = [], linkClasses = null) {
 //               make cards only from the new lines
 //   fpsAll      every line, recorded once the class is read
 //   fpsKnown    the lines already read, recorded if this run can't read it
-//   retypedFrom the date it had before, when its date line was retyped
+//   retypedFrom the date it had before, when its date line was retyped or it
+//               moved onto another class's date
 export function planReading({ blocks = [], classes = {}, readDates = new Set() }) {
   const record = classes || {};
-  const blockDates = new Set(blocks.map((b) => b.date));
-  return blocks.map((b) => {
-    const lines = classLines(b.text);
+  const planned = blocks.map((b) => ({ b, lines: classLines(b.text) }));
+
+  // The lines each date in the record has left over: recorded under it, and
+  // in no class of these notes that still has that date. A class whose date
+  // line was retyped leaves all its lines over under its old date. So does
+  // one of two classes that shared a date, when one of them is corrected: the
+  // owner's linked notes have "Le 27 octobre 2025" twice, the first almost
+  // certainly meant for the 28th (2026-10-06). The old date is still in the
+  // notes then, so looking only at dates that had vanished missed the move,
+  // and the corrected class was read again from scratch.
+  const linesOnDate = new Map();
+  for (const { b, lines } of planned) {
+    if (!linesOnDate.has(b.date)) linesOnDate.set(b.date, new Set());
+    for (const l of lines) linesOnDate.get(b.date).add(l.fp);
+  }
+  const leftOver = [];
+  for (const [date, fps] of Object.entries(record)) {
+    if (!Array.isArray(fps) || !fps.length) continue;
+    const still = linesOnDate.get(date) || new Set();
+    const left = new Set(fps.filter((fp) => !still.has(fp)));
+    if (left.size >= 2) leftOver.push({ date, left });
+  }
+
+  return planned.map(({ b, lines }) => {
     const fpsAll = lines.map((l) => l.fp);
     let known;
     let seeded = false;
@@ -114,22 +136,23 @@ export function planReading({ blocks = [], classes = {}, readDates = new Set() }
       known = new Set(fpsAll);
       seeded = true;
     } else {
-      // A date not seen before: perhaps the same class with its date line
-      // retyped ("Le 3 mars" made "Le 4 mars"). It is, when most of its lines
-      // were read under a date no longer in these notes.
+      known = new Set();
+    }
+    // A class with lines not read under its own date may be a class that
+    // moved: its date line retyped, or moved onto a date another class
+    // already has. It is, when at least 80% of its lines (and at least 2) are
+    // left over from one date. Those lines were read; any others are new.
+    if (fpsAll.some((fp) => !known.has(fp))) {
       let best = null;
       let bestOverlap = 0;
-      for (const [date, fps] of Object.entries(record)) {
-        if (blockDates.has(date) || !Array.isArray(fps) || !fps.length) continue;
-        const set = new Set(fps);
-        const overlap = fpsAll.filter((fp) => set.has(fp)).length;
+      for (const { date, left } of leftOver) {
+        if (date === b.date) continue;
+        const overlap = fpsAll.filter((fp) => left.has(fp)).length;
         if (overlap > bestOverlap) { best = date; bestOverlap = overlap; }
       }
       if (best && bestOverlap >= 2 && bestOverlap >= Math.ceil(fpsAll.length * 0.8)) {
         retypedFrom = best;
-        known = new Set(record[best]);
-      } else {
-        known = new Set();
+        known = new Set([...known, ...record[best]]);
       }
     }
     const fresh = lines.filter((l) => !known.has(l.fp));

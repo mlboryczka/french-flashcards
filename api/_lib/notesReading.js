@@ -135,7 +135,7 @@ async function saveInOneStep(admin, { userId, runId, inserts, updates, archive, 
 
 // Before migration_016: one statement at a time, as the app always did. A card
 // already holding the same French is never written over.
-async function saveStepByStep(admin, { userId, inserts, updates, archive, hasReasons }) {
+async function saveStepByStep(admin, { userId, inserts, updates, archive, restore = [], hasReasons }) {
   let inserted = 0;
   const failed = [];
   const saveRows = async (chunk) => {
@@ -176,7 +176,27 @@ async function saveStepByStep(admin, { userId, inserts, updates, archive, hasRea
       if (error) return { ok: false, error: `Couldn't take a card out of study: ${error.message}`, inserted, failed };
     }
   }
+  // Back into study, only ever a card a Replace took out (as save_notes_reading
+  // does). Only reached with the reason column in place.
+  for (const row of hasReasons ? restore : []) {
+    const { error } = await admin.from("user_cards")
+      .update({ source: String(row.source).slice("archived:".length) || null, archived_reason: null, archived_at: null })
+      .eq("id", row.id).eq("user_id", userId).eq("archived_reason", "replaced");
+    if (error) return { ok: false, error: `Couldn't bring a card back into study: ${error.message}`, inserted, failed };
+  }
   return { ok: true, inserted, dated, failed };
+}
+
+// `dates` added to `row` in the list of date writes, beside any it has there.
+function addDates(updates, row, dates) {
+  if (row?.id == null) return;
+  let u = updates.find((x) => x.id === row.id);
+  const have = new Set(u ? u.merged : (Array.isArray(row.dates) ? row.dates : []));
+  const gain = (Array.isArray(dates) ? dates : []).filter((d) => typeof d === "string" && !have.has(d));
+  if (!gain.length) return;
+  if (!u) { u = { row, id: row.id, dates: [], merged: [...have] }; updates.push(u); }
+  u.dates = [...new Set([...u.dates, ...gain])].sort();
+  u.merged = [...new Set([...u.merged, ...gain])].sort();
 }
 
 // Decide every card a reading made, and save them with the lines read.
@@ -198,17 +218,33 @@ export async function saveRun({
   const waiting = waitingDates(match.decisions, failedDates);
   const writes = plannedWrites(match.decisions, waiting);
   const inserts = writes.inserts.map((c) => insertRow(c, batchId));
+  // Cards already in the deck that gained a class date: a word taught again.
+  // One that already had the date isn't counted.
+  const seenAgain = writes.updates.length;
 
   let archive = [];
   let restore = [];
+  let replaceWaits = 0;
   if (replaceDates) {
     // Judged on the cards as this upload leaves them: a card whose word is
     // in the upload, so that it gains one of its classes now, is in it.
     const gaining = new Map(writes.updates.map((u) => [u.id, u.merged]));
     const rows = deck.rows.map((row) => (gaining.has(row.id) ? { ...row, dates: gaining.get(row.id) } : row));
     const r = planReplace(rows, replaceDates, { reasons: deck.hasReasons });
-    archive = r.archive.map((row) => ({ ...row, reason: "replaced" }));
-    restore = r.restore;
+    if (!deck.hasReasons) {
+      // Before migration_016 a Replace takes nothing out. A card taken out
+      // then couldn't say a Replace took it, so no later Replace could bring
+      // it back, and its class, being on a card, would never be read again:
+      // the card would be out of study for good (2026-10-06). The upload is
+      // saved as an ordinary add, and the reply says how many cards stayed.
+      replaceWaits = r.archive.length;
+    } else {
+      archive = r.archive.map((row) => ({ ...row, reason: "replaced" }));
+      restore = r.restore;
+      // A card that stays out because its word is in study on another card:
+      // that card gains its class dates, as it would from a reading.
+      for (const { row, into } of r.kept) addDates(writes.updates, into, row.dates);
+    }
   }
 
   const lines = reading.mode === "lines" && plan;
@@ -225,14 +261,14 @@ export async function saveRun({
           pairs: pairRows(match.asked, source), classes,
         });
   } else {
-    saved = await saveStepByStep(admin, { userId, inserts, updates: writes.updates, archive, hasReasons: deck.hasReasons });
+    saved = await saveStepByStep(admin, { userId, inserts, updates: writes.updates, archive, restore, hasReasons: deck.hasReasons });
   }
 
   const waitingCards = match.decisions.filter((d) => d.action === "wait").length;
   return {
     ...saved,
     added: saved.inserted,
-    seenAgain: writes.rowsSeenAgain,
+    seenAgain,
     waiting: waitingCards,
     waitingDates: [...waiting].sort(),
     questions: match.questions,
@@ -240,6 +276,7 @@ export async function saveRun({
     labelled: writes.inserts.filter((w) => w.labelled).length,
     keptOutOfStudy: saved.ok ? archive.length : 0,
     broughtBack: saved.ok ? restore.length : 0,
+    replaceWaits,
     decisions: match.decisions,
   };
 }

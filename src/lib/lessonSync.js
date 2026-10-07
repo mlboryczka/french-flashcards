@@ -31,12 +31,19 @@ const STAYS_OUT = new Set(["removed", "duplicate"]);
 // history, and nothing a lesson does may delete it.
 const studied = (card) => DIRECTIONS.some((d) => (sideOf(card, d).fsrs_state ?? 0) !== 0);
 
+// A class date on a lesson card: a lesson card is written with none, so a
+// date can only come from the student's own notes.
+const fromNotes = (card) => Array.isArray(card.dates) && card.dates.some((d) => typeof d === "string" && d);
+
+// The source a lesson card becomes when it is the student's notes card.
+export const ADOPTED_SOURCE = "cahier-upload";
+
 /**
  * @param {Array} lessons   the catalogue (LESSONS)
  * @param {Array} deckCards shaped deck rows from useUserDeck
  * @param {Array} archivedCards the rows out of study ({ f, b, source, reason }),
  *             from useUserDeck's `archived`
- * @returns {{ missing: Array, rekey: Array, retext: Array, stale: number[], archive: number[], unkeyed: Array, taken: Array, away: Array }}
+ * @returns {{ missing: Array, rekey: Array, retext: Array, stale: number[], archive: number[], adopt: number[], unkeyed: Array, taken: Array, away: Array }}
  *   missing — lesson cards this deck has no row for, ready for insert
  *             (the caller adds user_id)
  *   rekey   — legacy rows that DO match a lesson card, re-upserted on the same
@@ -55,6 +62,15 @@ const studied = (card) => DIRECTIONS.some((d) => (sideOf(card, d).fsrs_state ?? 
  *             HAS answered. Taken out of study, not deleted: deleting a card
  *             deletes every answer recorded against it, and a lesson update
  *             must never cost a student their history (the owner, 2026-09-25).
+ *   adopt   — row_ids of keyed rows the lesson no longer has that carry class
+ *             dates: a word from the student's own notes landed on the lesson
+ *             card (a reading only adds its class date to a card the student
+ *             already has, lesson cards included). That row is the student's
+ *             notes card too, and the line it came from is marked read, so no
+ *             upload or sync would make it again: deleting or archiving it
+ *             lost the word from study for good (2026-10-06). It becomes an
+ *             ordinary card instead (source "cahier-upload"), keeping its row,
+ *             its dates, its schedule and its answers.
  *   unkeyed — legacy rows matching no lesson card. NOT deleted: a row written
  *             before keys existed is indistinguishable from an edited one, and
  *             deleting a card someone corrected is worse than leaving one the
@@ -86,6 +102,7 @@ export function reconcileLessons(lessons, deckCards, archivedCards = []) {
   const retext = [];
   const stale = [];
   const archive = [];
+  const adopt = [];
   const unkeyed = [];
   const taken = [];
   const away = [];
@@ -125,7 +142,10 @@ export function reconcileLessons(lessons, deckCards, archivedCards = []) {
           if (c.was && card.f === c.was && card.row_id != null) {
             retext.push({ row_id: card.row_id, front: c.f, back: c.b });
           }
-        } else if (card.row_id != null) (studied(card) ? archive : stale).push(card.row_id);
+        } else if (card.row_id != null) {
+          if (fromNotes(card)) adopt.push(card.row_id);
+          else (studied(card) ? archive : stale).push(card.row_id);
+        }
         continue;
       }
       // Legacy row: no key. Match it by front, which is what identity used to
@@ -160,5 +180,5 @@ export function reconcileLessons(lessons, deckCards, archivedCards = []) {
     }
   }
 
-  return { missing, rekey, retext, stale, archive, unkeyed, taken, away };
+  return { missing, rekey, retext, stale, archive, adopt, unkeyed, taken, away };
 }

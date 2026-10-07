@@ -248,6 +248,36 @@ console.log("\n  the near search, as the morning check asks it");
   ck("the same drill with and without its tense still is", near(4).includes(5), JSON.stringify(near(4)));
   ck("and a phrase one word longer, its English agreeing, still is",
      cardIndex([{ id: 1, front: "je suis allé au marché", back: "I went to the market" }]).near({ id: 2, front: "je suis allé au grand marché", back: "I went to the big market" }).length === 1);
+
+  // The same words or list parts in another order, and "ils/elles" for
+  // "ils" (2026-10-06). The check runs the card-writers' own index, so it
+  // missed these as they did: "No card is in your deck twice" passed with
+  // each pair in study. The first and last pairs are real (foisydm's and
+  // nguyen's, as the live tables have them).
+  const reordered = [
+    [{ id: 5615, front: "amener / apporter", back: "to bring, to take" }, { id: 5466, front: "apporter, amener (ici)", back: "to bring (here)" }],
+    [{ id: 9851, front: "un vendeur / une vendeuse", back: "a salesman / a saleswoman" }, { id: 9900, front: "une vendeuse / un vendeur", back: "a saleswoman / a salesman" }],
+    [{ id: 6578, front: "ils veulent", back: "they want" }, { id: 6455, front: "ils/elles veulent", back: "they want" }],
+  ];
+  const deck = reordered.flat().map((c) => ({ ...c, source: "cahier-upload" }));
+  const found = lookalikes({ cards: deck });
+  const unjudged = (a, b) => found.unjudged.some((p) => [p.a.id, p.b.id].sort().join() === [a.id, b.id].sort().join());
+  ck("each pair in another order is a look-alike the morning check puts to Claude", found.groups.length === 0 && reordered.every(([a, b]) => unjudged(a, b)),
+     JSON.stringify(found.unjudged.map((p) => `${p.a.front} ~ ${p.b.front}`)));
+  const verdicts = reordered.map(([a, b]) => ({ card_a: a.id, card_b: b.id, a_front: a.front, a_back: a.back, b_front: b.front, b_back: b.back, verdict: "same", asked_at: "2026-10-06T05:00:00Z" }));
+  ck("and once Claude calls them the same, each is one card twice", lookalikes({ cards: deck, pairs: verdicts }).same.length === 3);
+
+  // And the other way: a label that tells two meanings apart is not one card
+  // twice. demarajackson's "pas mal" (not bad) and "pas mal (quite a lot;)"
+  // failed her morning check by the rule; now they are a look-alike for
+  // Claude.
+  const pasMal = [
+    { id: 9537, front: "pas mal", back: "not bad; quite good", source: "cahier-upload" },
+    { id: 9538, front: "pas mal (quite a lot;)", back: "quite a lot; quite a bit; a good deal", source: "cahier-upload" },
+  ];
+  const pm = lookalikes({ cards: pasMal });
+  ck("\"pas mal\" (not bad) and \"pas mal (quite a lot;)\" are not called one card by the rule, only put to Claude",
+     pm.groups.length === 0 && pm.unjudged.length === 1, JSON.stringify({ groups: pm.groups.length, unjudged: pm.unjudged.length }));
 }
 
 console.log("\n  judgeLookalikes on its own");

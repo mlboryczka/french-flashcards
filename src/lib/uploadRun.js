@@ -78,5 +78,6 @@ export async function runUpload({ post, mode = "text", content, replace = false,
     failedDates,
     batch_id: batchId,
   });
-  return { ...commit, batch_id: batchId, classesToRead: toRead.length, classesFailed: failedDates.length };
+  const failedClasses = [...new Set(failedDates)].sort();
+  return { ...commit, batch_id: batchId, classesToRead: toRead.length, classesFailed: failedClasses.length, failedClasses };
 }

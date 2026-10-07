@@ -6,8 +6,8 @@
 // returned success with 0 rows affected, the modal would close, and the
 // change would quietly never persist).
 //
-// Request body: { row_id, front, back }
-// Response:     { ok: true, row: <updated row> }
+// Request body: { row_id, front, back }, or { action: "remove", row_id }
+// Response:     { ok: true, row: <updated row> }, or { ok: true, removed: true }
 //               or { error: "..." } on 4xx/5xx
 
 import { createClient } from "@supabase/supabase-js";
@@ -31,15 +31,22 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Missing env vars" });
   }
 
-  const authHeader = req.headers.authorization || "";
+  const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return updateCard(admin, req, res);
+}
+
+// The route's work, with the database client passed in, so a test runs
+// exactly this against a stand-in (tests/suites/repeats.mjs). Removing a card
+// is the owner's rule that answers are never lost, so it is tested here, at
+// the route, and not only in api/_lib/removeCard.js (2026-10-06).
+export async function updateCard(admin, req, res) {
+  const authHeader = req.headers?.authorization || "";
   const accessToken = authHeader.replace(/^Bearer\s+/i, "");
   if (!accessToken) {
     return res.status(401).json({ error: "Missing auth token" });
   }
-
-  const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
 
   // Verify the JWT and get the user id. We use this to scope the update
   // to rows owned by the caller — the service role bypasses RLS, so we

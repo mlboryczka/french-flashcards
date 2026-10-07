@@ -9,6 +9,14 @@
 // that card, counts every call, and answers the same-or-different question
 // from a hand-written list of the pairs that really are one card.
 //
+// A line of a class read a second time comes back with "(fam)" added, which
+// the rule can't join and the question calls different. So any reading of a
+// line already read shows up as an extra card, in every path (2026-10-06: the
+// stand-in used to drop a full stop or flip a capital, which the rule always
+// joins, and the sync could send whole old classes with every check green).
+// The few tests where a line is rightly read twice (a class whose cards
+// waited, a save that failed) switch to that gentler respelling.
+//
 // The headline test, run in every way the notes can come in:
 //   a deck is built from a 6-class notebook and made to look used (answers,
 //   a French and an English edited by the student, a card removed, a repeat
@@ -91,7 +99,12 @@ const ONE_CARD = new Set([
 
 // ── The stand-in Claude ───────────────────────────────────────────────────
 const claude = {
-  reads: [], questions: [], pairsAsked: [], questionFails: false, readFails: false, judge: null, seen: new Map(),
+  reads: [], questions: [], pairsAsked: [], questionFails: false, judge: null, seen: new Map(),
+  // `readFailIf(lesson)` fails the reading of each class it picks.
+  // `respell` is how a line read a second time comes back: "strict" adds
+  // "(fam)", which makes a card of its own; "rule" drops a full stop or flips
+  // the first capital, which the rule joins.
+  readFailIf: null, respell: "strict",
   // For the question's own checks: fail every call whose pairs `failIf`
   // picks (retries included), hold each answer this long, and the most calls
   // seen at once.
@@ -134,18 +147,22 @@ const server = createServer((req, res) => {
     const lesson = /Here is the lesson text:\n\n---\n([\s\S]*?)\n---/.exec(content)?.[1] || "";
     const newPart = /New lines:\n([\s\S]*)$/.exec(content)?.[1];
     const lines = (newPart ? newPart.split("\n").map((l) => l.replace(/^- /, "")) : lesson.split("\n")).map((l) => l.trim()).filter(Boolean);
-    claude.reads.push({ lesson, newLines: newPart ? lines : null });
-    if (claude.readFails) return reply("", 500);
+    const read = { lesson, newLines: newPart ? lines : null };
+    claude.reads.push(read);
+    // A 400 is not retried by the SDK, so a failed reading fails at once.
+    if (claude.readFailIf?.(lesson)) return reply("", 400);
+    const cls = classKey(read);
     const cards = [];
     for (const line of lines) {
       const i = line.indexOf(" = ");
       if (i < 0) continue;
       let front = line.slice(0, i).trim();
-      // A line read a second time comes back spelt a little differently, as
-      // the real model's do: this is how a re-read made a second card.
-      const n = claude.seen.get(line) || 0;
-      claude.seen.set(line, n + 1);
-      if (n > 0) front = front.endsWith(".") ? front.slice(0, -1) : `${front[0] === front[0].toUpperCase() ? front[0].toLowerCase() : front[0].toUpperCase()}${front.slice(1)}`;
+      // A line of a class read a second time comes back spelt differently,
+      // as the real model's do: this is how a re-read made a second card.
+      const n = claude.seen.get(`${cls}|${line}`) || 0;
+      claude.seen.set(`${cls}|${line}`, n + 1);
+      if (n > 0 && claude.respell === "strict") front = `${front} (fam)`;
+      else if (n > 0) front = front.endsWith(".") ? front.slice(0, -1) : `${front[0] === front[0].toUpperCase() ? front[0].toLowerCase() : front[0].toUpperCase()}${front.slice(1)}`;
       cards.push({ front, back: line.slice(i + 3).trim(), category: front.includes("→") ? "G" : "V" });
     }
     reply(JSON.stringify(cards));
@@ -162,6 +179,14 @@ const classOf = (read) => {
   return "?";
 };
 const classesRead = () => [...new Set(claude.reads.map(classOf))].sort();
+// Which class a line belongs to, for "read before": the class it is in, by
+// name, or else by its first card line.
+const classKey = (read) => {
+  const c = classOf(read);
+  return c !== "?" ? c : read.lesson.split("\n").map((l) => l.trim()).find((l) => l.includes(" = ")) || "?";
+};
+// Readings of a class that went with only its new lines, and those lines.
+const newLinesOf = (name) => claude.reads.filter((x) => classOf(x) === name).map((x) => (x.newLines ? x.newLines.join(" / ") : "the whole class"));
 
 // ── The Google Doc ────────────────────────────────────────────────────────
 const doc = { text: "" };
@@ -178,9 +203,14 @@ const { syncUser } = await import("../../api/cahier-sync.js");
 const { removeCard } = await import("../../api/_lib/removeCard.js");
 const { runUpload } = await import("../../src/lib/uploadRun.js");
 const { isSureMatch, cardIndex } = await import("../../src/lib/sameCard.js");
+const { matchNewCards } = await import("../../src/lib/cardMatch.js");
 const { reconcileLessons } = await import("../../src/lib/lessonSync.js");
 const { lessonCardKey } = await import("../../src/lib/lessonSource.js");
 const { askSameCard, PAIRS_PER_CALL, CALLS_AT_ONCE } = await import("../../api/_lib/sameCardQuestion.js");
+const { uploadResultText, classDay } = await import("../../src/lib/uploadText.js");
+const { updateCard } = await import("../../api/admin-update-card.js");
+const { planReading } = await import("../../src/lib/notesLines.js");
+const { sliceIntoBlocks } = await import("../../api/parse-cahier.js");
 const { supabaseFeedbackStore } = await import("../../api/_lib/feedbackReview.js");
 
 const USER = "00000000-0000-0000-0000-00000000000a";
@@ -231,6 +261,7 @@ const ANSWERED = ["soulagé (adj)", "Je pars.", "alors", "un cas", "le travail",
 async function usedDeck({ migrated = true, via = "upload" } = {}) {
   const admin = fakeSupabase({ migrated });
   claude.seen = new Map(); // a new student: nothing of theirs read yet
+  claude.respell = "strict";
   if (via === "upload") {
     const r = await upload(admin, NOTEBOOK_1);
     if (!r.ok) throw new Error(`building the deck failed: ${r.error}`);
@@ -274,6 +305,13 @@ function headline(label, admin, before, { expectNew = EXPECTED_NEW, expectRead =
   if (readCheck) {
     ck(`${label}: no class read that had nothing new`, JSON.stringify(classesRead()) === JSON.stringify([...expectRead].sort()),
        classesRead().join(","));
+    // A class with a line added (C6) or a typo fixed (C5) goes to Claude with
+    // that line, and Claude is told to make cards from it only. Sent whole,
+    // its old lines would be read again.
+    const partly = { C5: "une proposition = a proposal", C6: "un écureuil = a squirrel" };
+    const whole = Object.entries(partly).filter(([name, line]) => newLinesOf(name).some((l) => l !== line));
+    ck(`${label}: an old class with a line added or fixed went with only that line`, whole.length === 0,
+       whole.map(([name]) => `${name}: ${newLinesOf(name).join("; ")}`).join(" | "));
   }
   const live = now.cards.filter((r) => !isOut(r));
   const pairs = [];
@@ -331,6 +369,34 @@ console.log("\n  the rule: every spelling seen to slip through is one card, and 
   const missed = sure.filter(([a, b, c, d]) => !isSureMatch({ front: a, back: b }, { front: c, back: d }));
   ck("each verified spelling is surely the same card", missed.length === 0, missed.map((m) => m[2]).join(", "));
   ck("but \"Je pense !\" (I think so!) is not \"je pense\" (I think)", !isSureMatch({ front: "je pense", back: "I think" }, { front: "Je pense !", back: "I think so!; You bet!" }));
+
+  // The same words, or list parts, in another order, and "ils/elles" for
+  // "ils" (2026-10-06). The near search compared whole fronts and list parts
+  // against whole cards, never parts in another order, so each of these went
+  // in as a second card with no question asked. Two are real: foisydm's
+  // "amener / apporter" and "apporter, amener (ici)", a word taught again;
+  // nguyen's "ils veulent" and "ils/elles veulent".
+  const ORDER = [
+    [["un vendeur / une vendeuse", "a salesman / a saleswoman"], ["une vendeuse / un vendeur", "a saleswoman / a salesman"]],
+    [["au début / d'abord", "at first"], ["d'abord / au début", "first; at the beginning"]],
+    [["vieux, vieille", "old"], ["vieille, vieux", "old"]],
+    [["manquer / rater", "to miss"], ["rater / manquer", "to miss"]],
+    [["amener / apporter", "to bring, to take"], ["apporter, amener (ici)", "to bring (here)"]],
+    [["ils veulent", "they want"], ["ils/elles veulent", "they want"]],
+    [["il dit", "he says / he tells"], ["il/elle/on dit", "he/she/we says / he/she/we tells"]],
+    [["aux : à + les", "to the (contraction of à and les)"], ["À + LES : aux", "to the (contraction of à + les)"]],
+  ];
+  const slipped = [];
+  for (const [[f1, b1], [f2, b2]] of ORDER) {
+    const asked = [];
+    const m = await matchNewCards({
+      incoming: [{ front: f2, back: b2, dates: ["2026-01-05"] }],
+      deck: [{ id: 1, front: f1, back: b1, dates: ["2025-11-04"], source: "cahier-upload" }],
+      ask: async (pairs) => { asked.push(...pairs); return pairs.map(() => "same"); },
+    });
+    if (!(asked.length === 1 && m.decisions[0].action === "join" && m.decisions[0].row.id === 1)) slipped.push(`${f2}: ${m.decisions[0].action}, ${asked.length} asked`);
+  }
+  ck("the same words in another order, and \"il/elle\" for \"il\", are put to Claude, and its \"same\" joins them", slipped.length === 0, slipped.join("; "));
 }
 
 console.log("\n  keep apart: words that look alike are never joined by the rule, and a \"different\" answer keeps both");
@@ -341,8 +407,16 @@ console.log("\n  keep apart: words that look alike are never joined by the rule,
     ["planter", "to plant", "planter (fam)", "to ditch someone"], ["vieux", "old", "vieille", "old (feminine)"],
     ["encore meilleur / mieux", "even better", "mieux (adv)", "better"],
   ];
-  const joined = PAIRS.filter(([a, b, c, d]) => isSureMatch({ front: a, back: b }, { front: c, back: d }));
-  ck("the fixed rule joins none of them", joined.length === 0, joined.map((p) => `${p[0]} ~ ${p[2]}`).join(", "));
+  // Two of demarajackson's cards the rule joined as one card twice
+  // (2026-10-06): a label in brackets that repeats a card's own English still
+  // tells two meanings apart, and "quite" or "was" in both English sides
+  // isn't English that agrees.
+  const RULE_ONLY = [
+    ["pas mal", "not bad; quite good", "pas mal (quite a lot;)", "quite a lot; quite a bit; a good deal"],
+    ["ça allait", "it was okay", "ça allait ?", "how was it going?"],
+  ];
+  const joined = [...PAIRS, ...RULE_ONLY].filter(([a, b, c, d]) => isSureMatch({ front: a, back: b }, { front: c, back: d }));
+  ck("the fixed rule joins none of them, \"pas mal\" (not bad) and \"pas mal (quite a lot)\" included", joined.length === 0, joined.map((p) => `${p[0]} ~ ${p[2]}`).join(", "));
 
   const admin = fakeSupabase();
   const first = notebook(C("Le 1 septembre 2025", ...PAIRS.map(([a, b]) => `${a} = ${b}`)));
@@ -362,10 +436,12 @@ console.log("\n  keep apart: words that look alike are never joined by the rule,
 }
 
 // ── The headline test, in every way the notes come in ────────────────────
+let beforeOf = () => null;
 async function headlineVia(label, { build = "upload", run, readCheck = true, expectRead } = {}) {
   console.log(`\n  ${label}`);
   const admin = await usedDeck({ via: build });
   const before = snapshot(admin);
+  beforeOf = (row) => before.cards.find((b) => b.id === row.id) || null;
   resetCalls();
   const r = await run(admin);
   ck(`${label}: it reports success`, r.ok !== false, JSON.stringify(r).slice(0, 200));
@@ -382,6 +458,14 @@ async function headlineVia(label, { build = "upload", run, readCheck = true, exp
   ck("upload: the retyped date was recognised, and its class not read", !claude.reads.some((x) => classOf(x) === "C4"));
   ck("upload: the reply counts what happened", r.cardsInserted === 5 && r.classesUnchanged === 4 && r.cardsWaiting === 0,
      JSON.stringify({ added: r.cardsInserted, unchanged: r.classesUnchanged, waiting: r.cardsWaiting, again: r.cardsSeenAgain }));
+  // "une propositiond" already had its class date: it is not a word that got
+  // one (the reply said 25 here, and 24 had).
+  const gained = admin.tables.user_cards.filter((row) => (row.dates || []).length > (beforeOf(row)?.dates || []).length && beforeOf(row)).length;
+  ck("upload: \"words you already have\" counts only cards that gained a class date", r.cardsSeenAgain === gained, `${r.cardsSeenAgain} said, ${gained} gained`);
+  const text = uploadResultText(r);
+  ck("upload: the message says what happened, and nothing that didn't",
+     text.includes("5 new cards added to your deck.") && text.includes("4 classes were already read and left as they are.") &&
+       text.includes(`${gained} words you already have got the new class date.`) && !/everything in these notes|couldn't|wait/.test(text), text);
   const pairs = admin.tables.card_pairs;
   ck("upload: each of Claude's answers is kept, with the question's version",
      pairs.length >= 7 && pairs.every((p) => p.version && /^[0-9a-f]{7}$/.test(p.version) && p.card_a) &&
@@ -509,6 +593,7 @@ console.log("\n  a failure between saving the cards and recording the lines");
   ck("a save that fails says so", r1.ok === false && /couldn't be saved/i.test(r1.error), JSON.stringify(r1).slice(0, 160));
   ck("and saved nothing at all", JSON.stringify(snapshot(failing).cards) === JSON.stringify(before.cards));
   resetCalls();
+  claude.respell = "rule"; // nothing was saved, so reading those lines again is right
   const r2 = await upload(failing, NOTEBOOK_2);
   ck("the next upload succeeds", r2.ok !== false, JSON.stringify(r2).slice(0, 160));
   headline("after a save that failed", failing, before);
@@ -537,6 +622,8 @@ console.log("\n  one card the database refuses");
   ck("the refused card is reported, by its French", r.ok !== false && r.cardsFailed === 1 && r.failedFronts?.[0]?.startsWith("une phrase"), JSON.stringify({ failed: r.cardsFailed }));
   ck("and the rest is saved with the lines read in one step, not two",
      admin.calls.filter((c) => c.rpc === "save_notes_reading").length - saves === 1);
+  ck("and the message doesn't say everything is already in the deck", /1 card couldn't be saved \(for example "une phrase/.test(uploadResultText(r)) &&
+     !/everything in these notes/.test(uploadResultText(r)), uploadResultText(r));
   headline("one card refused", admin, before);
   await secondTimeAsksNothing("one card refused", admin, () => upload(admin, withBad));
   // Replace still works when a card is refused; it used to quietly become an add.
@@ -558,7 +645,13 @@ console.log("\n  when Claude can't answer the question, those cards wait");
   ck("nothing from a class with an unanswered question is added", r1.ok !== false && r1.cardsWaiting > 0 &&
      !added1.some((f) => ["une colline", "grimper", "le brouillard", "un parapluie"].includes(f)), `${r1.cardsWaiting} waiting; added ${added1.join(", ")}`);
   ck("and no card is added on a guess", !added1.some((f) => SAME_AS.some(([s]) => s === f)));
+  const waitText = uploadResultText(r1);
+  ck("the message names the classes that wait, and doesn't say everything is already in the deck",
+     r1.waitingClasses?.length > 0 && waitText.includes(classDay(r1.waitingClasses[0])) && waitText.includes(classDay(r1.waitingClasses.at(-1))) &&
+       /wait until your next upload/.test(waitText) &&
+       !/everything in these notes/.test(waitText), waitText);
   resetCalls();
+  claude.respell = "rule"; // the waiting classes' lines weren't recorded, so they are read again
   const r2 = await upload(admin, NOTEBOOK_2);
   ck("the next upload reads only the waiting classes again", r2.ok !== false && classesRead().every((c) => ["C5", "C7", "C8"].includes(c)), classesRead().join(","));
   headline("after waiting for Claude", admin, before, { readCheck: false });
@@ -594,6 +687,9 @@ console.log("\n  the first run after the fix: what the deck holds counts as read
   admin.tables.cahier_links.push({ user_id: USER, doc_id: "DOC1", doc_url: URL_1, classes: { [D.C6]: "abc" } });
   const before = snapshot(admin);
   resetCalls();
+  // With no lines on record, a class under a retyped date can't be known by
+  // them, so it is read again and the rule keeps its words to their cards.
+  claude.respell = "rule";
   const r = await upload(admin, NOTEBOOK_2);
   ck("classes whose dates are on cards are not read", r.ok !== false && !classesRead().some((c) => ["C1", "C2", "C3", "C5", "C6"].includes(c)), classesRead().join(","));
   headline("first run after the fix", admin, before, {
@@ -614,6 +710,40 @@ console.log("\n  a removed card is kept, out of study, and never comes back");
   other.tables.user_cards.push({ id: 5, user_id: "someone-else", front: "x", back: "y", source: "cahier-upload" });
   const refused = await removeCard({ admin: other, userId: USER, rowId: 5 });
   ck("another student's card can't be removed", refused.status === 403 && !isOut(other.tables.user_cards[0]));
+
+  // The route itself (api/admin-update-card.js), as the app's Remove card
+  // calls it: { action: "remove", row_id } and nothing else.
+  const db = fakeSupabase();
+  db.auth = {
+    getUser: async (token) => (token === "student-token"
+      ? { data: { user: { id: USER } }, error: null }
+      : { data: { user: null }, error: { message: "invalid token" } }),
+  };
+  db.tables.user_cards.push(
+    { id: 41, user_id: USER, front: "un tabouret", back: "a stool", source: "cahier-upload", dates: [D.C1], fsrs_state: 2, stability: 3.5, reps: 2 },
+    { id: 42, user_id: "someone-else", front: "une chaise", back: "a chair", source: "cahier-upload", dates: [] },
+  );
+  db.tables.card_reviews.push({ id: 1, user_id: USER, card_id: 41, direction: "fr", rating: 3 });
+  const reviewsBefore = JSON.stringify(db.tables.card_reviews);
+  const log = console.log;
+  const call = async (body, token = "student-token") => {
+    const res = fakeRes();
+    console.log = () => {};
+    try { await updateCard(db, { method: "POST", headers: token ? { authorization: `Bearer ${token}` } : {}, body }, res); } finally { console.log = log; }
+    return res;
+  };
+  const own = await call({ action: "remove", row_id: 41 });
+  const row41 = db.tables.user_cards.find((r) => r.id === 41);
+  ck("the route takes the student's own card out of study and marks it removed, with no front or back sent",
+     own.code === 200 && own.body?.ok && isOut(row41) && row41.archived_reason === "removed", `${own.code} ${JSON.stringify(own.body)}`);
+  ck("and keeps the row, its schedule and its answers", row41.stability === 3.5 && row41.reps === 2 && JSON.stringify(db.tables.card_reviews) === reviewsBefore);
+  const theirs = await call({ action: "remove", row_id: 42 });
+  ck("another student's card: refused (403) and left in study", theirs.code === 403 && !isOut(db.tables.user_cards.find((r) => r.id === 42)), String(theirs.code));
+  const which = await call({ action: "remove" });
+  ck("no row_id: refused (400)", which.code === 400, String(which.code));
+  const anon = await call({ action: "remove", row_id: 42 }, null);
+  ck("no session: refused (401)", anon.code === 401, String(anon.code));
+  ck("no row is ever deleted", db.tables.user_cards.length === 2);
 }
 
 console.log("\n  the lesson sync uses the same rule");
@@ -636,6 +766,23 @@ console.log("\n  the lesson sync uses the same rule");
   ck("nor one that is a card of their own they removed", r.taken.some((t) => t.front === "Salut !") && !r.missing.some((m) => m.front === "Salut !"));
   ck("a card a lesson dropped and brings back still comes back, history and all (owner, 2026-09-25)", r.missing.some((m) => m.front === "Bonjour"));
   ck("before migration_016 no row says why, and nothing changes", reconcileLessons([lecon], [], out.map((c) => ({ ...c, reason: null }))).missing.length === 3);
+
+  // A word from the notes lands on a lesson card the student has (it only
+  // adds its class date), and the lesson later drops that card. The line is
+  // recorded as read, so no upload would make the card again: deleting it
+  // lost the word for good. It stays, as the student's own card.
+  const db = fakeSupabase();
+  claude.seen = new Map();
+  db.tables.user_cards.push({ id: 7, user_id: USER, front: "actuellement", back: "currently", category: "V", dates: [],
+    source: `lesson:adverbes#${lessonCardKey("actuellement")}`, fsrs_state: 0, en_fsrs_state: 0 });
+  await upload(db, notebook(C("Le 6 janvier 2026", "actuellement = currently", "une écharpe = a scarf")));
+  const row = db.tables.user_cards.find((r) => r.id === 7);
+  ck("a word in the notes that is a lesson card only adds its class date to it",
+     row.dates.includes("2026-01-06") && !db.tables.user_cards.some((r) => r.id !== 7 && /^actuellement$/i.test(r.front)));
+  const deck = db.tables.user_cards.filter((r) => !isOut(r)).map((r) => ({ f: r.front, b: r.back, source: r.source, row_id: r.id, dates: r.dates, fsrs_state: r.fsrs_state, en_fsrs_state: r.en_fsrs_state }));
+  const dropped = reconcileLessons([{ id: "adverbes", cards: [["lentement", "slowly", "V"]] }], deck);
+  ck("when the lesson drops it, it becomes one of the student's own cards, not deleted or put away",
+     dropped.adopt.includes(7) && !dropped.stale.includes(7) && !dropped.archive.includes(7), JSON.stringify({ adopt: dropped.adopt, stale: dropped.stale, archive: dropped.archive }));
 }
 
 console.log("\n  Remove card in View feedback says why, as a student's Remove does");
@@ -677,6 +824,173 @@ console.log("\n  the question: calls side by side, a failed call's cards wait, a
   ck("when no call is answered it says so", !!down, down);
 }
 
+console.log("\n  a class Claude couldn't read stays unread, on the upload and on the sync");
+{
+  const isC7 = (lesson) => lesson.split("\n").some((l) => l.trim() === C7.lines[0]);
+  const C7_WORDS = ["une colline", "grimper"];
+  const c7Lines = (admin) => (admin.tables.notes_read[0]?.classes?.[D.C7] || []).length;
+  for (const via of ["upload", "sync"]) {
+    const admin = await usedDeck({ via });
+    const before = snapshot(admin);
+    const linesBefore = c7Lines(admin);
+    doc.text = NOTEBOOK_2;
+    resetCalls();
+    claude.readFailIf = isC7;
+    const r1 = via === "upload" ? await upload(admin, NOTEBOOK_2) : await sync(admin);
+    claude.readFailIf = null;
+    const added1 = cards(admin).filter((c) => !before.cards.some((b) => b.id === c.id)).map((c) => c.front);
+    ck(`${via}: the other classes are read and saved`, r1.ok !== false && ["le brouillard", "un parapluie", "un écureuil"].every((f) => added1.includes(f)),
+       `${JSON.stringify(r1).slice(0, 160)}; added ${added1.join(" | ")}`);
+    ck(`${via}: none of the words of the class Claude couldn't read is added`, !added1.some((f) => C7_WORDS.includes(f)), added1.join(" | "));
+    ck(`${via}: and none of its lines is recorded as read`, c7Lines(admin) === linesBefore, `${c7Lines(admin)} lines recorded`);
+    if (via === "upload") {
+      ck("upload: the message names the class that couldn't be read, and says to upload again",
+         JSON.stringify(r1.failedClasses) === JSON.stringify([D.C7]) &&
+           uploadResultText(r1).includes(`Your class of ${classDay(D.C7)} couldn't be read this time. Upload the same notes again to add it.`),
+         uploadResultText(r1));
+    } else {
+      ck("sync: the reply names it, and counts it as still to read", r1.errors?.some((e) => e.date === D.C7) && r1.remaining === 1, JSON.stringify(r1).slice(0, 200));
+    }
+    resetCalls();
+    const r2 = via === "upload" ? await upload(admin, NOTEBOOK_2) : await syncAll(admin);
+    ck(`${via}: the next run reads only that class, and adds its words`,
+       r2.ok !== false && JSON.stringify(classesRead()) === JSON.stringify(["C7"]) && C7_WORDS.every((f) => byFront(admin, f) && !isOut(byFront(admin, f))),
+       `${classesRead().join(",")}; ${JSON.stringify(r2).slice(0, 120)}`);
+    headline(`${via}, after a class Claude couldn't read`, admin, before, { readCheck: false });
+  }
+
+  // Nothing added because of what didn't happen: the message must not say
+  // everything is already in the deck. A class Claude couldn't read beside
+  // one with only old words; then a class whose one card waits on Claude's
+  // question.
+  const OLD_WORDS = C("Le 25 novembre 2025", "le travail = work", "alors = so");
+  const LOOKALIKE = C("Le 2 décembre 2025", "le cas = the case");
+  {
+    const admin = await usedDeck();
+    claude.readFailIf = isC7;
+    const r = await upload(admin, notebook(C1, C2, C3, C4, C5, C6, C7, OLD_WORDS));
+    claude.readFailIf = null;
+    const text = uploadResultText(r);
+    ck("nothing added and a class not read: the message says so, and not that everything is in the deck",
+       r.ok !== false && r.cardsInserted === 0 && text.startsWith("Done!\n\nNo new cards added this time.") && !/everything in these notes/.test(text) &&
+         text.includes(`Your class of ${classDay(D.C7)} couldn't be read this time`), text);
+    claude.questionFails = true;
+    const w = await upload(admin, notebook(C1, C2, C3, C4, C5, C6, OLD_WORDS, LOOKALIKE));
+    claude.questionFails = false;
+    const wText = uploadResultText(w);
+    ck("nothing added and a class waiting: the message names it, and doesn't say everything is in the deck",
+       w.ok !== false && w.cardsInserted === 0 && JSON.stringify(w.waitingClasses) === JSON.stringify(["2025-12-02"]) &&
+         wText.includes(`Your class of ${classDay("2025-12-02")} waits until your next upload: some of its words look like cards you have`) &&
+         !/everything in these notes/.test(wText), wText);
+  }
+
+  // Every class failing: the upload says so, saves no card, and gives the
+  // turn back, so the daily check isn't kept waiting.
+  const admin = await usedDeck();
+  const before = snapshot(admin);
+  admin.tables.cahier_links.push({ user_id: USER, doc_id: "DOC1", doc_url: URL_1, classes: {}, last_checked_at: null });
+  doc.text = NOTEBOOK_2;
+  resetCalls();
+  claude.readFailIf = () => true;
+  const r = await upload(admin, NOTEBOOK_2);
+  claude.readFailIf = null;
+  ck("when no class can be read, the upload says so and saves no card",
+     r.ok === false && /Couldn't read your lessons/.test(r.error) && JSON.stringify(snapshot(admin).cards) === JSON.stringify(before.cards), r.error);
+  const after = await sync(admin);
+  ck("and the turn is free straight afterwards: a sync isn't told the notes are busy", after.ok && !after.busy && after.cardsAdded === 5,
+     JSON.stringify(after).slice(0, 160));
+}
+
+console.log("\n  a class moved to another date is known by its lines, even onto a date another class has");
+{
+  // The owner's linked notes have "Le 27 octobre 2025" twice, the first
+  // almost certainly meant for the 28th. A teacher who pastes a new class
+  // under a header copied from the last one, then corrects it, is the same
+  // case. The old date is still in the notes, so the moved class used to be
+  // read again from scratch.
+  const OLD = C("Le 5 octobre 2026", "un ordinateur portable = a laptop", "la souris = the mouse", "un clavier = a keyboard", "Je suis en retard = I'm late");
+  const NEW = C("Le 5 octobre 2026", "une pomme de terre = a potato", "un poireau = a leek", "les haricots verts = green beans", "J'ai faim = I'm hungry");
+  const LATER = C("Le 9 octobre 2026", "une tasse = a cup", "une assiette = a plate", "une fourchette = a fork");
+  const fixed = { ...NEW, dateLine: "Le 6 octobre 2026" };
+  const movedOnto = { ...LATER, dateLine: "Le 5 octobre 2026" };
+  for (const via of ["upload", "sync"]) {
+    const admin = fakeSupabase();
+    claude.seen = new Map();
+    claude.respell = "strict";
+    const run = async (text, opts) => {
+      if (via === "upload") return upload(admin, text, opts);
+      doc.text = text;
+      return syncAll(admin, admin.tables.cahier_links.length ? {} : { url: URL_1 });
+    };
+    const first = await run(notebook(OLD, NEW, LATER));
+    ck(`${via}: two classes under one date are both read`, first.ok !== false && cards(admin).length === 11, `${cards(admin).length} cards`);
+    for (const [label, text] of [
+      ["the class with the duplicated date corrected", notebook(OLD, fixed, LATER)],
+      ["a class moved onto a date another class already has", notebook(OLD, fixed, movedOnto)],
+    ]) {
+      const before = snapshot(admin);
+      resetCalls();
+      const r = await run(text);
+      ck(`${via}, ${label}: nothing is read and no card is added`,
+         r.ok !== false && claude.reads.length === 0 && admin.tables.user_cards.length === before.cards.length,
+         `${claude.reads.length} readings: ${classesRead().join(",")}; ${admin.tables.user_cards.length - before.cards.length} cards added`);
+    }
+    if (via === "upload") {
+      const r = await upload(admin, notebook(OLD, fixed, movedOnto), { replace: true });
+      ck("upload: and Replace takes none of their cards out", r.ok !== false && r.keptOutOfStudy === 0 && inStudy(admin).length === 11, JSON.stringify(r).slice(0, 160));
+      const one = await upload(admin, notebook(OLD));
+      ck("upload: one unchanged class says so, in the singular",
+         uploadResultText(one).includes("No new cards: everything in these notes is already in your deck.\n1 class was already read and left as it is."), uploadResultText(one));
+    }
+  }
+  // As the plan sees it: the moved class's lines were read under its old date.
+  const rec = { "2026-10-05": [] };
+  const p0 = planReading({ blocks: sliceIntoBlocks(notebook(OLD, NEW)), classes: {} });
+  for (const p of p0) rec[p.date] = [...new Set([...rec[p.date], ...p.fpsAll])];
+  const p1 = planReading({ blocks: sliceIntoBlocks(notebook(OLD, fixed)), classes: rec });
+  const moved = p1.find((p) => p.date === "2026-10-06");
+  ck("the plan: the corrected class has no new line, and came from the date it shared", moved && !moved.needsReading && moved.retypedFrom === "2026-10-05",
+     JSON.stringify(p1.map((p) => [p.date, p.newLines.length, p.retypedFrom])));
+  const p2 = planReading({ blocks: sliceIntoBlocks(notebook(OLD, { ...fixed, lines: [...fixed.lines, "un navet = a turnip"] })), classes: rec });
+  const added = p2.find((p) => p.date === "2026-10-06");
+  ck("the plan: a line added to the moved class is read on its own", added?.partial && JSON.stringify(added.newLines) === JSON.stringify(["un navet = a turnip"]),
+     JSON.stringify(added?.newLines));
+  const p3 = planReading({ blocks: sliceIntoBlocks(notebook(OLD, { ...NEW, dateLine: "Le 7 octobre 2026", lines: ["un navet = a turnip", "une courgette = a courgette", "J'ai faim = I'm hungry"] })), classes: rec });
+  ck("the plan: a new class sharing a line with an old one is still read", p3.find((p) => p.date === "2026-10-07")?.needsReading === true);
+}
+
+console.log("\n  Replace never brings a card back beside a lesson card that is the same card");
+{
+  // A Replace without a class takes its cards out; while "je vais bien" is
+  // out, the lesson sync doesn't count it as the student's, and adds its own
+  // "Je vais bien". A later Replace with the class used to bring the
+  // student's back beside it: one card twice, which nothing would put away.
+  const X = C("Le 6 janvier 2026", "je vais bien = I'm fine", "une écharpe = a scarf", "un bonnet = a hat");
+  const Y = C("Le 13 janvier 2026", "un manteau = a coat", "des gants = gloves");
+  const DX = "2026-01-06";
+  const admin = fakeSupabase();
+  claude.seen = new Map();
+  claude.respell = "strict";
+  await upload(admin, notebook(X, Y));
+  byFront(admin, "je vais bien").fsrs_state = 2;
+  const r1 = await upload(admin, notebook(Y), { replace: true });
+  ck("a Replace without the class takes its cards out", r1.keptOutOfStudy === 3 && isOut(byFront(admin, "je vais bien")), JSON.stringify(r1).slice(0, 160));
+  const shape = (row) => ({ f: row.front, b: row.back, source: row.source, row_id: row.id, dates: row.dates || [], fsrs_state: row.fsrs_state, en_fsrs_state: row.en_fsrs_state, reason: row.archived_reason ?? null });
+  const lecon = { id: "lecon1", cards: [["Je vais bien", "I'm fine", "V"]] };
+  const sync1 = reconcileLessons([lecon], inStudy(admin).map(shape), cards(admin).filter(isOut).map(shape));
+  ck("the lesson sync then adds its own card", sync1.missing.some((m) => m.front === "Je vais bien"));
+  for (const m of sync1.missing) cards(admin).push({ id: 9100, user_id: USER, ...m, fsrs_state: 0, en_fsrs_state: 0 });
+  const r2 = await upload(admin, notebook(X, Y), { replace: true });
+  ck("a Replace with the class again brings back its other cards", r2.broughtBack === 2 && !isOut(byFront(admin, "une écharpe")) && !isOut(byFront(admin, "un bonnet")),
+     JSON.stringify(r2).slice(0, 160));
+  ck("but not the one whose word is in study on the lesson card: it stays out, kept, history and all",
+     isOut(byFront(admin, "je vais bien")) && byFront(admin, "je vais bien").archived_reason === "replaced" && byFront(admin, "je vais bien").fsrs_state === 2);
+  ck("and the lesson card gains its class date instead", (byFront(admin, "Je vais bien").dates || []).includes(DX), JSON.stringify(byFront(admin, "Je vais bien").dates));
+  const live = inStudy(admin);
+  const twice = live.flatMap((a, i) => live.slice(i + 1).filter((b) => isSureMatch(a, b)).map((b) => `${a.front} ~ ${b.front}`));
+  ck("no two cards in study are one card", twice.length === 0, twice.join("; "));
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 console.log("\n  before migration_016: everything keeps working, by class date");
 {
@@ -684,6 +998,7 @@ console.log("\n  before migration_016: everything keeps working, by class date")
   ck("removing works without the reason column: the card is out of study and kept", isOut(byFront(admin, "Naza")) && byFront(admin, "Naza").archived_reason === undefined);
   const before = snapshot(admin);
   resetCalls();
+  claude.respell = "rule"; // by date only, the retyped class is read again
   const r = await upload(admin, NOTEBOOK_2);
   ck("an upload works", r.ok !== false, JSON.stringify(r).slice(0, 160));
   // By date only: the retyped class reads again (its cards only gain the
@@ -695,6 +1010,7 @@ console.log("\n  before migration_016: everything keeps working, by class date")
   const before2 = snapshot(admin2);
   doc.text = NOTEBOOK_2;
   resetCalls();
+  claude.respell = "rule";
   const s = await syncAll(admin2);
   ck("the sync works", s.ok, JSON.stringify(s).slice(0, 160));
   headline("before migration_016, sync", admin2, before2, { expectNew: EXPECTED_NEW.filter((f) => f !== "un écureuil"), expectRead: ["C4", "C7", "C8"] });
@@ -706,6 +1022,7 @@ console.log("\n  before migration_016: everything keeps working, by class date")
   const flaky = fakeSupabase({ migrated: false, tables: admin3.tables, faults: { update: { table: "cahier_links", times: 1 } } });
   doc.text = NOTEBOOK_2;
   resetCalls();
+  claude.respell = "rule";
   const s1 = await sync(flaky);
   const s2 = await syncAll(flaky);
   ck("a sync whose record failed after its cards were saved reads the class again",
@@ -714,10 +1031,32 @@ console.log("\n  before migration_016: everything keeps working, by class date")
     expectNew: EXPECTED_NEW.filter((f) => f !== "un écureuil"), readCheck: false,
   });
 
+  // Replace takes nothing out before the migration: a card taken out then
+  // could never say a Replace took it, so no later Replace would bring it
+  // back, and its class, being on a card, would never be read again.
   const admin4 = await usedDeck({ migrated: false });
+  const before4 = snapshot(admin4);
   const r4 = await upload(admin4, notebook(C1, C2, C4, C5, C6), { replace: true });
-  ck("Replace works, taking cards out without deleting any", r4.ok !== false && isOut(byFront(admin4, "gratuit")) && cards(admin4).length === before.cards.length,
-     JSON.stringify(r4).slice(0, 160));
+  const c3 = ["gratuit", "enervé (adj)", "manquer / rater", "un ami"];
+  ck("Replace before migration_016 takes nothing out, and deletes nothing",
+     r4.ok !== false && c3.every((f) => !isOut(byFront(admin4, f))) && cards(admin4).length === before4.cards.length && r4.keptOutOfStudy === 0,
+     JSON.stringify(r4).slice(0, 200));
+  ck("and the reply says how many cards stayed, and why", r4.replaceWaits === 4 &&
+     /Nothing was taken out of study\. Replacing a deck needs a database update/.test(uploadResultText(r4)) && /your 4 cards from other classes/.test(uploadResultText(r4)),
+     uploadResultText(r4));
+  // The owner runs the migration; a later Replace with every class has
+  // nothing to bring back, because nothing went.
+  const after4 = fakeSupabase({ migrated: true, tables: admin4.tables });
+  const r5 = await upload(after4, notebook(C1, C2, C3, C4, C5, C6), { replace: true });
+  ck("after the migration, Replace with the classes again leaves every card in study",
+     r5.ok !== false && c3.every((f) => !isOut(byFront(after4, f))) && byFront(after4, "gratuit").stability === 5.5 && r5.keptOutOfStudy === 0,
+     JSON.stringify(r5).slice(0, 200));
+  const r6 = await upload(after4, notebook(C1, C2, C4, C5, C6), { replace: true });
+  ck("and a Replace without a class now takes its cards out, marked so they can come back",
+     r6.ok !== false && c3.every((f) => isOut(byFront(after4, f)) && byFront(after4, f).archived_reason === "replaced"), JSON.stringify(r6).slice(0, 160));
+  const r7 = await upload(after4, notebook(C1, C2, C3, C4, C5, C6), { replace: true });
+  ck("and the next Replace with the class brings them back, history and all",
+     r7.broughtBack === 4 && c3.every((f) => !isOut(byFront(after4, f))) && byFront(after4, "gratuit").stability === 5.5, JSON.stringify(r7).slice(0, 160));
 }
 
 server.close();
