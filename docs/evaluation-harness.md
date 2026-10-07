@@ -65,7 +65,9 @@ The checks, as the reports name them:
 
 10. *No card is in your deck twice.* Two cards in study fail it when they are
     one card by the rule every path that makes cards from notes uses, or when
-    Claude has judged the pair the same card. The check imports that rule
+    Claude has judged the pair the same card. A card that is one item of
+    another card's list, such as "à l'heure" beside "à temps / à l'heure", is
+    one card twice (the owner's decision). The check imports that rule
     rather than restating it, so it means by "the same card" exactly what the
     upload and the linked notebook mean.
 11. *Nothing you deleted or corrected came back.* A card the student removed,
@@ -152,9 +154,11 @@ pairs for the next morning; nothing is decided on a guess.
 
 The question is tested like the other two. The cards the owner approved
 putting away as repeats, each with the card it repeats, should come out
-"same". Fixed pairs that must stay apart should come out "different": "ou"
-and "où", "la poste" and "le poste", "voler" to steal and "voler" to fly, and
-a dozen more.
+"same", and so should cards that are one item of another card's list, such as
+"après" beside "ensuite / après". Fixed pairs that must stay apart should come
+out "different": "ou" and "où", "la poste" and "le poste", "voler" to steal
+and "voler" to fly, what a list only seems to hold ("amener" beside "se lever,
+acheter, amener", "en fait" beside "En fait, ça veut dire que"), and more.
 
 ### When the tests run, and when they warn
 
@@ -233,8 +237,9 @@ failed.
 - `api/_lib/statusDaily.js`: the morning run for every student
 - `api/_lib/answerChecks.js`, `api/_lib/notesChecks.js` and
   `api/_lib/repeatsChecks.js`: the tests of Claude's marking, note reading and
-  judging of look-alike cards (the pairs that must stay apart are in
-  `api/_lib/keepApart.js`); `api/_lib/evalRuns.js` decides when they are due,
+  judging of look-alike cards (the pairs that must stay apart, and the cards
+  that are one item of another card's list, are in `api/_lib/keepApart.js`);
+  `api/_lib/evalRuns.js` decides when they are due,
   and `api/_lib/evalStatus.js` when the red dot lights
 - `scripts/status-check.mjs`: the checks from the terminal
 - `tests/simulate/`: the simulated students

@@ -42,6 +42,18 @@
 //    back my book).
 //    Accents are kept (ou/où, sur/sûr), and so is any other bracket: "(fam)",
 //    "(plante)" or a gloss can be what tells two meanings apart.
+//    A card that is one item of another card's list is that card (the owner,
+//    2026-10-07): "à l'heure" beside "à temps / à l'heure" is one card twice,
+//    and so are "épais" and "épais, épaisse", "des yeux" and "un œil, des
+//    yeux". The rule is sure of it when the item is the card's French by the
+//    rule above, and every word of the list card's English is in the card's
+//    English (isListPart). That English test is what keeps apart the cards a
+//    list only seems to hold: a word inside a sentence with a comma ("en
+//    fait" and "En fait, ça veut dire que"), different words grouped on one
+//    card ("amener" and "se lever, acheter, amener"), and another meaning of
+//    the same spelling ("fin" (the end) and "fin, fine" (thin; fine)). An item
+//    whose English is worded differently ("après" (after) and "ensuite /
+//    après" (then / afterwards)) is left to the near search and Claude.
 //
 // 2. The near search (nearCandidates). Fixed rules loose enough to catch the
 //    rest also join words that differ ("un état" and "l'État"), so near
@@ -168,14 +180,58 @@ const glossesShared = (glosses, otherBack) => {
   return glosses.every((w) => w.some((x) => other.has(x)));
 };
 
-// Two cards are surely the same card to learn.
+// Two cards are surely the same card to learn: the same French by the rule,
+// or one is an item of the other's list.
 export function isSureMatch(a, b) {
+  return sameBySureKey(a, b) || isListPart(a, b) || isListPart(b, a);
+}
+
+function sameBySureKey(a, b) {
   const pa = sureKey(a?.front, a?.back);
   const pb = sureKey(b?.front, b?.back);
   if (!pa.key || pa.key !== pb.key) return false;
   if (!glossesShared(pa.glosses, b?.back) || !glossesShared(pb.glosses, a?.back)) return false;
   if (!englishAgrees(a, b)) return false;
   return pa.bang === pb.bang || sameWords(a?.back, b?.back);
+}
+
+// ── A card that is one item of a list card ──────────────────────────────────
+
+// The words of an English side, for "every word of the list's English is in
+// the card's": brackets, a/an/the/to/and/or set aside, and a plural "s" off
+// ("eyes" is "eye", so "an eye, eyes" is in "eyes"). Short words count:
+// "yes / no" is not in "yes".
+const COVER_STOP = new Set(["a", "an", "the", "to", "and", "or"]);
+const coverWords = (s) =>
+  new Set(enWords(s).filter((w) => !COVER_STOP.has(w)).map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)));
+
+// The French of each item of a list card, as the sure rule reads it with the
+// list's English: "à temps / à l'heure" -> "à temps", "à l'heure".
+export function listItemKeys(card) {
+  if (isDrillFront(card?.front)) return [];
+  return partsOf(card?.front).map((p) => sureKey(p, card.back).key).filter(Boolean);
+}
+
+// `card` is one item of `list`'s list, and so the same card (the owner,
+// 2026-10-07): its French is one item's by the sure rule, and every word of
+// the list's English is in its English. "à l'heure" (on time) is an item of
+// "à temps / à l'heure" (on time); "amener" (to bring) is not one of "se
+// lever, acheter, amener" (to get up, to buy, to bring), nor "en fait" (in
+// fact) of "En fait, ça veut dire que" (in fact, that means that).
+export function isListPart(card, list) {
+  if (!card?.front || !list?.front || isDrillFront(card.front) || isDrillFront(list.front)) return false;
+  const parts = partsOf(list.front);
+  if (parts.length < 2 || partsOf(card.front).length >= 2) return false;
+  const own = sureKey(card.front, card.back);
+  if (!own.key || !glossesShared(own.glosses, list.back)) return false;
+  const listWords = coverWords(list.back);
+  const cardWords = coverWords(card.back);
+  if (!listWords.size || !cardWords.size) return false;
+  for (const w of listWords) if (!cardWords.has(w)) return false;
+  return parts.some((p) => {
+    const k = sureKey(p, list.back);
+    return k.key === own.key && glossesShared(k.glosses, card.back) && (k.bang === own.bang || sameWords(list.back, card.back));
+  });
 }
 
 // ── The near search ─────────────────────────────────────────────────────────
@@ -250,6 +306,7 @@ function keysOf(card) {
   }
   k = {
     sure: sure.key,
+    items: listItemKeys(card),
     loose,
     kb: looseKeepBrackets(card.front),
     parts,
@@ -275,6 +332,7 @@ const push = (map, key, card) => {
 // end up as one card.
 export function cardIndex(cards = []) {
   const bySure = new Map();
+  const byItem = new Map();
   const byLoose = new Map();
   const byKB = new Map();
   const byPart = new Map();
@@ -286,6 +344,7 @@ export function cardIndex(cards = []) {
   const add = (card) => {
     const k = keysOf(card);
     push(bySure, k.sure, card);
+    for (const i of new Set(k.items)) push(byItem, i, card);
     push(byLoose, k.loose, card);
     push(byKB, k.kb, card);
     for (const p of k.parts) push(byPart, p, card);
@@ -295,11 +354,20 @@ export function cardIndex(cards = []) {
     if (k.typo) push(byLen, k.typo.length, card);
   };
 
+  // Every card `card` surely is: the same French by the rule, a list card it
+  // is an item of, or, for a list card, a card that is one of its items.
+  const sureAll = (card) => {
+    const k = keysOf(card);
+    const found = new Set([...(bySure.get(k.sure) || []), ...(byItem.get(k.sure) || [])]);
+    for (const i of k.items) for (const c of bySure.get(i) || []) found.add(c);
+    return [...found].filter((c) => c !== card && isSureMatch(c, card));
+  };
+
   // The card `card` surely is, or null. When several are, one in study comes
   // first, so a class date lands on the card being studied rather than on a
   // copy put away; then the one with the same French exactly.
   const sure = (card) => {
-    const list = (bySure.get(keysOf(card).sure) || []).filter((c) => c !== card && isSureMatch(c, card));
+    const list = sureAll(card);
     if (!list.length) return null;
     const rank = (c) => (isArchivedRow(c) ? 2 : 0) + (c.front === card.front ? 0 : 1);
     return list.slice().sort((x, y) => rank(x) - rank(y))[0];
@@ -345,5 +413,5 @@ export function cardIndex(cards = []) {
   };
 
   for (const c of cards || []) add(c);
-  return { add, sure, near };
+  return { add, sure, sureAll, near };
 }

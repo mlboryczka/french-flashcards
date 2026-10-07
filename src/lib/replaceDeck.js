@@ -15,15 +15,18 @@
 //     reads only the lines of it not read before (src/lib/notesLines.js), and
 //     a word it has again only adds the class date;
 //   • a card with none of its classes in the upload is taken out of study,
-//     marked "replaced", and kept with its schedule and answers;
+//     marked "replaced", and kept, unless the student has answered it, either
+//     way round. An answered card stays in study whatever the classes say
+//     (2026-10-07). A class can be missing from an upload for reasons that
+//     have nothing to do with the card: the owner's "Le 28 et 29 septembre
+//     2026" wasn't read as a class date, so a Replace with their real notes
+//     would have taken out "pas grand chose à dire", answered five times,
+//     and no later upload would have brought it back;
 //   • a card an earlier Replace took out comes back into study when a Replace
 //     upload has its class again, unless the word is in study on another card
-//     by then: that card gains its class dates instead. A lesson can add its
-//     own copy of a word while the student's is out of study (the lesson sync
-//     doesn't count a card a Replace took out as the student's), and bringing
-//     the student's back beside it made one card twice (2026-10-06). No other
-//     card out of study comes back: one the student removed, or one put away
-//     as a repeat, stays out;
+//     by then: that card gains its class dates instead, so the word isn't in
+//     study twice (2026-10-06). No other card out of study comes back: one
+//     the student removed, or one put away as a repeat, stays out;
 //   • lesson cards belong to their lesson and tutor cards to the student, so
 //     both are left alone;
 //   • before migration_016 nothing is taken out (api/_lib/notesReading.js): a
@@ -35,20 +38,33 @@
 
 import { ARCHIVE_PREFIX, isArchived } from "./archive.js";
 import { LESSON_SOURCE_PREFIX } from "./lessonSource.js";
+import { DIRECTIONS, sideOf } from "./directions.js";
 import { cardIndex } from "./sameCard.js";
 
 const leftAlone = (row) =>
   typeof row.source === "string" && (row.source.startsWith(LESSON_SOURCE_PREFIX) || row.source === "tutor-chat");
 
+// Answered at least once, either way round: French to English or English to
+// French. Any sign of an answer counts: a state other than new, an answer
+// counted, or a time last answered.
+export const answered = (row) =>
+  DIRECTIONS.some((d) => {
+    const side = sideOf(row, d);
+    return (side.fsrs_state ?? 0) !== 0 || (side.reps ?? 0) > 0 || !!side.last_review;
+  });
+
 // `existing`: rows with id, dates, source (and archived_reason after
 // migration_016). `uploadDates`: the classes in the upload. `reasons`: whether
 // the deck says why each card is out of study; without that, no card can be
 // told to have come out by a Replace, so none comes back.
-// Returns { archive: rows, restore: rows, kept: [{ row, into }] }: `kept` are
-// cards that would have come back but whose word is in study on `into`.
+// Returns { archive: rows, stay: rows, restore: rows, kept: [{ row, into }] }:
+// `stay` are answered cards from classes not in the upload, left in study;
+// `kept` are cards that would have come back but whose word is in study on
+// `into`.
 export function planReplace(existing, uploadDates, { reasons = true } = {}) {
   const inUpload = new Set(uploadDates || []);
   const archive = [];
+  const stay = [];
   const back = [];
   for (const row of existing || []) {
     const dates = Array.isArray(row.dates) ? row.dates : [];
@@ -57,8 +73,8 @@ export function planReplace(existing, uploadDates, { reasons = true } = {}) {
       if (reasons && row.archived_reason === "replaced" && covered) back.push(row);
       continue;
     }
-    if (leftAlone(row)) continue;
-    if (!covered) archive.push(row);
+    if (leftAlone(row) || covered) continue;
+    (answered(row) ? stay : archive).push(row);
   }
 
   // The cards in study once this Replace is done, by the rule every
@@ -74,5 +90,5 @@ export function planReplace(existing, uploadDates, { reasons = true } = {}) {
     restore.push(row);
     index.add({ ...row, source: String(row.source).slice(ARCHIVE_PREFIX.length) });
   }
-  return { archive, restore, kept };
+  return { archive, stay, restore, kept };
 }

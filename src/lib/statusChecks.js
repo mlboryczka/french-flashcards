@@ -44,7 +44,7 @@ import { lessonIdOf } from "./lessonSource.js";
 import { classifyCard } from "./cardTypes.js";
 import { isArchived } from "./archive.js";
 import { CAT_DB_TO_UI } from "./cardCategories.js";
-import { cardIndex, isSureMatch, sureKey } from "./sameCard.js";
+import { cardIndex, isSureMatch, isListPart, sureKey } from "./sameCard.js";
 import { forgetting_curve, get_fuzz_range } from "ts-fsrs";
 
 // The first study day checked: the day the current rules and the check
@@ -778,22 +778,18 @@ export function lookalikes({ cards = [], pairs = [] } = {}) {
   const inStudy = (cards || []).filter((r) => r && r.id != null && r.front && !isArchived(r));
   const byId = new Map(inStudy.map((r) => [String(r.id), r]));
 
-  // The sure rule, run on every two cards whose French it reads alike.
+  // The sure rule, run on every two cards whose French it reads alike, or
+  // where one is an item of the other's list ("à l'heure" and "à temps /
+  // à l'heure"), as a card-writer meets them (cardIndex.sureAll).
   const parent = new Map(inStudy.map((r) => [String(r.id), String(r.id)]));
   const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
-  const buckets = new Map();
-  for (const r of inStudy) {
-    const k = sureKey(r.front, r.back).key;
-    if (!k) continue;
-    if (!buckets.has(k)) buckets.set(k, []);
-    buckets.get(k).push(r);
-  }
+  const index = cardIndex(inStudy);
   const surely = new Set();
-  for (const list of buckets.values()) {
-    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-      if (!isSureMatch(list[i], list[j])) continue;
-      parent.set(find(String(list[i].id)), find(String(list[j].id)));
-      surely.add(pairKey(list[i].id, list[j].id));
+  for (const r of inStudy) {
+    for (const c of index.sureAll(r)) {
+      if (c.id == null || !byId.has(String(c.id))) continue;
+      parent.set(find(String(r.id)), find(String(c.id)));
+      surely.add(pairKey(r.id, c.id));
     }
   }
   const comps = new Map();
@@ -824,7 +820,6 @@ export function lookalikes({ cards = [], pairs = [] } = {}) {
 
   // The near search, as a new card meets it: every two cards in study that
   // look alike without being surely one card.
-  const index = cardIndex(inStudy);
   const near = new Map();
   for (const r of inStudy) {
     for (const n of index.near(r)) {
@@ -845,7 +840,9 @@ function checkNoRepeats(cards, ctx) {
   if (!rep.inStudy.length) return { ...out, status: "wait", summary: "No cards in study yet.", details: [] };
   const bad = [];
   for (const g of rep.groups) {
-    bad.push(`${listed(g.map(quoted))} are one card ${TIMES[g.length] || `${g.length} times`}: the same French, and English that agrees.`);
+    const list = g.some((x) => g.some((y) => x !== y && isListPart(x, y)));
+    const why = list ? `a list card and ${g.length === 2 ? "an item" : "items"} on it, with English that agrees` : "the same French, and English that agrees";
+    bad.push(`${listed(g.map(quoted))} are one card ${TIMES[g.length] || `${g.length} times`}: ${why}.`);
   }
   for (const p of rep.same) {
     const on = Number.isFinite(p.at) ? ` on ${when(p.at, ctx.timeZone)}` : "";
@@ -917,16 +914,20 @@ function unwanted(cards, corrections) {
 
 // Whether card `r`, in study, is `u` back. A card made before `u` was taken
 // out or corrected isn't: it was there already (the card a duplicate was
-// deleted beside, or the corrected card itself).
+// deleted beside, or the corrected card itself). Nor is one item of a list
+// card that was taken out: the owner deleted "pas mal = beaucoup" (not bad =
+// a lot), a gloss written as a card, not the word "pas mal" their notes
+// taught again (2026-10-07).
 function isBack(r, u) {
   const made = ms(r.created_at);
   const madeAfter = Number.isFinite(made) && Number.isFinite(u.at) && made > u.at;
   const itself = u.id != null && String(r.id) === String(u.id);
-  if (u.kind !== "corrected") return itself || (madeAfter && isSureMatch(r, u));
+  const same = (x, y) => isSureMatch(x, y) && !isListPart(x, y);
+  if (u.kind !== "corrected") return itself || (madeAfter && same(r, u));
   if (!itself && !madeAfter) return false;
   if (!u.frontChanged) return tidyText(r.front) === tidyText(u.front) && tidyText(r.back) === tidyText(u.back);
   if (itself || !u.ruleTells) return tidyText(r.front) === tidyText(u.front);
-  return isSureMatch(r, u) && !isSureMatch(r, u.to);
+  return same(r, u) && !isSureMatch(r, u.to);
 }
 
 function checkNothingBack(cards, ctx) {

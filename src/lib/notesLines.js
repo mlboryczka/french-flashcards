@@ -1,5 +1,6 @@
 // Which lines of a student's notes have already been read (2026-10-06). Pure,
-// with no imports, so the server and the status checks share it.
+// so the server and the tests share it; its one import, the matching rule's
+// own keys, is pure too.
 //
 // Every upload used to ask Claude to read every class again, and Claude
 // writes the same line a little differently each time: a full stop, a
@@ -23,7 +24,16 @@
 // whose date is on any of the student's cards (archived ones too), or that
 // the linked notebook already read, counts as read, every line of it. This is
 // decided class by class, for as long as the record has no lines for that
-// class.
+// class. One exception (2026-10-07): a class the linked notebook read when it
+// was shorter. The link keeps a fingerprint of each class's text as it read
+// it (cahier_links.classes), and where that no longer matches the class, only
+// its lines that are on a card the student has count as read; the others are
+// read once. The owner's 2 October class was read with 4 lines and now has
+// 16, and the 12 added since ("se moucher", "j'ai le nez bouché", "corriger
+// une erreur", "à partir de lundi" among them) would otherwise never have
+// become cards.
+
+import { looseKey, partsOf, isDrillFront } from "./sameCard.js";
 
 // A line as it is compared: the same line retyped with other spacing, quotes,
 // dashes or capitals is the same line. Accents and words are not.
@@ -86,9 +96,38 @@ export function readDatesFrom(rows = [], linkClasses = null) {
   return out;
 }
 
+// Whether a line of the notes is on a card the student has, for a class read
+// when it was shorter. A line is: its French, apart from an English gloss
+// after "=", " - " or ":", is a card's French or one part of a list card's
+// ("manquer / rater"), or a drill's answer, once accents, articles, "ne",
+// brackets and punctuation are set aside (src/lib/sameCard.js's looseKey). A
+// line with " // " between two words (made into a card for each) is, when
+// every one of them is. A line wrongly taken as unread is only read again,
+// and its card goes through the matching rule; one wrongly taken as read is
+// never read, so the match is close.
+export function lineMatcher(rows = []) {
+  const keys = new Set();
+  const add = (text) => { const k = looseKey(text); if (k) keys.add(k); };
+  for (const row of rows || []) {
+    if (!row?.front) continue;
+    add(row.front);
+    for (const p of partsOf(row.front)) add(p);
+    if (isDrillFront(row.front)) add(row.back);
+  }
+  const has = (text) => { const k = looseKey(text); return !!k && keys.has(k); };
+  return (line) => {
+    const t = String(line ?? "").replace(/^\s*(?:[•·▪◦*-]|\d+[.)])\s+/, "").trim();
+    if (!t) return false;
+    if (t.includes("//")) return t.split(/\s*\/\/\s*/).filter((x) => x.trim()).every((x) => has(x) || x.split(/\s+(?:=|:|-|–|—)\s+/).some(has));
+    return has(t) || t.split(/\s+(?:=|:|-|–|—)\s+|\s*:\s+/).some(has);
+  };
+}
+
 // What a run has to read. `blocks` are the classes as sliced ({ date, text });
 // `classes` the record ({ date: [fingerprint, ...] }); `readDates` the dates
-// that count as read where the record has no lines for them.
+// that count as read where the record has no lines for them. `changed(block)`
+// says a class was read by the linked notebook when its text was different;
+// then only lines `knownLine(text)` knows are on a card count as read.
 //
 // Each class comes back with:
 //   lines       its lines, with fingerprints
@@ -100,7 +139,7 @@ export function readDatesFrom(rows = [], linkClasses = null) {
 //   fpsKnown    the lines already read, recorded if this run can't read it
 //   retypedFrom the date it had before, when its date line was retyped or it
 //               moved onto another class's date
-export function planReading({ blocks = [], classes = {}, readDates = new Set() }) {
+export function planReading({ blocks = [], classes = {}, readDates = new Set(), changed = () => false, knownLine = null }) {
   const record = classes || {};
   const planned = blocks.map((b) => ({ b, lines: classLines(b.text) }));
 
@@ -133,7 +172,7 @@ export function planReading({ blocks = [], classes = {}, readDates = new Set() }
     if (Array.isArray(record[b.date])) {
       known = new Set(record[b.date]);
     } else if (readDates.has(b.date)) {
-      known = new Set(fpsAll);
+      known = knownLine && changed(b) ? new Set(lines.filter((l) => knownLine(l.text)).map((l) => l.fp)) : new Set(fpsAll);
       seeded = true;
     } else {
       known = new Set();

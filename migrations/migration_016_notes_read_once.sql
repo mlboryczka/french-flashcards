@@ -307,7 +307,9 @@ begin
   )
   select count(*) into v_dated from done;
 
-  -- Out of study, kept, with the reason.
+  -- Out of study, kept, with the reason. "Replace" never takes out a card
+  -- the student has answered, either way round, whatever the classes say
+  -- (src/lib/replaceDeck.js decides the same; this holds even if it didn't).
   with a as (
     select x.id, x.reason
     from jsonb_to_recordset(coalesce(p_archive, '[]'::jsonb)) as x(id bigint, reason text)
@@ -319,6 +321,10 @@ begin
       from a
      where c.id = a.id and c.user_id = p_user_id
        and (c.source is null or c.source not like 'archived:%')
+       and (a.reason is distinct from 'replaced'
+            or (coalesce(c.fsrs_state, 0) = 0 and coalesce(c.en_fsrs_state, 0) = 0
+                and coalesce(c.reps, 0) = 0 and coalesce(c.en_reps, 0) = 0
+                and c.last_review is null and c.en_last_review is null))
     returning c.id
   )
   select count(*) into v_archived from done;

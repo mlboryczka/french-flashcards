@@ -225,8 +225,12 @@ export function fakeSupabase({ tables = {}, migrated = true, faults = {}, now = 
         const r = db.user_cards.find((c) => c.id === u.id && c.user_id === p_user_id);
         if (r) { r.dates = merged(r.dates, u.dates); out.dated++; }
       }
+      // "Replace" never takes out a card answered either way round.
+      const answeredRow = (r) => (r.fsrs_state ?? 0) !== 0 || (r.en_fsrs_state ?? 0) !== 0 || (r.reps ?? 0) > 0 ||
+        (r.en_reps ?? 0) > 0 || r.last_review != null || r.en_last_review != null;
       for (const a of p_archive || []) {
         const r = db.user_cards.find((c) => c.id === a.id && c.user_id === p_user_id);
+        if (r && a.reason === "replaced" && answeredRow(r)) continue;
         if (r && !(typeof r.source === "string" && r.source.startsWith("archived:"))) {
           r.source = `archived:${r.source ?? ""}`; r.archived_reason = a.reason; r.archived_at = new Date(now()).toISOString(); out.archived++;
         }

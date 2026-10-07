@@ -46,9 +46,9 @@ import { requireAnthropicKey, resolveAnthropicKey } from "./_lib/anthropicKey.js
 // let through could still be one the app treats as a rule.
 import { isConjugationDrill } from "../src/lib/cardInstruction.js";
 import { isGrammarCard } from "../src/lib/cardTypes.js";
-import { cardIndex } from "../src/lib/sameCard.js";
-import { planReading, readDatesFrom, datesCovered } from "../src/lib/notesLines.js";
-import { claimReading, releaseReading, readDeck, saveRun } from "./_lib/notesReading.js";
+import { cardIndex, isListPart } from "../src/lib/sameCard.js";
+import { planReading, datesCovered } from "../src/lib/notesLines.js";
+import { claimReading, releaseReading, readDeck, saveRun, seedingFrom } from "./_lib/notesReading.js";
 import { askSameCard } from "./_lib/sameCardQuestion.js";
 export const config = {
   api: {
@@ -68,7 +68,13 @@ const MONTHS_FR = {
   septembre: "09", octobre: "10", novembre: "11", décembre: "12", decembre: "12",
 };
 
-const DATE_HEADER_RE = /^Le\s+(\d{1,2})(?:er)?\s+([a-zéû]+)\s+(\d{4})\s*$/im;
+// A class's date line: "Le 24 septembre 2026", "Le 1er octobre 2026". A class
+// held over two days is one class, dated its first day: "Le 28 et 29
+// septembre 2026", "Les 28 et 29 septembre 2026", "Le 28 & 29 septembre
+// 2026". The owner's notes have one (2026-10-07); the pattern missed it, so
+// that class's lines were taken as the end of the class above it and cut off
+// with its homework, and no card was ever made from them.
+const DATE_HEADER_RE = /^Les?\s+(\d{1,2})(?:er)?(?:\s*(?:,|et|&)\s*\d{1,2}(?:er)?)*\s+([a-zéû]+)\s+(\d{4})\s*$/im;
 
 const SUBJECT_PRONOUNS = ["je", "tu", "il/elle", "nous", "vous", "ils/elles"];
 
@@ -244,7 +250,8 @@ const cleanBlocks = (blocks) =>
     .filter((b) => b && typeof b.date === "string" && typeof b.text === "string")
     .map((b) => ({ date: b.date, text: b.text }));
 
-// The classes the linked notebook has read, which count as read here too.
+// The classes the linked notebook has read, which count as read here too,
+// with a fingerprint of each as it was read (src/lib/notesLines.js).
 async function linkClasses(adminClient, userId) {
   try {
     const { data, error } = await adminClient.from("cahier_links").select("classes").eq("user_id", userId).maybeSingle();
@@ -263,9 +270,7 @@ export async function handlePlan(req, res, adminClient, userId) {
   if (reading.busy) return res.status(409).json({ ok: false, busy: true, error: BUSY_MESSAGE });
   try {
     const deck = await readDeck(adminClient, userId);
-    const plan = planReading({
-      blocks, classes: reading.classes, readDates: readDatesFrom(deck.rows, await linkClasses(adminClient, userId)),
-    });
+    const plan = planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode) });
     const toRead = plan.filter((p) => p.needsReading).length;
     console.log(`[parse-cahier] plan: ${plan.length} classes, ${toRead} with lines not read before (${reading.mode})`);
     return res.status(200).json({
@@ -298,7 +303,8 @@ export async function handlePlan(req, res, adminClient, userId) {
 //
 // "Replace my existing deck" works by class (src/lib/replaceDeck.js): a card
 // with none of its classes in the upload is taken out of study, kept, and
-// marked "replaced". Nothing is ever deleted.
+// marked "replaced", unless the student has answered it: an answered card
+// stays in study whatever the classes say. Nothing is ever deleted.
 
 // The question about near look-alikes may take this long from the start of
 // the commit, leaving the function's five minutes room to save.
@@ -322,7 +328,7 @@ export async function handleCommit(req, res, adminClient, user) {
     const deck = await readDeck(adminClient, userId);
     const plan = legacy
       ? null
-      : planReading({ blocks, classes: reading.classes, readDates: readDatesFrom(deck.rows, await linkClasses(adminClient, userId)) });
+      : planReading({ blocks, classes: reading.classes, ...seedingFrom(deck.rows, await linkClasses(adminClient, userId), reading.mode) });
     const failed = new Set((Array.isArray(failedDates) ? failedDates : []).filter((d) => typeof d === "string"));
     const incoming = cardsFromExtracted(rawCards);
     const read = legacy
@@ -357,7 +363,7 @@ export async function handleCommit(req, res, adminClient, user) {
     console.log(
       `[parse-cahier] commit (${reading.mode}${legacy ? ", old dialog" : ""}): ${incoming.length} cards from ${read.size} classes read, ` +
       `${result.added} new, ${result.seenAgain} seen again, ${result.waiting} waiting, ${result.questions} questions, ` +
-      `${unchanged} classes unchanged, replace: ${result.keptOutOfStudy} out, ${result.broughtBack} back` +
+      `${unchanged} classes unchanged, replace: ${result.keptOutOfStudy} out, ${result.answeredStay} answered and left in, ${result.broughtBack} back` +
       (result.replaceWaits ? ` (${result.replaceWaits} left in: no migration_016)` : "") + ", " +
       `${result.failed?.length || 0} refused` + (result.ok ? "" : `, NOT SAVED: ${result.error}`)
     );
@@ -390,6 +396,9 @@ export async function handleCommit(req, res, adminClient, user) {
       // Before migration_016 Replace takes nothing out: how many cards it
       // would have, so the student is told why they are still there.
       replaceWaits: result.replaceWaits,
+      // Cards from classes not in the upload that stayed in study because
+      // the student has answered them: Replace never takes one out.
+      answeredStay: result.answeredStay,
       removed: 0,
       errors: result.failed.length ? [{ step: "save", error: `${result.failed.length} card(s) not saved: ${result.failed[0].error}` }] : [],
     });
@@ -856,13 +865,29 @@ function isConjugationTable(text) {
 // whose French matches another's only loosely, or whose English disagrees,
 // is left for the question to Claude (src/lib/cardMatch.js), and only a
 // "different" answer gives it a label.
+//
+// A card that is one item of another card's list is that card (the owner,
+// 2026-10-07): "à l'heure" and "à temps / à l'heure" in one reading are one
+// card. There the list card is kept whichever came first, since it teaches
+// the item too.
 export function mergeRepeats(cards) {
   const kept = [];
   const index = cardIndex([]);
+  // A kept card the list card took the place of, and that list card.
+  const became = new Map();
+  const follow = (c) => { while (became.has(c)) c = became.get(c); return c; };
   for (const card of cards || []) {
     if (!card || !card.front || !card.back) continue;
     const dates = Array.isArray(card.dates) ? card.dates : [];
-    const same = index.sure(card);
+    const found = index.sure(card);
+    const same = found && follow(found);
+    if (same && same !== card && isListPart(same, card)) {
+      const list = { ...card, dates: [...new Set([...same.dates, ...dates])].sort() };
+      kept[kept.indexOf(same)] = list;
+      became.set(same, list);
+      index.add(list);
+      continue;
+    }
     if (same) {
       same.dates = [...new Set([...same.dates, ...dates])].sort();
       continue;

@@ -24,12 +24,12 @@
 // statement at a time as before, and nothing is locked. Uploads, the sync and
 // the daily check all keep working.
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { missingTable, missingFunction } from "../../src/lib/dealLog.js";
 import { missingColumn } from "../../src/lib/reviewLog.js";
 import { archivedSource } from "../../src/lib/archive.js";
 import { matchNewCards, waitingDates, plannedWrites } from "../../src/lib/cardMatch.js";
-import { recordAfter, sameRecord } from "../../src/lib/notesLines.js";
+import { recordAfter, sameRecord, readDatesFrom, lineMatcher } from "../../src/lib/notesLines.js";
 import { planReplace } from "../../src/lib/replaceDeck.js";
 import { SAME_CARD_MODEL, SAME_CARD_VERSION } from "./sameCardQuestion.js";
 
@@ -48,6 +48,36 @@ const clean = (s) =>
   typeof s === "string"
     ? s.replace(/\u0000/g, "").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
     : s;
+
+// A class's text as the linked notebook keeps it once read
+// (cahier_links.classes): a short hash, to tell later whether the class
+// changed.
+export const classFingerprint = (text) =>
+  createHash("sha256").update(text || "", "utf8").digest("hex").slice(0, 16);
+const FINGERPRINT = /^[0-9a-f]{16}$/;
+
+// How a class with no lines in the record counts as read (src/lib/
+// notesLines.js's planReading): every line of it when its date is on a card
+// or the linked notebook read it, except a class the notebook read when its
+// text was different (2026-10-07). Linking marks the classes already on cards
+// with "already in your deck" rather than a fingerprint: those keep counting
+// as read whole. `rows` the student's deck (readDeck), `linkClasses`
+// cahier_links.classes, `mode` claimReading's.
+//
+// Only once there is a record of lines read (migration_016): it is what then
+// remembers that the class's other lines were read. Before it, a class is
+// known by its date only, as it always was, and a line added to an old class
+// waits for the migration.
+export function seedingFrom(rows = [], linkClasses = null, mode = "lines") {
+  const link = linkClasses && typeof linkClasses === "object" ? linkClasses : {};
+  let known = null;
+  return {
+    readDates: readDatesFrom(rows, link),
+    changed: (block) => mode === "lines" && FINGERPRINT.test(String(link[block.date] ?? "")) && link[block.date] !== classFingerprint(block.text),
+    // Built only if a class changed.
+    knownLine: (line) => (known ||= lineMatcher(rows))(line),
+  };
+}
 
 // The student's turn to read their notes. Returns
 //   { mode: "lines", runId, classes }   the turn, and the record of lines read
@@ -82,7 +112,9 @@ export async function releaseReading(admin, userId, runId) {
 // The student's whole deck. `hasReasons` says whether user_cards has
 // archived_reason yet (migration_016).
 export async function readDeck(admin, userId) {
-  const base = "id, front, back, category, dates, source, fsrs_state, en_fsrs_state";
+  // Whether a card was answered either way round, so "Replace" leaves it in
+  // study (src/lib/replaceDeck.js).
+  const base = "id, front, back, category, dates, source, fsrs_state, en_fsrs_state, reps, en_reps, last_review, en_last_review";
   let hasReasons = true;
   const rows = [];
   for (let from = 0; ; ) {
@@ -225,6 +257,7 @@ export async function saveRun({
   let archive = [];
   let restore = [];
   let replaceWaits = 0;
+  let answeredStay = 0;
   if (replaceDates) {
     // Judged on the cards as this upload leaves them: a card whose word is
     // in the upload, so that it gains one of its classes now, is in it.
@@ -237,8 +270,11 @@ export async function saveRun({
       // it back, and its class, being on a card, would never be read again:
       // the card would be out of study for good (2026-10-06). The upload is
       // saved as an ordinary add, and the reply says how many cards stayed.
-      replaceWaits = r.archive.length;
+      replaceWaits = r.archive.length + r.stay.length;
     } else {
+      // A card the student has answered stays in study whatever the classes
+      // say (2026-10-07), and the reply says how many did.
+      answeredStay = r.stay.length;
       archive = r.archive.map((row) => ({ ...row, reason: "replaced" }));
       restore = r.restore;
       // A card that stays out because its word is in study on another card:
@@ -277,6 +313,7 @@ export async function saveRun({
     keptOutOfStudy: saved.ok ? archive.length : 0,
     broughtBack: saved.ok ? restore.length : 0,
     replaceWaits,
+    answeredStay,
     decisions: match.decisions,
   };
 }

@@ -429,7 +429,24 @@ console.log("\n  replacing the deck works by class and never deletes a card");
   const plan = planReplace(existing, ["2026-01-05"]);
   const out = plan.archive.map((r) => r.id).join(",");
   ck("a card with a class in the upload stays", !plan.archive.some((r) => r.id === 1 || r.id === 2));
-  ck("a card with none of its classes in the upload leaves study, answered or not", out === "3,4", out);
+  ck("a card never answered with none of its classes in the upload leaves study", out === "4", out);
+  // An answered card stays in study whatever the classes say (2026-10-07):
+  // the owner's "Le 28 et 29 septembre 2026" wasn't read as a date, and a
+  // Replace took out "pas grand chose à dire", answered five times.
+  ck("an answered card stays in study whatever the classes say, and is counted", plan.stay.map((r) => r.id).join(",") === "3",
+     plan.stay.map((r) => r.id).join(","));
+  const oneWay = [
+    row(11, "a", ["2026-02-05"], { fsrs_state: 1 }),
+    row(12, "b", ["2026-02-05"], { en_fsrs_state: 3 }),
+    row(13, "c", ["2026-02-05"], { reps: 2 }),
+    row(14, "d", ["2026-02-05"], { en_reps: 1 }),
+    row(15, "e", ["2026-02-05"], { last_review: "2026-02-06T08:00:00Z" }),
+    row(16, "f", ["2026-02-05"], { en_last_review: "2026-02-06T08:00:00Z" }),
+    row(17, "g", ["2026-02-05"]),
+  ];
+  const ow = planReplace(oneWay, ["2026-01-05"]);
+  ck("answered either way round, by any sign of an answer, counts", ow.stay.length === 6 && ow.archive.map((r) => r.id).join(",") === "17",
+     JSON.stringify({ stay: ow.stay.map((r) => r.id), out: ow.archive.map((r) => r.id) }));
   ck("nothing is ever deleted", !("remove" in plan));
   ck("lesson and tutor cards are left alone", !plan.archive.some((r) => r.id === 5 || r.id === 6));
   ck("a card a Replace took out comes back when its class is in the upload", plan.restore.map((r) => r.id).join(",") === "8",

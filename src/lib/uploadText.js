@@ -7,7 +7,9 @@
 // deck" when a class couldn't be read, or waited on Claude's question, and
 // the words of those classes were missing without a word about them. It
 // counted a word that already had the class date as one that got it, and
-// wrote "1 class was already read and left as they are".
+// wrote "1 class was already read and left as they are" and "your 1 card
+// from other classes stay as they are": every count is said in the singular
+// when it is one (2026-10-07).
 
 const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
 
@@ -29,8 +31,11 @@ function yourClasses(dates) {
 // the same notes again doesn't retry it; changing the line does.
 export function uploadFailedText({ cardsFailed = 0, failedFronts = [] } = {}) {
   if (!cardsFailed) return "";
-  const example = failedFronts[0] ? ` (for example "${failedFronts[0]}")` : "";
-  return `\n\n${n(cardsFailed, "card", "cards")} couldn't be saved${example}. Check that line in your notes: once it is changed, the next upload reads it again.`;
+  const one = cardsFailed === 1;
+  const example = failedFronts[0] ? (one ? ` ("${failedFronts[0]}")` : ` (for example "${failedFronts[0]}")`) : "";
+  return one
+    ? `\n\n1 card couldn't be saved${example}. Check that line in your notes: once it is changed, the next upload reads it again.`
+    : `\n\n${cardsFailed} cards couldn't be saved${example}. Check those lines in your notes: once they are changed, the next upload reads them again.`;
 }
 
 // `r` is what runUpload returned (src/lib/uploadRun.js): the commit's reply,
@@ -55,10 +60,22 @@ export function uploadResultText(r = {}) {
     const its = waiting.length === 1 ? "its" : "their";
     lines.push(`${yourClasses(waiting)} ${waiting.length === 1 ? "waits" : "wait"} until your next upload: some of ${its} words look like cards you have, and that couldn't be checked this time.`);
   }
-  if (r.keptOutOfStudy) lines.push(`${n(r.keptOutOfStudy, "card is", "cards are")} from classes not in this upload: out of study now, with their progress kept.`);
+  if (r.keptOutOfStudy) {
+    lines.push(r.keptOutOfStudy === 1
+      ? "1 card you never answered is from a class not in this upload: it is out of study now, and kept."
+      : `${r.keptOutOfStudy} cards you never answered are from classes not in this upload: they are out of study now, and kept.`);
+  }
+  if (r.answeredStay) {
+    lines.push(r.answeredStay === 1
+      ? "1 card you have answered is from a class not in this upload. It stays in study: replacing your deck never takes out a card you have answered."
+      : `${r.answeredStay} cards you have answered are from classes not in this upload. They stay in study: replacing your deck never takes out a card you have answered.`);
+  }
   if (r.broughtBack) lines.push(`${n(r.broughtBack, "card", "cards")} taken out by an earlier replace came back.`);
   if (r.replaceWaits) {
-    lines.push(`Nothing was taken out of study. Replacing a deck needs a database update the app's owner hasn't made yet, so these notes were added to your deck, and your ${n(r.replaceWaits, "card", "cards")} from other classes stay as they are.`);
+    const yours = r.replaceWaits === 1
+      ? "your card from another class stays as it is"
+      : `your ${r.replaceWaits} cards from other classes stay as they are`;
+    lines.push(`Nothing was taken out of study. Replacing a deck needs a database update the app's owner hasn't made yet, so these notes were added to your deck, and ${yours}.`);
   }
   return `Done!\n\n${lines.join("\n")}${uploadFailedText(r)}`;
 }

@@ -475,7 +475,12 @@ answer wait at least three days, as this app has no Hard button.
 ## The linked cahier
 
 Laura and each student keep the real cahier in a Google Doc: one block per
-class, each starting with a date line such as "Le 24 septembre 2026". A
+class, each starting with a date line such as "Le 24 septembre 2026". A class
+held over two days is one class, dated its first day: "Le 28 et 29 septembre
+2026", "Les 28 et 29 septembre 2026" and "Le 28 & 29 septembre 2026" all date
+it 28 September (2026-10-07). The owner's notes have one, and until then its
+lines were taken as the end of the class above and cut off with its homework,
+so no card was ever made from them. A
 student links their doc once, in the upload dialog's third tab, "Google Doc
 link" (owner, 2026-09-25; `src/CahierUpload.jsx`). Each new class then becomes
 cards on its own. There is no tick box: linking is what keeps the deck up to
@@ -517,8 +522,19 @@ owner's linked notes have "Le 27 octobre 2025" twice, the first almost
 certainly meant for the 28th); until 2026-10-06 only a date gone from the
 notes counted, and the corrected class was read again from scratch. Where the record has no lines for a class, it counts as read if
 its date is on any card, archived ones too, or the link read it; that is how
-the record fills itself the first time, without reading anything. A line
-added to such a class before its first run can't be told apart. Before
+the record fills itself the first time, without reading anything. One
+exception (2026-10-07): the link keeps a fingerprint of each class as it read
+it, and where that no longer matches the class's text, only the class's lines
+that are on a card the student has count as read, and the rest are read once
+(`seedingFrom` in `api/_lib/notesReading.js`, `lineMatcher` in
+`src/lib/notesLines.js`). The owner's 2 October class was read when it had 4
+lines; it has 16, and the other 12 ("se moucher", "j'ai le nez bouché",
+"corriger une erreur", "à partir de lundi" among them) would otherwise never
+have become cards. On a read-only copy of the owner's deck and notes, their
+first run after the migration reads exactly those 12 lines and the 6 of the
+28/29 September class, and nothing else. A line added to a class with no
+fingerprint (linking writes "already in your deck" for the classes already on
+cards) before its first run still can't be told apart. Before
 migration_016 a class is known by its date only, in `cahier_links.classes`
 (migration_011), as before. A class Claude fails on is retried on the next
 run.
@@ -560,6 +576,22 @@ by one rule shared by every path that writes a card from notes
    "pas mal (quite a lot;)" (quite a lot; a good deal) were joined through
    the shared "quite", and her "ça allait" (it was okay) and "ça allait ?"
    (how was it going?) through "was". Both are now near look-alikes.
+   A card that is one item of another card's list is that card (the owner,
+   2026-10-07: "à l'heure" beside "à temps / à l'heure" is one card twice).
+   The sure rule joins them when the item is the card's French by the rule
+   above and every word of the list card's English is in the card's English
+   (`isListPart`): "épais" and "épais, épaisse", "des yeux" and "un œil, des
+   yeux", "Allons-y !" and "On y va / Allons-y". That English test keeps
+   apart what a list only seems to hold: a word inside a sentence with a
+   comma ("en fait" and "En fait, ça veut dire que"), different words
+   grouped on one card ("amener" and "se lever, acheter, amener"), another
+   meaning of the same spelling ("fin" (the end) and "fin, fine" (thin;
+   fine)). An item whose English is worded differently ("après" (after) and
+   "ensuite / après" (then / afterwards)) is a near look-alike, and Claude's
+   question now says an item of a list is the same card and names those
+   three kinds as different. Inside one reading the list card is the one
+   kept. On the read-only snapshot the rule now names 6 such pairs in the
+   owner's deck, 9 in demarajackson's, 5 in foisydm's and 1 in nguyen's.
 2. Near look-alikes (accents, "ne", articles or brackets set aside; half of a
    list card; the same words or list parts in another order, such as foisydm's
    "amener / apporter" and "apporter, amener (ici)"; "il/elle" for "il", as in
@@ -755,13 +787,17 @@ one. `api/_lib/` is shared code, not a route.
   than copy them.
 - "Replace my existing deck" works by class and deletes nothing
   (`src/lib/replaceDeck.js`, since 2026-10-06): a card with none of its
-  classes in the upload leaves study, marked "replaced", answers kept; a later
-  Replace with its class brings it back, unless the same card is in study by
-  then (a lesson's copy, say), which gains its class dates instead; lesson and
-  tutor cards are left alone; a card the database refuses no longer turns it
-  into an add. Before migration_016 Replace takes nothing out and the upload
-  says so: a card taken out then could never say a Replace took it, so it
-  would never come back.
+  classes in the upload leaves study, marked "replaced"; a later Replace with
+  its class brings it back, unless the same card is in study by then (a
+  lesson's copy, say), which gains its class dates instead; lesson and tutor
+  cards are left alone; a card the database refuses no longer turns it into
+  an add. A card the student has answered, either way round, never leaves
+  study, whatever the classes say (2026-10-07), and the message says how many
+  stayed and why; `save_notes_reading` refuses it too. A Replace with the
+  owner's real notes would otherwise have taken out "pas grand chose à dire",
+  answered five times, because its class's date line wasn't read. Before
+  migration_016 Replace takes nothing out and the upload says so: a card taken
+  out then could never say a Replace took it, so it would never come back.
 
 ### Which model each route runs
 
@@ -1459,7 +1495,11 @@ Lesson 1 · Être (57), Lesson 2 · Aller (63), Lesson 3 · Avoir (62), Lesson 4
 - A lesson card the student already has as their own card is not added
   (`taken`). The upsert on `(user_id, front)` would overwrite theirs. Since
   2026-10-06 "already has" is the matching rule (`src/lib/sameCard.js`), not
-  only the exact front, and counts a card of their own they removed.
+  only the exact front. Since 2026-10-07 it counts every card of their own,
+  in study or out of it, whatever took it out and whether or not the row says
+  why: before migration_016 no row says, and Leçon 2's "après" was written
+  over the owner's 16650 "après", which the clean-up had put away as a repeat
+  of "ensuite / après" (new English, class dates cleared, back in study).
 - A lesson card the student removed, or one put away as a repeat, is not put
   back (`away`, 2026-10-06). Removing archives the row, and the lesson's
   upsert would land on it and bring it back. Which rows those are comes from
@@ -1897,13 +1937,17 @@ tab for each:
   the Mac and Check everyone now only read. And the question itself is
   tested, as kind `repeats` (`api/_lib/repeatsChecks.js`): each card put away
   as a repeat with the card it repeats (`archived_reason` 'duplicate' and
-  `merged_into`) should be "same", and the pairs in `api/_lib/keepApart.js`
-  (the plan's eight keep-apart pairs and seven more) "different", each asked
-  three times in rounds of the app's own calls. Its version is the
+  `merged_into`) should be "same", and so should each card that is one item
+  of another card's list (`LIST_ITEMS` in `api/_lib/keepApart.js`, real
+  pairs such as "après" and "ensuite / après", 2026-10-07); the pairs in
+  `KEEP_APART` (the plan's eight keep-apart pairs, seven more, and seven a
+  list only seems to hold, such as "amener" and "se lever, acheter, amener")
+  should be "different". Each is asked three times in rounds of the app's
+  own calls. Its version is the
   question's. It has no schedule of its own: the 15:00 and 16:00 runs each
   take it when their own test isn't due. Until
   `scripts/record-cleanup-reasons.mjs` records the clean-up's 82 repeats it
-  has only the keep-apart pairs to ask, all "different".
+  has only the fixed pairs to ask.
 - **Both run by themselves** (owner, 2026-10-06: "make both run
   automatically", after being asked to mark and press buttons for decisions
   they had already made). Two daily schedules on `cahier-daily` (15:00 and
@@ -2466,6 +2510,40 @@ check 6 now leaves such an order alone (see *The eleven checks*). The dry run of
 cards back in study: Leçon 2's lesson sync had taken over "après" (16650) at
 23:33 UTC.
 
+### 2026-10-07 — No doubles: list items, two-day classes, Replace and the lesson sync
+
+From the read-only run of the fix on the owner's real notes and every live
+deck, and the owner's decisions that day ("there must be NO doubles"):
+
+- A card that is one item of another card's list is the same card: "à
+  l'heure" beside "à temps / à l'heure". The sure rule joins an item whose
+  English agrees word for word with the list's, Claude's question says the
+  rest are the same card, and what a list only seems to hold is kept apart
+  (see *The linked cahier*). The upload, the sync, the merge inside one
+  reading and the morning check all use it; inside one reading the list card
+  is kept. Removing or deleting a list card doesn't make its items unwanted:
+  the owner deleted "pas mal = beaucoup" in April, and "pas mal" from their
+  notes isn't that card back.
+- A class headed "Le 28 et 29 septembre 2026" is one class, dated the 28th.
+  Its lines used to be cut off with the class above's homework.
+- "Replace my existing deck" never takes out a card the student has
+  answered, either way round, and says how many stayed.
+- The first run after migration_016 no longer counts as read the lines of a
+  class the linked notebook read when it was shorter: only lines on a card
+  do. On the owner's notes that is exactly the 12 unread lines of 2 October
+  and the 6 of 28/29 September.
+- The lesson sync never takes over a card of the student's own out of study,
+  whatever took it out.
+- The upload's message says one as one ("your card from another class stays
+  as it is", "1 card couldn't be saved").
+
+The status suite's messy simulated student moved from seed 7 to seed 5:
+the deck now holds "une infirmière" inside "un infirmier, une infirmière",
+one card fewer, which changes every later card's luck, and on that seed
+"FSRS's predictions match your results" found its lowest band more than 10
+points off. That band fails on most seeds before and after the change,
+because the simulated student's memory is deliberately not FSRS.
+
 ---
 
 ## Open items
@@ -2510,17 +2588,11 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
   "duplicate" or `merged_into` until `scripts/record-cleanup-reasons.mjs` is
   run (see *The owner's to-dos*). Only cards with the reason "replaced" ever
   come back through an upload, so none of these does.
-- **The lesson sync takes over an own card out of study with a lesson card's
-  French.** A missing lesson card is written as an upsert on the French, so
-  when the student has a card of their own with exactly that French out of
-  study, and it gives no reason that keeps it out ('removed' or 'duplicate'),
-  the row becomes the lesson's card, back in study, with the lesson's English
-  and no class dates. It happened to "après" (16650), put away by the
-  clean-up, at 23:33 UTC on 2026-10-06. Once migration_016 is run and the
-  clean-up's reasons recorded, those cards are safe; other own cards archived
-  without a reason (Replace before the fix, the grammar sort, merge-duplicates)
-  aren't. One is exposed today: sammy's archived "prendre", beside Leçon 3's.
-  `reconcileLessons` could count every own card out of study as "taken".
+- **"après" (16650) is still in study on the live deck**, beside "ensuite /
+  après". The lesson sync took it over on 2026-10-06, before that was fixed
+  (2026-10-07), and nothing puts it back. Claude's question now calls it the
+  same card as "ensuite / après", so once the morning run asks about it, the
+  owner's "No card is in your deck twice" names it.
 - **The lesson sync can delete answered cards.** When a lesson drops a card
   that Reset all progress put back to new, the sync deletes it, and its
   answers from before the reset with it. `reconcileLessons`
@@ -2528,17 +2600,20 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
   `card_reviews` first, as the upload's replace does.
 - **Repeats made inside one reading are still in some decks**, and the
   morning check now fails on them. The clean-up of 2026-10-06 put away only
-  repeats from reading notes again. By the rule, on 2026-10-06:
-  demarajackson 16 and laura.caufour 3, both with answers, so check 10 fails
-  for them every morning until they are put away; foisydm 18, nguyen.t12090 1
-  and sammy 1, who have no answers and aren't checked. demarajackson had 19
-  until the rule was corrected that evening: three were pairs the old reading
-  labelled as two meanings ("pas mal" / "pas mal (quite a lot;)", "ça allait"
-  / "ça allait ?", and two "venir chercher" cards), which are now look-alikes
-  for Claude rather than repeats (counted on the read-only snapshot taken
-  after the clean-up). The owner's
-  deck has drill-and-word pairs and partial list overlaps left for them to
-  decide; those are look-alikes, which the morning run puts to Claude.
+  repeats from reading notes again; the owner decided on 2026-10-07 that
+  these go the same way, which needs a write to the live cards and hasn't
+  been done. By the rule, on the read-only snapshot taken after the clean-up
+  and counting a card that is one item of another card's list (2026-10-07):
+  the owner 6 (all list items, such as "à l'heure" beside "à temps /
+  à l'heure"), demarajackson 25 (9 of them list items) and laura.caufour 3,
+  all with answers, so check 10 fails for them every morning until they are
+  put away; foisydm 23, nguyen.t12090 2 and sammy 1, who have no answers and
+  aren't checked. demarajackson had 19 before the rule was corrected on
+  2026-10-06: three were pairs the old reading labelled as two meanings
+  ("pas mal" / "pas mal (quite a lot;)", "ça allait" / "ça allait ?", and two
+  "venir chercher" cards), which are now look-alikes for Claude. The owner's
+  deck also has drill-and-word pairs; those are look-alikes, which the
+  morning run puts to Claude.
 - **A few rules in the owner's deck are filed as words or phrases**, such as
   "voie passive" and "double pronoms (COD + COI)", so they are asked both ways.
   The grammar sort only read cards filed `G` or `P`. These few need re-filing

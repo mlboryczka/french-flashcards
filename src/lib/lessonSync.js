@@ -20,11 +20,12 @@ import { ARCHIVE_PREFIX, isArchived } from "./archive.js";
 // be read: "archived:lesson:lecon1#k9" -> "lesson:lecon1#k9".
 const unarchived = (card) => ({ ...card, source: String(card.source).slice(ARCHIVE_PREFIX.length) });
 
-// Why a card out of study stays out whatever a lesson has: the student
-// removed it, or it was put away as a repeat of another card (archived_reason,
-// migration_016). A card out of study for no recorded reason is one a lesson
-// dropped, among others, and comes back if the lesson brings it back (owner,
-// 2026-09-25).
+// Why a lesson's card out of study stays out whatever the lesson has: the
+// student removed it, or it was put away as a repeat of another card
+// (archived_reason, migration_016). A lesson card out of study for no recorded
+// reason is one a lesson dropped, among others, and comes back if the lesson
+// brings it back (owner, 2026-09-25). A card of the student's own out of study
+// never does, whatever the reason (see `taken` below).
 const STAYS_OUT = new Set(["removed", "duplicate"]);
 
 // Answered at least once, either way round: the card carries the student's
@@ -82,10 +83,14 @@ export const ADOPTED_SOURCE = "cahier-upload";
  *             into the lesson's — new back, new category, and its class dates
  *             replaced by none. A single-word lesson front ("actuellement",
  *             in the adverb lesson) can easily already be in a cahier deck.
- *             The student keeps their card; the lesson goes without it. A card
- *             of their own they removed counts too (2026-10-06): it is a word
- *             they didn't want, and a lesson must not bring it back under
- *             another card.
+ *             The student keeps their card; the lesson goes without it. Every
+ *             card of their own counts, in study or out of it, whatever took
+ *             it out and whether or not the row says why (2026-10-07). On the
+ *             owner's deck the clean-up put "après" away as a repeat of
+ *             "ensuite / après"; before migration_016 no row says why, and
+ *             the lesson sync wrote Leçon 2's "après" over that row (new
+ *             English, class dates cleared) and put it back in study beside
+ *             the card it repeats.
  *   away    — lesson cards NOT inserted because the student removed their row
  *             for it, or it was put away as a repeat (2026-10-06). Removing a
  *             card archives it rather than deleting it (api/_lib/removeCard.js),
@@ -106,17 +111,19 @@ export function reconcileLessons(lessons, deckCards, archivedCards = []) {
   const unkeyed = [];
   const taken = [];
   const away = [];
-  // The rows out of study that must stay out.
-  const shelved = (archivedCards || []).filter((card) => isArchived(card) && STAYS_OUT.has(card.reason)).map(unarchived);
+  // Every row out of study, as it was before it was taken out.
+  const outOfStudy = (archivedCards || []).filter((card) => isArchived(card)).map((card) => ({ ...unarchived(card), reason: card.reason }));
+  // The lesson's own rows out of study that must stay out.
+  const shelved = outOfStudy.filter((card) => STAYS_OUT.has(card.reason));
   // Their fronts: a lesson card inserted on one of them would put that row
   // back in study.
   const shelvedFronts = new Set(shelved.map((card) => card.f));
-  // The deck's own cards, not a lesson's, in study or removed. "Already has
-  // this card" is the same rule every card-writer uses (src/lib/sameCard.js),
-  // not the exact front: the owner had "rends-moi mon livre" from their
-  // notes, and the lesson added "Rends-moi mon livre !" beside it
-  // (2026-10-06).
-  const ownCards = [...(deckCards || []), ...shelved].filter((card) => !lessonIdOf(card));
+  // The deck's own cards, not a lesson's, in study or out of it for any
+  // reason or none. "Already has this card" is the same rule every
+  // card-writer uses (src/lib/sameCard.js), not the exact front: the owner
+  // had "rends-moi mon livre" from their notes, and the lesson added
+  // "Rends-moi mon livre !" beside it (2026-10-06).
+  const ownCards = [...(deckCards || []), ...outOfStudy].filter((card) => !lessonIdOf(card));
   const own = new Set(ownCards.map((card) => card.f));
   const ownIndex = cardIndex(ownCards.map((card) => ({ front: card.f, back: card.b, source: card.source })));
   const ownHas = (c) => own.has(c.f) || !!ownIndex.sure({ front: c.f, back: c.b });

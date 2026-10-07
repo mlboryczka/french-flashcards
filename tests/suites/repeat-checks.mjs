@@ -79,7 +79,7 @@ const { cardIndex } = await import("../../src/lib/sameCard.js");
 const {
   repeatsCases, repeatsJudge, runRepeatsTest, supabaseRepeatsStore, REPEATS_RUNS, REPEATS_PROMPT_VERSION, summarize,
 } = await import("../../api/_lib/repeatsChecks.js");
-const { KEEP_APART } = await import("../../api/_lib/keepApart.js");
+const { KEEP_APART, LIST_ITEMS } = await import("../../api/_lib/keepApart.js");
 const { isDue } = await import("../../api/_lib/evalRuns.js");
 const { evalStatus } = await import("../../api/_lib/evalStatus.js");
 process.env.ANTHROPIC_API_KEY = "sk-test";
@@ -312,9 +312,26 @@ console.log("\n  the test of Claude's same-or-different question");
   ];
   const cases = repeatsCases({ duplicates, kept });
   ck("its cases: each card put away as a repeat with the card it repeats, said to be the same",
-     cases.filter((c) => c.says === "same").length === 3 && cases.some((c) => c.id === "dup:2670" && c.a.front === "manquer" && c.b.front === "manquer / rater"));
+     cases.filter((c) => c.id.startsWith("dup:") && c.says === "same").length === 3 && cases.some((c) => c.id === "dup:2670" && c.a.front === "manquer" && c.b.front === "manquer / rater"));
+  // A card that is one item of another card's list is the same card (the
+  // owner, 2026-10-07): fixed cases from the students' decks, "après" beside
+  // "ensuite / après" among them.
+  ck("and each card that is one item of another card's list, said to be the same",
+     LIST_ITEMS.length >= 7 && LIST_ITEMS.every((p) => cases.some((c) => c.id === `item:${p.id}` && c.says === "same")) &&
+       ["a-l-heure", "apres"].every((id) => LIST_ITEMS.some((p) => p.id === id)));
+  // Each is what a card-writer meets: surely one card by the rule, or a near
+  // look-alike put to Claude. Never a card added beside the list with no
+  // question asked.
+  const unasked = LIST_ITEMS.filter((p) => !cardIndex([{ ...p.a, id: 1 }]).sure({ ...p.b, id: 2 }) && !cardIndex([{ ...p.a, id: 1 }]).near({ ...p.b, id: 2 }).length);
+  ck("  every one is joined by the rule or put to Claude", unasked.length === 0, unasked.map((p) => p.b.front).join(", "));
+  ck("  the rule joins the two whose English agrees word for word",
+     ["a-l-heure", "des-yeux"].every((id) => { const p = LIST_ITEMS.find((x) => x.id === id); return !!cardIndex([p.a]).sure(p.b); }));
   ck("and every keep-apart pair, said to be different", cases.filter((c) => c.says === "different").length === KEEP_APART.length && KEEP_APART.length >= 8);
   ck("  the plan's eight among them", ["ou", "la-poste", "fin", "etat", "voler", "planter", "vieux", "mieux"].every((id) => cases.some((c) => c.id === `apart:${id}`)));
+  // What a list only seems to hold (2026-10-07): a word inside a sentence
+  // with a comma, different words grouped on one card, another meaning of
+  // the same spelling.
+  ck("  and what a list only seems to hold", ["list-verbs", "en-fait", "semaine", "fin-fine", "bon-mauvais", "boite", "on-est-alles"].every((id) => cases.some((c) => c.id === `apart:${id}` && c.says === "different")));
   ck("  in the same mixed order every run", JSON.stringify(repeatsCases({ duplicates, kept }).map((c) => c.id)) === JSON.stringify(cases.map((c) => c.id)) &&
      cases.slice(0, 6).some((c) => c.says === "same") !== cases.slice(0, 6).every((c) => c.says === "same"));
   // The keep-apart pairs are what the card-writers would ask about: none is
@@ -353,7 +370,7 @@ console.log("\n  the test of Claude's same-or-different question");
   ck("a case Claude gets right every time passes, wrong every time fails, and one in between is mixed",
      o("dup:2670") === "pass" && o("dup:17643") === "fail" && o("apart:voler") === "mixed", [o("dup:2670"), o("dup:17643"), o("apart:voler")].join(", "));
   ck("and the run is counted", out.summary.cases === cases.length && out.summary.never === 1 && out.summary.sometimes === 1 && out.summary.every === cases.length - 2 &&
-     run.passed === out.summary.every && out.summary.same_cases === 3, JSON.stringify(out.summary));
+     run.passed === out.summary.every && out.summary.same_cases === 3 + LIST_ITEMS.length, JSON.stringify(out.summary));
   ck("each case keeps both cards' text, for naming it later", run.results.every((c) => c.a?.front && c.b?.front));
 
   resetClaude();

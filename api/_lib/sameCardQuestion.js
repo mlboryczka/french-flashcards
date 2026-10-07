@@ -4,10 +4,20 @@
 //
 // The fixed rule (src/lib/sameCard.js) settles most new cards. What it can't
 // settle without joining words that differ, "le cas" beside "un cas", "l'ami"
-// beside "un ami", "manquer" beside "manquer / rater", is asked here, every
-// pair of a run in one call. The answer decides only whether a card is added:
-// a "same" adds the class date to the card the student has, and nothing else
-// about that card changes.
+// beside "un ami", "après" beside "ensuite / après", is asked here, every
+// pair of a run in one call.
+//
+// A card that is one item of another card's list is the same card (the owner,
+// 2026-10-07: "à l'heure" beside "à temps / à l'heure" is one card twice).
+// The rule is sure of it when the English agrees word for word; the rest come
+// here, and the question says so, with the kinds of card a list only seems to
+// hold kept apart: a word inside a sentence with a comma, different words
+// grouped on one card, and another meaning of the same spelling. Both kinds
+// are in the test of this question (api/_lib/keepApart.js).
+//
+// The answer decides only whether a card is added: a "same" adds the class
+// date to the card the student has, and nothing else about that card
+// changes.
 //
 // If the call fails, or a pair comes back without a clear answer, the card
 // waits and its lines stay unread (src/lib/cardMatch.js). Nothing is added on
@@ -41,7 +51,7 @@ Answer "same" when learning one card means learning the other: the same French w
 - an accent fixed or a typo: "enervé" and "énervé"; "une propositiond" and "une proposition"
 - "ne" dropped in speech: "je connais personne" and "je ne connais personne"
 - the feminine added to the same word: "japonais" and "japonais, japonaise"
-- one of two ways of saying the same thing on a list card, with the same meaning: "manquer" and "manquer / rater" (to miss)
+- one item of a list card, which already teaches it, even when the English is worded differently: "à l'heure" and "à temps / à l'heure" (on time); "manquer" and "manquer / rater" (to miss); "après" (after) and "ensuite / après" (then / afterwards); "des yeux" and "un œil, des yeux"
 - a number written in digits: "15" and "quinze"
 - the same word with its English worded differently: "être assis" = "to be seated" and "to be sitting"
 
@@ -55,6 +65,9 @@ Answer "different" when they teach different things. Keep these apart:
 - the singular and the plural on cards of their own
 - an exclamation with a meaning of its own: "Je pense !" (I think so!) and "je pense" (I think)
 - a word that is only part of a longer expression: "mieux (adv)" (better) and "encore meilleur / mieux" (even better)
+- a word or phrase inside a sentence, even after a comma: "en fait" and "En fait, ça veut dire que"; "la semaine prochaine" and "La semaine prochaine, il va faire froid"
+- different words that only appear together on one card, such as examples of one grammar point or opposites: "amener" and "se lever, acheter, amener"; "bon" (good) and "bon / mauvais" (right / wrong)
+- a list item with a meaning other than the one the list teaches: "fin" (the end) and "fin, fine" (thin; fine); "une boîte" (a box) and "une boîte / un club" (a nightclub / a club)
 
 When you are unsure, answer "different": a card too many can be removed, a card lost can't be found.
 

@@ -47,12 +47,11 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
-import { createHash } from "node:crypto";
 
 import { requireUser, isAdmin } from "./_lib/auth.js";
 import { handleNotesChecks, supabaseNotesStore } from "./_lib/notesChecks.js";
-import { planReading, readDatesFrom } from "../src/lib/notesLines.js";
-import { claimReading, releaseReading, readDeck, saveRun } from "./_lib/notesReading.js";
+import { planReading } from "../src/lib/notesLines.js";
+import { claimReading, releaseReading, readDeck, saveRun, seedingFrom, classFingerprint } from "./_lib/notesReading.js";
 import { askSameCard } from "./_lib/sameCardQuestion.js";
 import {
   fetchGoogleDoc,
@@ -75,8 +74,7 @@ const MIN_SECONDS_BETWEEN_CHECKS = 30;
 
 export const docIdFrom = (url) => String(url || "").match(/\/document\/d\/([a-zA-Z0-9_-]+)/)?.[1] || null;
 
-export const fingerprint = (text) =>
-  createHash("sha256").update(text || "", "utf8").digest("hex").slice(0, 16);
+export const fingerprint = classFingerprint;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -204,14 +202,21 @@ export async function syncUser({ admin, apiKey, userId, url, limit, force = fals
   try {
     const seen = link.classes || {};
     // What counts as read where the record has no lines for a class: after
-    // migration_016, a class whose date is on any card or that this link read;
-    // before it, only what this link read, as it always was. The deck is read
-    // only when that question comes up or there is something to read: on most
-    // days the daily check finds every class in the record and stops there.
-    const unknown = blocks.some((b) => !Array.isArray(reading.classes?.[b.date]) && !(b.date in seen));
-    let deck = reading.mode === "lines" && unknown ? await readDeck(admin, userId) : null;
-    const readDates = reading.mode === "lines" ? readDatesFrom(deck?.rows || [], seen) : new Set(Object.keys(seen));
-    const plan = planReading({ blocks, classes: reading.classes, readDates });
+    // migration_016, a class whose date is on any card or that this link read,
+    // except that a class this link read when its text was different counts
+    // as read only for its lines that are on a card (2026-10-07: the owner's
+    // 2 October class was read with 4 of its 16 lines); before it, only what
+    // this link read, as it always was. The deck is read only when that
+    // question comes up or there is something to read: on most days the daily
+    // check finds every class in the record and stops there.
+    const lines = reading.mode === "lines";
+    const unrecorded = lines ? blocks.filter((b) => !Array.isArray(reading.classes?.[b.date])) : [];
+    const changed = seedingFrom([], seen, reading.mode).changed;
+    const unknown = unrecorded.some((b) => !(b.date in seen) || changed(b));
+    let deck = unknown ? await readDeck(admin, userId) : null;
+    const seed = seedingFrom(deck?.rows || [], seen, reading.mode);
+    const readDates = lines ? seed.readDates : new Set(Object.keys(seen));
+    const plan = planReading({ blocks, classes: reading.classes, readDates, changed: seed.changed, knownLine: deck ? seed.knownLine : null });
     // Newest first: the class you were taught yesterday is worth more than one
     // from last spring, and it is the one you expect to see.
     const unread = plan.filter((p) => p.needsReading).sort((a, b) => (a.date < b.date ? 1 : -1));

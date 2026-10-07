@@ -16,6 +16,9 @@
 //   clean-up). The owner approved that clean-up, card by card. Any card put
 //   away as a repeat later, with the card it repeats, becomes a case too.
 //
+//   the same card, fixed in the repo: a card that is one item of another
+//   card's list (LIST_ITEMS in api/_lib/keepApart.js; the owner, 2026-10-07).
+//
 //   different cards: the pairs in api/_lib/keepApart.js, fixed in the repo.
 //
 // Each case is asked three times, as the app asks it (the same question,
@@ -33,7 +36,7 @@ import { askSameCard, SAME_CARD_VERSION, SAME_CARD_MODEL } from "./sameCardQuest
 import { missingTable } from "../../src/lib/dealLog.js";
 import { missingColumn } from "../../src/lib/reviewLog.js";
 import { outcome, tally } from "./evalRuns.js";
-import { KEEP_APART } from "./keepApart.js";
+import { KEEP_APART, LIST_ITEMS } from "./keepApart.js";
 
 export const REPEATS_RUNS = 3;
 export const REPEATS_PROMPT_VERSION = SAME_CARD_VERSION;
@@ -56,6 +59,7 @@ export function repeatsCases({ duplicates = [], kept = [] } = {}) {
     if (!k || !d.front || !k.front) continue;
     same.push({ id: `dup:${d.id}`, says: "same", a: { front: k.front, back: k.back }, b: { front: d.front, back: d.back } });
   }
+  for (const p of LIST_ITEMS) same.push({ id: `item:${p.id}`, says: "same", a: p.a, b: p.b });
   const apart = KEEP_APART.map((p) => ({ id: `apart:${p.id}`, says: "different", a: p.a, b: p.b }));
   // Mixed, and in the same order every run: a long run of one answer would
   // tell Claude something the real question never does.

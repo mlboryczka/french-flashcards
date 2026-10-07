@@ -46,7 +46,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isSureMatch, cardIndex } from "../src/lib/sameCard.js";
+import { isSureMatch, cardIndex, sameWords } from "../src/lib/sameCard.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -135,8 +135,11 @@ function repeats(w) {
   const kept = w.keep.map((id) => now.get(id)).filter(Boolean);
   if (kept.length <= 1) return kept[0] || null;
   const card = now.get(w.id) || before.get(w.id);
-  const sure = kept.find((k) => isSureMatch(k, card));
-  if (sure) return sure;
+  // A list card is surely each of its items (2026-10-07): the one with the
+  // same English is the closest, then one with the same English words.
+  const sure = kept.filter((k) => isSureMatch(k, card));
+  const tidy = (s) => String(s ?? "").trim().toLowerCase();
+  if (sure.length) return sure.find((k) => tidy(k.back) === tidy(card.back)) || sure.find((k) => sameWords(k.back, card.back)) || sure[0];
   const near = cardIndex(kept).near(card);
   return near[0] || kept[0];
 }

@@ -3,7 +3,9 @@
 Most of a student's cards come from their *cahier*, the notebook they keep with
 their teacher. Here the teacher and the student keep it together in a Google
 Doc, one block per class, each starting with its date, such as "Le 24
-septembre 2026". Claude reads each class and turns it into cards.
+septembre 2026". A class held over two days, "Le 28 et 29 septembre 2026",
+is one class, dated its first day. Claude reads each class and turns it into
+cards.
 
 ## Three ways in
 
@@ -53,7 +55,9 @@ ended up with 73 cards that repeated another one. The owner's rule since then:
   linking a copy of the doc all share it. An unchanged notebook uploaded again
   asks Claude nothing and adds nothing. A class whose date line is corrected
   is known by its lines, even when its old or new date is another class's
-  too, so it isn't read again.
+  too, so it isn't read again. The first time, the record fills itself from
+  the classes already on the student's cards, except that lines added to a
+  class since the linked doc last read it, and on no card, are still read.
 - **One reading at a time.** The daily check and an upload can't read the
   same student's notes at the same moment; the second is told to wait.
 - **Saved together.** The new cards and the record of the lines read are
@@ -65,9 +69,16 @@ ended up with 73 cards that repeated another one. The owner's rule since then:
   the lessons' cards included. Small differences that never change what is
   learnt (capitals, a final full stop, an article of the same gender, a label
   like "(adj)", "œ" for "oe") settle it at once. A closer call, such as "le
-  cas" beside "un cas", "manquer" beside "manquer / rater", "rater /
+  cas" beside "un cas", "après" beside "ensuite / après", "rater /
   manquer" beside "manquer / rater", or a typo fixed, is put to Claude as one
   question: the same card to learn, or different?
+- **A card that is one item of another card's list is that card.** "à
+  l'heure" beside "à temps / à l'heure" is one card twice (the owner's
+  decision). When the English agrees word for word it is settled at once;
+  otherwise Claude is asked, and told so. Kept apart: a word inside a
+  sentence ("en fait" and "En fait, ça veut dire que"), different words
+  grouped on one card ("amener" and "se lever, acheter, amener"), and another
+  meaning of the same spelling ("fin" (the end) and "fin, fine" (thin)).
   Claude is told what stays apart: "ou" and "où", "la poste" (the post office)
   and "le poste" (the job), "fin" (the end) and "fin (adj)" (thin), a "(fam)"
   meaning beside the ordinary one. If the question can't be answered, those
@@ -86,7 +97,9 @@ class only adds its date to it, and a lesson doesn't bring it back. Deleting
 used to erase the card and its answers, and the next upload made it again.
 
 "Replace my existing deck", ticked on an upload, takes out of study the cards
-from classes that aren't in the upload, and keeps them. A later Replace upload
+from classes that aren't in the upload, and keeps them. A card the student
+has answered, either way round, always stays in study, and the message says
+how many did. A later Replace upload
 that has their class again brings them back, unless the same card is in study
 by then (a lesson's copy of it, say), which gains their class dates instead.
 Lesson cards and cards added from the tutor are left alone. Until the database
@@ -98,7 +111,8 @@ read, and, by date, any class Claude couldn't read (upload the same notes
 again to add it) or whose cards wait on the same-or-different question.
 
 When a lesson drops a card that a word from the student's notes had landed
-on, the card stays, as one of the student's own.
+on, the card stays, as one of the student's own. A lesson never takes over a
+card of the student's own that is out of study.
 
 ## What becomes a card
 
