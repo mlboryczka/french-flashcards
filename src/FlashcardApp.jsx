@@ -1279,6 +1279,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     },
     goStats: () => setMode("stats"),
     setTutor: (on) => (on ? openChat() : setShowChat(false)),
+    // Continue on a typed card already checked: what the button does.
+    continueCard: () => { if (typeMode && typeResult && card && !sessionDone) answer(typedRecalled, "typed"); },
     openLesson: (id) => { if (mode !== "study" || lessonFilter !== id) enterLesson(id); },
     setNotes: (on) => {
       if (on) { setShowChat(false); setShowFeedback(false); }
@@ -1294,6 +1296,7 @@ export default function FlashcardApp({ user, onSignOut }) {
       goLessons: call("goLessons"),
       goStats: call("goStats"),
       setTutor: call("setTutor"),
+      continueCard: call("continueCard"),
       openLesson: call("openLesson"),
       setNotes: call("setNotes"),
       setSettings: call("setSettings"),
@@ -1986,6 +1989,23 @@ export default function FlashcardApp({ user, onSignOut }) {
     winWidth - sidebarWidth - panelWidth >= MIN_REFLOW_CONTENT;
   const chatReflow = showChat && roomToReflow(CHAT_PANEL_WIDTH);
   const lessonReflow = showLessonPanel && roomToReflow(LESSON_PANEL_WIDTH);
+  // On a window too narrow for the notes to sit beside the cards, they cover
+  // the page under a dim, and the "Lesson notes" button with it. A copy of
+  // the button sits on the original, above the dim, so pressing it closes the
+  // notes there too.
+  const lessonToggleRef = useRef(null);
+  const [lessonToggleBox, setLessonToggleBox] = useState(null);
+  const notesOver = showLessonPanel && !lessonReflow;
+  useEffect(() => {
+    if (!notesOver) { setLessonToggleBox(null); return; }
+    const measure = () => {
+      const r = lessonToggleRef.current?.getBoundingClientRect();
+      setLessonToggleBox(r && r.width ? { left: r.left, top: r.top, minWidth: r.width } : null);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [notesOver, sidebarMin]);
   const overlayOpen =
     (showChat && !chatReflow) || showFeedback || showUpload || showKeyModal ||
     (showLessonPanel && !lessonReflow) ||
@@ -2695,6 +2715,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           // and 11px closer to Cards than Cards is to Lessons.
           <button
             data-sidebar-toggle
+            className="side-btn"
             style={{ ...S.sideItem, ...S.sideItemMin }}
             onClick={() => setSidebarMinimized(false)}
             aria-label="Expand sidebar"
@@ -2711,6 +2732,8 @@ export default function FlashcardApp({ user, onSignOut }) {
             <Fragment key={m}>
               <button
                 data-tour={`nav-${m === "study" ? "cards" : m}`}
+                className="side-btn"
+                aria-current={navActive(m) ? "page" : undefined}
                 style={navActive(m) ? {...baseStyle, ...activeStyle} : baseStyle}
                 onClick={() => {
                   // Cards means the whole deck, so it clears any lesson you
@@ -2746,6 +2769,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   <Fragment key={group.title || "lessons"}>
                     {group.folds && (
                       <button
+                        className="side-btn"
                         style={S.sideGroup}
                         onClick={() => toggleGroup(group.title)}
                         aria-expanded={!closed}
@@ -2762,6 +2786,8 @@ export default function FlashcardApp({ user, onSignOut }) {
                       return (
                         <button
                           key={lesson.id}
+                          className="side-btn"
+                          aria-current={on ? "page" : undefined}
                           style={on ? {...base, ...S.sideSubItemActive} : base}
                           onClick={() => enterLesson(lesson.id)}
                           title={`Study ${lesson.title}`}
@@ -2784,6 +2810,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         <button
           data-tutor-toggle
           data-tour="nav-tutor"
+          className="side-btn"
           style={sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem}
           onClick={toggleChat}
           title={sidebarMin ? "Tutor" : undefined}
@@ -2925,6 +2952,17 @@ export default function FlashcardApp({ user, onSignOut }) {
         reflow={lessonReflow}
         sidebarWidth={sidebarWidth}
       />
+      {lessonToggleBox && createPortal(
+        <button
+          data-lesson-toggle-copy
+          style={{ ...S.chipToggle, ...S.chipToggleA, position: "fixed", zIndex: 1001, margin: 0, boxSizing: "border-box", whiteSpace: "nowrap", ...lessonToggleBox }}
+          onClick={toggleLessonPanel}
+          title="The lesson, beside the cards"
+        >
+          Lesson notes
+        </button>,
+        document.body
+      )}
       <ChatPanel
         open={showChat}
         onClose={() => setShowChat(false)}
@@ -3474,6 +3512,7 @@ export default function FlashcardApp({ user, onSignOut }) {
           {lessonFilter !== "all" && (
             <button
               data-lesson-toggle
+              ref={lessonToggleRef}
               style={showLessonPanel ? {...S.chipToggle, ...S.chipToggleA} : S.chipToggle}
               onClick={toggleLessonPanel}
               title="The lesson, beside the cards"

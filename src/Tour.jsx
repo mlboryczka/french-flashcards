@@ -35,6 +35,9 @@ const fade = (on, props = ["opacity"]) =>
 
 const val = (x, ...args) => (typeof x === "function" ? x(...args) : x);
 const list = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);
+// Whether two steps light the same part of the page, the same way.
+const sameSpot = (a, b, app) => !!a && !!b && !a.center && !b.center &&
+  JSON.stringify([list(val(a.spot, app)), a.pad, a.radius]) === JSON.stringify([list(val(b.spot, app)), b.pad, b.radius]);
 
 // The box around every element the selectors find on screen, or null.
 function rectOf(selectors) {
@@ -100,10 +103,18 @@ export default function Tour({ steps, app, onClose }) {
   const ready = readyStep === i;
   // Fading out on the way to another step.
   const [leaving, setLeaving] = useState(false);
+  // The next step lights the same part (the card, from answering it to its
+  // result): it stays lit through the change and only the caption fades, or
+  // the card would go dark and light again under the student's eyes.
+  const [keep, setKeep] = useState(false);
+  const keepRef = useRef(false);
+  keepRef.current = keep;
   const [geo, setGeo] = useState(null);
   const [shake, setShake] = useState(0);
   const boxRef = useRef(null);
   const memo = useRef(null);
+  // What the steps keep for the whole of this run of the tour (`run`).
+  const run = useRef({});
   const prevStep = useRef(null);
   const travel = useRef(1);
   const advancing = useRef(null);
@@ -138,6 +149,7 @@ export default function Tour({ steps, app, onClose }) {
     advancing.current = null;
     if (n < 0 || fading.current) return;
     if (n >= steps.length) { close(); return; }
+    setKeep(sameSpot(steps[iRef.current], steps[n], appRef.current));
     setLeaving(true);
     fading.current = setTimeout(() => {
       fading.current = null;
@@ -146,7 +158,7 @@ export default function Tour({ steps, app, onClose }) {
       setReadyStep(-1);
       setI(n);
     }, FADE_OUT);
-  }, [steps.length, close]);
+  }, [steps, close]);
   const next = () => go(i + 1);
   const back = () => (i === 0 ? close() : go(i - 1));
 
@@ -164,10 +176,13 @@ export default function Tour({ steps, app, onClose }) {
     memo.current = step.enter?.(appRef.current) ?? null;
     arrived.current = i;
     settling.current = setTimeout(() => {
-      if (step.skip?.(appRef.current, memo.current)) {
+      if (step.skip?.(appRef.current, memo.current, run.current)) {
         const n = i + travel.current;
         if (n < 0 || n >= steps.length) close();
-        else setI(n);
+        else {
+          if (keepRef.current && !sameSpot(step, steps[n], appRef.current)) setKeep(false);
+          setI(n);
+        }
       } else {
         setReadyStep(i);
       }
@@ -182,7 +197,7 @@ export default function Tour({ steps, app, onClose }) {
   // straight forwards again.
   useEffect(() => {
     if (!ready || leaving || !step.until || advancing.current) return;
-    if (!step.until(app, memo.current)) { armed.current = true; return; }
+    if (!step.until(app, memo.current, run.current)) { armed.current = true; return; }
     if (!armed.current && travel.current < 0) return;
     const at = i;
     advancing.current = setTimeout(() => {
@@ -276,6 +291,9 @@ export default function Tour({ steps, app, onClose }) {
   const shown = ready && geo && geo.step === i;
   // Fully on, rather than fading out or not yet in.
   const on = shown && !leaving;
+  // The hole is lit while the step shows, and through a change to a step
+  // that lights the same part.
+  const holeOn = on || (keep && !!geo?.hole);
   const hole = on && geo.hole;
   // Where the hole is drawn: the last step's place until the new step is
   // lit, filled with the dim meanwhile, so the switch can't be seen.
@@ -294,8 +312,8 @@ export default function Tour({ steps, app, onClose }) {
   // Until the step has set itself up the caption stays empty; it isn't shown
   // before then anyway.
   const live = arrived.current === i;
-  const title = live ? val(step.title, app, memo.current) : "";
-  const body = live ? val(step.body, app, memo.current) : "";
+  const title = live ? val(step.title, app, memo.current, run.current) : "";
+  const body = live ? val(step.body, app, memo.current, run.current) : "";
 
   return createPortal(
     <div data-tour-root data-tour-step={step.id} onMouseDown={swallow} onPointerDown={swallow} onClick={swallow}>
@@ -306,9 +324,9 @@ export default function Tour({ steps, app, onClose }) {
           ...(drawn
             ? { left: drawn.left, top: drawn.top, width: drawn.width, height: drawn.height, borderRadius: step.radius ?? 12 }
             : { ...S.holeShut, left: vw / 2, top: vh / 2 }),
-          background: on ? "transparent" : SCRIM,
-          boxShadow: `0 0 0 2px ${on && drawn ? RING : "rgba(255,255,255,0)"}, 0 0 0 200vmax ${SCRIM}`,
-          transition: fade(on, ["background-color", "box-shadow"]),
+          background: holeOn ? "transparent" : SCRIM,
+          boxShadow: `0 0 0 2px ${holeOn && drawn ? RING : "rgba(255,255,255,0)"}, 0 0 0 200vmax ${SCRIM}`,
+          transition: fade(holeOn, ["background-color", "box-shadow"]),
         }}
       />
       {blocks.map((b, k) => (

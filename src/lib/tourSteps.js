@@ -21,7 +21,8 @@
 //                 nothing has been graded; a card when there is none)
 //   enter, leave  set the page up for the step, and put it back afterwards.
 //                 What enter returns is handed to `until`, `skip`, `title`
-//                 and `body` as their second argument
+//                 and `body` as their second argument. Their third is `run`,
+//                 an object kept for the whole of one run of the tour
 //   title, body   the caption; **word** is bold. Either may be a function of
 //                 the app's state
 //   prefer        sides for the caption, in order of preference
@@ -62,16 +63,28 @@ export function tourSteps(act, lesson) {
       body: "Your course lessons are here. Click **Lessons**." },
 
     { id: "study", spot: `[data-tour-lesson="${id}"]`, pulse: `[data-tour-study="${id}"]`, delay: 250,
+      mark: `[data-lesson-include="${id}"]`,
       prefer: ["bottom", "top", "right", "left"],
       until: (a) => a.mode === "study" && a.lessonFilter === id,
       enter: () => act.goLessons(),
       title: lesson.title,
-      body: `Press **Study** to practise the cards from ${name}.` },
+      body: (a) => (a.tourLessonOn
+        ? `Press **Study** to practise the cards from ${name}. **In my daily cards** is on, so they’re also in your daily set.`
+        : `Press **Study** to practise the cards from ${name}. Switch on **In my daily cards** to add them to your daily set.`) },
 
     { id: "answer", spot: STUDY_VIEW, pulse: (a) => (a.typeMode ? ANSWER_ROW : SHOW_ANSWER), delay: 700, keys: true,
       prefer: ["right", "left", "top", "bottom"],
-      until: (a) => a.graded,
-      skip: (a) => !a.hasCard || a.graded,
+      // Taking the tour again, the lesson can come back on a card typed and
+      // checked before, still waiting for Continue. Continue is pressed for
+      // the student, recording that answer as it stands, so there is a fresh
+      // card to type. Not once they have answered during this run: Back and
+      // Next then pass this step by, to the result.
+      until: (a, was, run) => (a.graded ? (run.answered = true) : false),
+      skip: (a, was, run) => {
+        if (!a.hasCard) return true;
+        if (a.graded && a.typeMode && !run.answered) { act.continueCard(); return false; }
+        return a.graded;
+      },
       enter: () => act.openLesson(id),
       title: "Answer the card",
       body: (a) => a.typeMode

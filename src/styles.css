@@ -205,3 +205,22 @@ textarea:focus-visible {
   color: #9c4234 !important;
   font-weight: 700 !important;
 }
+/* A lesson's "In my daily cards" switch has no padding of its own: the tint
+   reaches past it with a ring of the same colour, so the switch keeps its
+   place. */
+[data-lesson-include][data-tour-mark] {
+  border-radius: 10px;
+  box-shadow: 0 0 0 7px rgba(156, 66, 52, 0.1);
+}
+
+/* Sidebar buttons answer the pointer: a faint shade under it, darker while
+   pressed and at once, so a press always shows, even one with nothing to do
+   (Cards while on Cards). The page you're on keeps its own shade on hover.
+   !important: the buttons' inline background is transparent. */
+.side-btn:not([aria-current]):hover {
+  background: rgba(3, 22, 50, 0.04) !important;
+}
+.side-btn:active {
+  background: rgba(3, 22, 50, 0.09) !important;
+  transition: none !important;
+}
