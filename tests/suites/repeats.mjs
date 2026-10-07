@@ -733,6 +733,11 @@ console.log("\n  a class held over two days is one class, dated its first day (2
 
 console.log("\n  the upload's message says one as one (2026-10-07)");
 {
+  const left = uploadResultText({ cardsInserted: 0, classesUnchanged: 250, classesLeftForLink: 50 });
+  ck("a pasted upload doesn't claim everything is in the deck while the linked notes still have classes to check",
+     !/everything in these notes is already in your deck/.test(left) && /50 classes are also in your linked notes, which will check them/.test(left), left);
+  ck("and says one class in the singular",
+     /1 class is also in your linked notes, which will check it/.test(uploadResultText({ classesLeftForLink: 1 })));
   const one = uploadResultText({ cardsInserted: 0, replaceWaits: 1 });
   ck("one card from another class before the migration", one.includes("and your card from another class stays as it is.") && !/1 card from other classes stay/.test(one), one);
   ck("several", uploadResultText({ replaceWaits: 3 }).includes("and your 3 cards from other classes stay as they are."));

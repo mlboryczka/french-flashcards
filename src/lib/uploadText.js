@@ -45,12 +45,17 @@ export function uploadResultText(r = {}) {
   const failed = Array.isArray(r.failedClasses) ? r.failedClasses : [];
   const lines = [];
   if (r.cardsInserted) lines.push(`${n(r.cardsInserted, "new card", "new cards")} added to your deck.`);
-  else if (!waiting.length && !failed.length && !r.cardsFailed) lines.push("No new cards: everything in these notes is already in your deck.");
+  else if (!waiting.length && !failed.length && !r.cardsFailed && !r.classesLeftForLink) lines.push("No new cards: everything in these notes is already in your deck.");
   else lines.push("No new cards added this time.");
   if (r.classesUnchanged) {
     lines.push(r.classesUnchanged === 1
       ? "1 class was already read and left as it is."
       : `${r.classesUnchanged} classes were already read and left as they are.`);
+  }
+  if (r.classesLeftForLink) {
+    lines.push(r.classesLeftForLink === 1
+      ? "1 class is also in your linked notes, which will check it for lines that haven't become cards yet."
+      : `${r.classesLeftForLink} classes are also in your linked notes, which will check them for lines that haven't become cards yet.`);
   }
   if (r.cardsSeenAgain) lines.push(`${n(r.cardsSeenAgain, "word you already have", "words you already have")} got the new class date.`);
   if (failed.length) {

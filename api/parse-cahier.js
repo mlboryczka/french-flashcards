@@ -364,7 +364,11 @@ export async function handleCommit(req, res, adminClient, user) {
     }
 
     const allDates = [...(legacy ? read : new Set(plan.map((p) => p.date)))].sort();
-    const unchanged = plan ? plan.filter((p) => !p.needsReading).length : 0;
+    const unchanged = plan ? plan.filter((p) => !p.needsReading && !p.unrecorded).length : 0;
+    // Classes this upload can't judge, because its text isn't the linked
+    // doc's own: the next read of the linked notes reads any of their lines
+    // that are on no card (src/lib/notesLines.js, planReading).
+    const leftForLink = plan ? plan.filter((p) => p.unrecorded).length : 0;
     const drills = result.decisions.filter((d) => d.action === "insert" && d.insert.source === "conjugation-drill").length;
     console.log(
       `[parse-cahier] commit (${reading.mode}${legacy ? ", old dialog" : ""}): ${incoming.length} cards from ${read.size} classes read, ` +
@@ -386,6 +390,7 @@ export async function handleCommit(req, res, adminClient, user) {
       cardsWaiting: result.waiting,
       classesRead: [...read].filter((d) => !result.waitingDates.includes(d)).length,
       classesUnchanged: unchanged,
+      classesLeftForLink: leftForLink,
       // Classes read whose cards wait on Claude's question, to be read again
       // next time. Classes Claude couldn't read the dialog knows already.
       waitingClasses: result.waitingDates.filter((d) => !failed.has(d)),

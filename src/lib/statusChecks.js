@@ -165,7 +165,7 @@ function datesMoved(rows) {
   if (unnamed.length) {
     const index = cardIndex(unnamed);
     for (const c of live) {
-      for (const h of [index.sure(c), ...index.near(c)]) {
+      for (const h of [...index.sureAll(c), ...index.near(c)]) {
         if (h && h.dates.some((d) => c.dates.includes(d))) add(c.id, h);
       }
     }
