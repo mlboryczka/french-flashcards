@@ -27,7 +27,7 @@ against the decisions of the app's owner, who runs it and studies with it, and
 its reading of class notes against the owner's corrections to the cards it
 made. Before any change to scheduling, simulated students study for six months
 with the app's own code, including messy ones who reload mid-set or wander off
-into a lesson. And 34 test suites run on GitHub on every push.
+into a lesson. And 35 test suites run on GitHub on every push.
 [Evaluation harness](docs/evaluation-harness.md)
 
 ![The Status window, where the owner sees the nine checks](docs/screenshots/status.png)
@@ -35,10 +35,10 @@ into a lesson. And 34 test suites run on GitHub on every push.
 ### Cards from class notes
 
 A student links the Google Doc their notebook is kept in, and each new class
-becomes cards within a day, without anyone pressing anything. Each class is
-read once. Editing an old class changes nothing, because its cards already
-carry the student's history, and a word taught again keeps its card and gains
-the new date. Only what can be answered by typing becomes a card: a
+becomes cards within a day, without anyone pressing anything. Each line of
+the notes is read once, however they come in, so uploading an updated notebook
+adds only what is new, and a word taught again keeps its card and gains the
+new date. Only what can be answered by typing becomes a card: a
 conjugation table becomes one drill per form, and a grammar rule makes no card
 at all. [How class notes become cards](docs/cards-from-notes.md)
 
@@ -91,7 +91,8 @@ known both ways round.
 - Vercel: 12 server functions, the most its free plan allows, and four
   scheduled runs a day.
 - Claude, called only from the server: Haiku 4.5 reads class notes, Opus 5
-  judges disputed marks, Opus 5.5 reviews feedback, and Sonnet 5 is the tutor.
+  judges disputed marks, Opus 5.5 reviews feedback and settles look-alike
+  cards, and Sonnet 5 is the tutor.
 - ts-fsrs for scheduling, and the FSRS team's optimizer for fitting each
   student's settings.
 - Playwright driving headless Chromium for the browser tests, and GitHub

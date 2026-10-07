@@ -118,7 +118,7 @@ included: the app run with it, and every script in `scripts/`, works on live
 data. If Claude Code refuses to touch production, give the owner the command
 to run in their terminal (not the Supabase SQL editor).
 
-**`npm test` before every push.** It runs the 34 suites in `tests/suites` (16
+**`npm test` before every push.** It runs the 35 suites in `tests/suites` (17
 without a browser, 18 in headless Chromium) in about twenty minutes, so start
 it early. `npm test -- <name>` runs only the suites whose names contain
 `<name>`. Don't edit `src/` while browser suites run: a save reloads the app
@@ -481,28 +481,95 @@ link" (owner, 2026-09-25; `src/CahierUpload.jsx`). Each new class then becomes
 cards on its own. There is no tick box: linking is what keeps the deck up to
 date. Unlinking removes only the link.
 
-**The owner's rules (2026-09-24):**
+**The owner's rules (2026-09-24, and the plan approved on 2026-10-06: "there
+should be NO duplicates from reuploading an updated cahier"):**
 
 - New classes become cards at once, with no review step.
-- A class is parsed once. Editing or deleting lines in an old class changes
-  nothing, because those cards carry the student's history.
-- A word taught again keeps its card and gains only the class date. The sync
-  never rewrites a front or back (an upload does).
+- A line of the notes is read once. A line added to an old class, or a
+  corrected one, is read once on its own (since 2026-10-06; before, the whole
+  class was left alone). Deleting a line changes nothing.
+- A word taught again keeps its card and gains only the class date. Neither
+  the sync nor an upload rewrites a card's French, English, category,
+  schedule, answers or place in or out of study (the upload did until
+  2026-10-06).
 - Nothing is ever deleted.
 - The deploy owner pays for the parsing (the server's `ANTHROPIC_API_KEY`),
   not the student.
 
-**Which classes are parsed.** A class is known by its date, and
-`cahier_links.classes` (migration_011) lists those already read. Linking marks
-every date already on the student's cards as read. A class Claude fails on is
-retried on the next run.
+**What has been read** (since 2026-10-06). One record per student,
+`notes_read` (migration_016), keeps a short fingerprint of every line already
+read, grouped by class date (`src/lib/notesLines.js`). The upload (paste or
+file, add or Replace), the linked doc, the daily check, Check now, relinking
+and a copy of the doc all share it, and Unlink doesn't touch it. A run reads
+only classes with a line not read before, sends the whole class so Claude has
+the context, and tells Claude to make cards from the new lines only
+(`NEW_LINES_NOTE`, `api/parse-cahier.js`). So an unchanged re-upload asks
+Claude nothing and adds nothing. A line is compared with spacing, quotes,
+dashes, capitals, a list bullet and a final full stop set aside. A file that
+breaks the notes into lines differently (a .pdf can) has those lines read
+again, and the matching rule below keeps their cards to one each; this is
+reasoned from the code, not tested on a real file. A class whose date line was
+retyped is known by
+its lines (most of them recorded under a date no longer in the notes) and
+makes no card. Where the record has no lines for a class, it counts as read if
+its date is on any card, archived ones too, or the link read it; that is how
+the record fills itself the first time, without reading anything. A line
+added to such a class before its first run can't be told apart. Before
+migration_016 a class is known by its date only, in `cahier_links.classes`
+(migration_011), as before. A class Claude fails on is retried on the next
+run.
 
-**A word written another way** ("gratuit (adj)" for "gratuit", "un cas" for
-"le cas") gets the date on the card the deck has. `src/lib/sameCard.js` is
-narrow on purpose, because a wrong match loses a real card: "la poste" and "le
-poste", "planter" and "planter (fam)", "fin" and "fin (adj)" stay separate. An
-archived card counts only if its front is identical; it then gets the date and
-stays archived.
+**One run at a time per student.** A run takes the student's turn
+(`claim_notes_reading`) and gives it back when it saves. Another run meanwhile
+says "your notes are being read already" and reads nothing; an upload is told
+to try again in a few minutes, and linking says the new classes come on the
+next check. A turn not given back runs out (six minutes for the sync, twenty
+for an upload, which spans several requests). An upload renews only its own
+turn: if it ran out and another reading took it, even one that has finished
+since, the upload saves nothing and says to upload again, because the record
+may have changed under it.
+
+**Saving is one step** (`save_notes_reading`, migration_016): the new cards,
+the dates added to cards the student has, Replace's changes, Claude's
+verdicts and the record of lines read are saved together or not at all. They
+used to be separate writes, and a failure between them left cards saved and
+the class unread, so the next run added Claude's new spellings beside them. A
+card the database refuses (a French side too long for its index) is left out
+inside that same step and named in the reply, and the rest is saved; its line
+counts as read, so the message says to change the line.
+
+**A word written another way** gets the date on the card the student has,
+by one rule shared by every path that writes a card from notes
+(`src/lib/sameCard.js`, `src/lib/cardMatch.js`):
+
+1. The sure rule: the same French apart from capitals, spacing, a final full
+   stop, "?" or "…", hyphens, an article of the same gender, (e)/(s)
+   markers, the labels (adj), (adv), (subj), (imparfait), (m), (f), (pl),
+   braces like {fiss}, œ for oe, "..." for "…", a bracket repeating the
+   card's own English, and in drills "il" for "il/elle" and "que je" for
+   "je"; and English that shares a word of substance or is word for word the
+   same ("so", "to go"). A final "!" counts only when the English has the
+   same words: "Je pense !" (I think so!) is not "je pense" (I think).
+2. Near look-alikes (accents, "ne", articles or brackets set aside; half of a
+   list card; one word more or fewer; a number in digits; a typo of one or two
+   letters) are put to Claude as one question per run, "the same card to
+   learn, or different" (`api/_lib/sameCardQuestion.js`, `claude-opus-5-5`,
+   versioned like the answer checks). It is told what stays apart: ou/où, la
+   poste/le poste, fin/fin (adj), un état/l'État, a (fam) meaning, masculine
+   and feminine on their own, singular and plural. The pairs go 50 to a
+   call, four calls at a time, and no call runs past a time limit (three
+   minutes into an upload's save, four into a sync), so the run can still
+   save within the function's five minutes: a first upload of the owner's
+   whole notebook would ask about 890 pairs. If the question fails or runs
+   out of time, those cards wait and their classes stay unread; nothing is
+   added on a guess. A card gets a label in brackets only when Claude says it differs
+   from one with the same French ("voler (to fly)").
+
+A new card is compared with every card the student has: in study, archived,
+removed and lesson cards. A match only adds the class date, and never brings
+an archived or removed card back. Inside one reading the same rule merges a
+word taught in two classes. On the owner's 63 groups of repeated cards the two
+steps reached all 63, and the sure rule joined no pair outside them.
 
 **When it runs:** on opening the app (at most hourly per browser,
 `src/useCahierSync.js`), on linking, on Check now, and daily at 13:00 UTC by a
@@ -510,8 +577,12 @@ Vercel cron (`api/cahier-daily.js`: up to 40 docs, least recently checked
 first; it refuses to run without `CRON_SECRET`). Reading a doc is free;
 parsing a class costs. A run parses at most 12 classes, and the app repeats it
 until none are left. The check on opening is skipped if the doc was checked in
-the last 30 seconds. That does not stop two overlapping runs from both paying
-for the same class.
+the last 30 seconds. Since migration_016 two overlapping runs can't both read
+a class: the second is told the notes are being read. A daily check that finds
+every class in the record doesn't read the deck at all. The daily job starts
+no student's sync after 200 seconds and stops their questions at 265, so it
+ends within its five minutes; students it didn't reach come first the next
+day.
 
 **What the student sees:** a notice under the top bar (`data-cahier-notice`)
 when a check the app made added cards; cards the daily job adds show only in
@@ -541,8 +612,9 @@ path: a `G` card that isn't a drill is dropped if it reads as a rule, a sound
 drill counts only if `parseDrill` (`src/lib/cardInstruction.js`) recognises
 it; one it can't read is dropped.
 
-No two cards may leave `dedupeWithPolysemy` with the same front: the deck
-holds one card per front, and a save holding two is refused whole.
+No two new cards may have the same front: the deck holds one card per front,
+and a save holding two is refused whole. The matcher gives a card whose French
+is taken by a different card a label from its English.
 
 ---
 
@@ -647,14 +719,14 @@ one. `api/_lib/` is shared code, not a route.
 
 | File | What it does |
 |---|---|
-| `parse-cahier.js` | Upload: splits a notebook into dated classes, then saves the cards |
-| `cahier-parse.js` | Upload: turns the classes into cards |
+| `parse-cahier.js` | Upload: splits a notebook into dated classes (`slice`), says which lines are new and takes the student's turn (`plan`), then compares the new cards with the deck and saves them with the lines read (`commit`). The dialog's steps are `src/lib/uploadRun.js` |
+| `cahier-parse.js` | Upload: reads the classes with new lines, exactly as the sync does (`extractCardsFromBlock`) |
 | `cahier-sync.js` | Linked cahier: turns the doc's unread classes into cards. A body with `notesChecks` is instead the owner's test of how Claude reads a class (`api/_lib/notesChecks.js`) |
 | `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs. A second schedule, 14:00 UTC, runs the status check on every student instead (`api/_lib/statusDaily.js`); 15:00 and 16:00 UTC run the tests of Claude's marking and of its reading of class notes, each only when due (`api/_lib/evalRuns.js`). Vercel's `x-vercel-cron-schedule` header says which |
 | `chat.js` | The tutor. Gives hints, not the answer, until the card's answer is shown. Never writes cards |
 | `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude. A body with `feedback` is instead Claude's review of a piece of feedback and the owner's Apply and Dismiss (`api/_lib/feedbackReview.js`), here because of the 12-route limit. Every verdict is saved to `answer_reviews` (migration_015); a body with `answerChecks` is the owner's list of them and the test made from them (`api/_lib/answerChecks.js`) |
 | `fsrs-fit.js` | Once a day per student: fits their own FSRS settings when due, and recomputes memory estimates when the settings change |
-| `admin-update-card.js` | Saves a card edit, for any student's own cards despite the name. Uses the service role: edits from the browser under RLS silently did nothing |
+| `admin-update-card.js` | Saves a card edit, for any student's own cards despite the name. Uses the service role: edits from the browser under RLS silently did nothing. A body with `action: "remove"` is a student removing a card: archived with the reason "removed", answers kept (`api/_lib/removeCard.js`) |
 | `admin-users.js` | Admin only: every account and its activity. `?view=status` is the latest status check on every student; with `&run=1` they are all checked now |
 | `parse-corrections.js` | Admin only: logs corrections that `cahier-parse` learns from |
 | `split-senses.js`, `apply-splits.js` | Propose, then write, splits of cards that teach two words. Nothing in the app calls them now |
@@ -665,9 +737,11 @@ one. `api/_lib/` is shared code, not a route.
 - What counts as a card, and the code that enforces it, live in
   `parse-cahier.js`. `cahier-parse.js` and `cahier-sync.js` import them rather
   than copy them.
-- "Replace my existing deck" deletes only the never-answered cards the upload
-  doesn't have. It archives answered ones and leaves lesson cards alone
-  (`src/lib/replaceDeck.js`).
+- "Replace my existing deck" works by class and deletes nothing
+  (`src/lib/replaceDeck.js`, since 2026-10-06): a card with none of its
+  classes in the upload leaves study, marked "replaced", answers kept; a later
+  Replace with its class brings it back; lesson and tutor cards are left
+  alone; a card the database refuses no longer turns it into an add.
 
 ### Which model each route runs
 
@@ -677,6 +751,7 @@ one. `api/_lib/` is shared code, not a route.
 | `review-answer.js`, `split-senses.js` | `claude-opus-5` |
 | `review-answer.js`, reviewing feedback | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
 | `parse-cahier.js`, `cahier-parse.js`, `cahier-sync.js`, `cahier-daily.js` | `claude-haiku-4-5` |
+| `parse-cahier.js` (commit), `cahier-sync.js`: same card or different | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
 
 No other route calls a model. The tutor's effort is set explicitly: left
 unset, the model thought at high effort and the tutor was slow.
@@ -750,9 +825,9 @@ the simulations*). Run `simulate` before changing scheduling.
 ## Migrations
 
 - The owner runs them in the Supabase SQL editor, in number order, after
-  `supabase/schema.sql` on a new project. The live database has all of them:
-  012 was run on 2026-09-27, 013 on 2026-09-28, 014 on 2026-10-04 and 015 on
-  2026-10-06.
+  `supabase/schema.sql` on a new project. The live database has all of them
+  up to 015: 012 was run on 2026-09-27, 013 on 2026-09-28, 014 on 2026-10-04
+  and 015 on 2026-10-06. 016 waits for the owner.
 - `schema.sql`, 002, 003 and 009 write the admin's email into policies.
   Change it for another project.
 - Any of them can be run again except 004, which would blank `card_id` on
@@ -791,6 +866,15 @@ The files:
   accepted answers kept before then copied in as `kept`); `eval_runs`, each
   run of a test of Claude's work; and `status_reports`, the morning status
   check, one row a student.
+- `016_notes_read_once`: `notes_read`, each student's record of the lines of
+  their notes already read and whose turn it is to read them;
+  `claim_notes_reading` and `save_notes_reading`, which only the server may
+  call; on `user_cards`, `archived_reason` ('removed', 'replaced',
+  'duplicate'), `archived_at` and `merged_into`, the first two cleared by a
+  trigger when a card comes back into study; `card_pairs`, every
+  same-or-different verdict of Claude's on two look-alike cards, with the
+  question's version; and `eval_runs.kind` may be 'repeats'. Additive and
+  re-runnable; the app works before it, knowing classes by date only.
 
 ---
 
@@ -1164,7 +1248,7 @@ protocol*.
 
 ### The suites
 
-Sixteen need no browser:
+Seventeen need no browser:
 
 - `logic`: the pure rules, from card types and prompt cleaning to
   `reconcileLessons` and the released-lesson-cards list.
@@ -1196,6 +1280,18 @@ Sixteen need no browser:
   when the test is due; and when the red dot lights.
 - `notes-checks`: Claude's reading of class notes, tested against the owner's
   corrections, with a stand-in store, notebook and reading.
+- `repeats`: no card made twice from the same notes, with the stand-in
+  database `tests/fake-supabase.mjs` (it runs migration_016's two functions
+  and refuses what Postgres refuses) and a stand-in Claude. A used deck gets
+  an updated notebook by upload, Replace, the sync, upload then link, unlink
+  and relink, a copy of the doc, two runs at once, an upload that loses its
+  turn to the daily check, a failed or lost save, a refused card and a failed
+  question; every time exactly the new words arrive, no unchanged class is
+  read, every old card keeps its id, text, schedule and answers and gains its
+  dates, and the same notes again ask Claude nothing. Also the keep-apart
+  pairs, Replace by class, the first run after the fix, the question's calls
+  side by side and its time limit, the lesson sync leaving removed cards out,
+  View feedback's Remove card, and before migration_016.
 
 Eighteen drive the app in a browser. `openApp` opens every one as a student
 who has seen the first-visit tour, unless it passes `tour: true`; `ready`
@@ -1211,7 +1307,9 @@ says what to wait for when a page has no "Previous card".
 - `reflow`: nothing jumps while a panel opens or closes, sampled every frame.
   Start here when a panel looks wrong.
 - `lesson-sync`: new and existing decks get every lesson and keep their own
-  cards, against a working in-memory `user_cards`.
+  cards, against a working in-memory `user_cards`; a lesson card the student
+  removed stays out while one a lesson dropped comes back; and before
+  migration_016, whose column the deck load asks for, the deck still loads.
 - `lessons`: L'impératif's notes panel, its set starting at card 1, and the
   top-bar figure.
 - `regressions`: bugs found by driving the app, each with the check that would
@@ -1312,8 +1410,16 @@ Lesson 1 · Être (57), Lesson 2 · Aller (63), Lesson 3 · Avoir (62), Lesson 4
   answers, and comes back with its history if the lesson brings it back with
   the same front (owner, 2026-09-25). A card that Reset all progress put back
   to new counts as never answered; see *Open items*.
-- A lesson card whose front the student already has as their own card is not
-  added (`taken`). The upsert on `(user_id, front)` would overwrite theirs.
+- A lesson card the student already has as their own card is not added
+  (`taken`). The upsert on `(user_id, front)` would overwrite theirs. Since
+  2026-10-06 "already has" is the matching rule (`src/lib/sameCard.js`), not
+  only the exact front, and counts a card of their own they removed.
+- A lesson card the student removed, or one put away as a repeat, is not put
+  back (`away`, 2026-10-06). Removing archives the row, and the lesson's
+  upsert would land on it and bring it back. Which rows those are comes from
+  `archived_reason` (migration_016), which the deck load asks for while the
+  database has it; before the migration no row says, and a removed lesson
+  card comes back, as a deleted one always did.
 - A changed answer alone is not written to existing rows, but marking also
   accepts the lesson's current answer (`lessonBackFor`).
 - `tests/released-lesson-cards.json` lists every card ever released. The
@@ -1707,11 +1813,22 @@ Known about the question Claude is asked, and left as it is so the first
 test measures it unchanged: for an English-side card it says "The card showed
 the English side" followed by the French text.
 
-Found while building the notes test, 2026-10-06, and not changed: the full
-notebook upload of 2026-09-04 made again some cards the owner had deleted or
-corrected in April and May. Three are in the deck now ("Naza", "les registres
-de langues : familier, courant, …", "Je parle jamais de Pierre." with its
-full stop); five more came back and were archived since.
+Found while building the notes test, 2026-10-06: the full notebook upload of
+2026-09-04 made again some cards the owner had deleted or corrected in April
+and May ("Naza", "les registres de langues : familier, courant, …", "Je parle
+jamais de Pierre." with its full stop). The clean-up that evening put them and
+85 repeated cards in three decks away, and the code fix of the same day
+(*The linked cahier*: what has been read, and a word written another way)
+stops an upload or the sync making them again.
+
+**What migration_016 keeps for the checks of repeated cards** (to be built
+on it): `card_pairs`, every same-or-different verdict of Claude's with both
+cards' text and ids and the question's version (`SAME_CARD_VERSION`,
+`api/_lib/sameCardQuestion.js`); on `user_cards`, `archived_reason` and
+`merged_into`, so a card put away as a repeat names the card it repeats; and
+`eval_runs.kind` 'repeats'. The rule and the near search are pure
+(`src/lib/sameCard.js`, `src/lib/cardMatch.js`), so a check can run the very
+code the card-writers run.
 
 ### The simulations (`tests/simulate/`)
 
@@ -2145,6 +2262,37 @@ called the notes handwritten, was corrected at the same time. The page on Claude
 `docs/claude.md`: on the Mac's case-insensitive disk, Claude Code reads a file
 of that name as a `CLAUDE.md` of instructions.
 
+### 2026-10-06 — No card made twice from the same notes
+
+The owner: "there should be NO duplicates from reuploading an updated cahier"
+and "Yes, build it", on a plan that found three causes: every upload read
+every class again, and Claude writes a line a little differently each time;
+the upload knew a card only by its exact French, and wrote over the English,
+category, dates and source of any card it matched; and nothing remembered a
+card the student had deleted. The fix, Part 1 of that plan: a per-student
+record of the lines read (`notes_read`), shared by the upload and the sync and
+kept by Unlink; one matching rule for every card-writer, with near look-alikes
+put to Claude; saving the cards and the lines read in one step, one run at a
+time; Delete became Remove, which archives with the reason; Replace works by
+class and never deletes; the upload reads with the sync's instructions; and
+the lesson sync's "already has this card" uses the rule, and it leaves a
+lesson card the student removed out of study. Needs migration_016; the app
+works without it, by class date as before. The `repeats` suite runs the plan's
+headline test in every way the notes come in. Two existing checks changed with
+it: `cahier-sync`'s "a card taken out of study is not what a new one joins"
+now expects the archived card to gain the date and no new card beside it, and
+`logic`'s Replace and one-card-per-front checks follow the new rules.
+
+Finishing it (the first builder was paused partway): a card the database
+refuses is now left out inside the one save step rather than in a separate
+write; an upload renews only its own turn; the question to Claude goes in
+parallel calls with a time limit, after a copy of the owner's notes read from
+nothing raised 890 pairs, too many to ask one call at a time within five
+minutes; the daily job stops starting syncs in time to finish; Remove card in
+View feedback records the reason too; linking while the notes are being read
+says so; and `lesson-sync` checks, in the browser, that a removed lesson card
+stays out and that the deck loads before migration_016.
+
 ---
 
 ## Open items
@@ -2154,6 +2302,11 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 
 ### The owner's to-dos
 
+- **Run `migrations/migration_016_notes_read_once.sql`** in the Supabase SQL
+  editor. Until then uploads and the sync know classes by date only: an
+  unchanged re-upload still reads nothing new, but a line added to an old
+  class waits for it, two runs at once aren't stopped, a removed card keeps
+  no reason, and a removed lesson card comes back with its lesson.
 - **Check that `CRON_SECRET` is set in Vercel.** Without it the daily cahier
   check (`api/cahier-daily.js`) refuses to run. Linked docs are still read
   when a student opens the app, so the only sign is classes arriving late.
@@ -2169,26 +2322,21 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 
 ### Bugs and loose ends
 
-- **The upload's prompt is behind the sync's.** `api/cahier-parse.js` lacks the
-  sync prompt's rules 8b, 8c and 10b–10e (among them: no card teaching two
-  words), so an upload can still make cards the sync wouldn't. Moving those
-  rules into the shared `WHAT_BECOMES_A_CARD` block would fix both.
-- **Deleting a card deletes its answers.** `card_reviews.card_id` cascades, so
-  "Delete card" in the edit modal takes the card's history with it. An
-  "Archive" button beside it would be safer; today a card is archived only by
-  a script or in the SQL editor (`source` set to `archived:<source>`).
+- **Cards archived before migration_016 say no reason.** `archived_reason` is
+  empty on them, so the clean-up of 2026-10-06 left its 85 repeats without
+  "duplicate" or `merged_into` (its backup in `backups/` says which card each
+  repeats). Only cards with the reason "replaced" ever come back through an
+  upload, so none of these does.
 - **The lesson sync can delete answered cards.** When a lesson drops a card
   that Reset all progress put back to new, the sync deletes it, and its
   answers from before the reset with it. `reconcileLessons`
   (`src/lib/lessonSync.js`) looks only at `fsrs_state`; it should check
   `card_reviews` first, as the upload's replace does.
-- **An upload without "Replace" overwrites answers and class dates.** It
-  upserts on the card's front, so a hand-edited answer is lost on re-upload.
-  Schedules are untouched, and the linked cahier only adds class dates.
-- **Other decks still have near-duplicate cards.** Only the owner's deck was
-  merged (2026-09-25/26); `scripts/merge-duplicates.mjs` applies a list judged
-  card by card. The linked cahier no longer adds copies; an upload still can,
-  because it matches only the exact front.
+- **Repeats made inside one reading are still in some decks.** The clean-up of
+  2026-10-06 put away only repeats from reading notes again. A few made
+  inside one reading remain in five decks (the plan lists them), and the
+  owner's deck has drill-and-word pairs and partial list overlaps left for
+  them to decide.
 - **A few rules in the owner's deck are filed as words or phrases**, such as
   "voie passive" and "double pronoms (COD + COI)", so they are asked both ways.
   The grammar sort only read cards filed `G` or `P`. These few need re-filing
@@ -2223,6 +2371,19 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 ### Not yet checked on the live app
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
+
+- **No card made twice** (2026-10-06). After migration_016, upload the same
+  notes twice: the second should say no new cards and every class already
+  read. Claude's same-or-different question has only met a stand-in; the
+  plan's third test (the owner's real doc against a private copy of the deck,
+  and the 63 groups and 30 "different" pairs through the real question, a few
+  cents) was offered, not run. `migration_016` was run on a local Postgres 16
+  built from `supabase/schema.sql` and every migration, twice, with its two
+  functions exercised (a refused card, two cards with one French, a turn
+  renewed and a turn lost); not yet on Supabase. Before it is run, the deck
+  load asks for `archived_reason`, is refused and asks again without it: one
+  extra request per page load, checked against a stand-in, not the live
+  PostgREST.
 
 - **The first-visit tour** (2026-10-06). Sign up with a new address and the
   tour should come up once the app opens; sign out and in again, or open it on
