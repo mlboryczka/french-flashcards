@@ -11,7 +11,7 @@
 //
 // Three more schedules in vercel.json do other daily work instead. Vercel says
 // which schedule called in the x-vercel-cron-schedule header. They live here
-// because the Hobby plan deploys at most 12 routes and there are 12.
+// because the Hobby plan deploys at most 12 routes.
 //
 //   STATUS_SCHEDULE   the status check on every student, kept for the Status
 //                     window (api/_lib/statusDaily.js)

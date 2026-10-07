@@ -5,8 +5,8 @@
 //   node scripts/fix-multi-sense.mjs --apply    # and perform the writes
 //
 // The machinery for this has existed for a while — the scanner in
-// src/lib/multiSense.js, the audit in api/split-senses.js, the writer in
-// api/apply-splits.js — but nothing ever invoked it. The UI that drove it was
+// src/lib/multiSense.js, the audit in api/_lib/splitSenses.js, the writer in
+// api/_lib/applySplits.js — but nothing ever invoked it. The UI that drove it was
 // removed on the grounds that deck maintenance is not a task to hand a
 // student, which left it with no caller at all. This is the caller.
 //
@@ -23,7 +23,7 @@
 // sense and keeps its history — it is still the card you have been studying,
 // with the other headword's glosses removed. The remaining senses are new rows
 // starting from New, which is honest: you have never been tested on them
-// alone. They take the original's class dates, as api/apply-splits.js does.
+// alone. They take the original's class dates, as api/_lib/applySplits.js does.
 //
 // What it never does (fixed 2026-09-29; before, --apply could have):
 //   • overwrite a card. A new sense whose front the deck already has is not
@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import { findMultiSenseCards } from "../src/lib/multiSense.js";
 import { ARCHIVE_PREFIX } from "../src/lib/archive.js";
-import { SYSTEM_PROMPT, REPORT_TOOL, MODEL, MAX_CARDS } from "../api/split-senses.js";
+import { SYSTEM_PROMPT, REPORT_TOOL, MODEL, MAX_CARDS } from "../api/_lib/splitSenses.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPLY = process.argv.includes("--apply");

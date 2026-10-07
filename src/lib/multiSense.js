@@ -10,7 +10,7 @@
 // shortlists the cards worth sending to Claude, so a 9,000-card deck costs one
 // scan rather than 9,000 API calls. It deliberately over-selects — deciding
 // whether two glosses are really two headwords needs judgement, and that
-// happens server-side in /api/split-senses.
+// happens in api/_lib/splitSenses.js.
 
 const STOP_WORDS = new Set([
   "a", "an", "the", "to", "of", "in", "on", "at", "for", "with", "by",
@@ -78,7 +78,7 @@ function posHint(gloss) {
 }
 
 // True when the back holds glosses that look like different headwords rather
-// than synonyms of one. This only shortlists — /api/split-senses decides.
+// than synonyms of one. This only shortlists — api/_lib/splitSenses.js decides.
 //
 // The two separators mean different things in this deck. A semicolon is used
 // where senses were run together, so divergent parts are enough to flag it. A

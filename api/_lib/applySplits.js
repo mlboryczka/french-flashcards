@@ -1,4 +1,7 @@
-// Vercel serverless function: POST /api/apply-splits
+// Shared code, not a route. This was POST /api/apply-splits; nothing in the
+// app called it any more, so it moved here (2026-10-06) to stop counting
+// toward the Hobby plan's 12 routes. scripts/fix-multi-sense.mjs does its own
+// writes; tests/suites/apply-splits.mjs still checks this one.
 //
 // Applies the splits the user approved in the multi-sense cleanup.
 //

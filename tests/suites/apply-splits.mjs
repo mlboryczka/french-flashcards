@@ -1,4 +1,4 @@
-// Exercise api/apply-splits against a fake Supabase, checking the parts that
+// Exercise api/_lib/applySplits.js against a fake Supabase, checking the parts that
 // would quietly corrupt a deck: ownership, malformed splits, and which row
 // keeps its scheduling history.
 import { readFileSync } from 'node:fs';
@@ -38,7 +38,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY='k';
 
 // Load the real handler with createClient swapped for the fake above, so the
 // endpoint's own logic is what's under test.
-const handlerSrc = readFileSync(new URL('../../api/apply-splits.js', import.meta.url), 'utf8')
+const handlerSrc = readFileSync(new URL('../../api/_lib/applySplits.js', import.meta.url), 'utf8')
   .replace('import { createClient } from "@supabase/supabase-js";',
            'const createClient = () => globalThis.__fakeAdmin;');
 const mod = await import('data:text/javascript;base64,' + Buffer.from(handlerSrc).toString('base64'));

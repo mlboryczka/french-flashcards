@@ -624,15 +624,17 @@ no screen for it.
 2. **Check:** Claude decides split or keep and writes each sense's front: a
    noun keeps its article (`les frais`), an adjective is tagged (`frais
    (adj)`), a verb is the infinitive. It keeps when unsure. The prompt, tool
-   and model are imported from `api/split-senses.js`.
+   and model are imported from `api/_lib/splitSenses.js`.
 3. **Apply:** the original row becomes the first sense and keeps its history;
    the other senses are new cards. Malformed splits are refused.
 
-The script does its own writes, not through `api/apply-splits.js`. It skips
-archived and lesson cards, never overwrites a card (a sense whose front the
-deck already has isn't added, and new senses are plain inserts), gives new
-senses the original's class dates, and backs up the rows it rewrites. Nothing
-in the app calls `api/split-senses.js` or `api/apply-splits.js` any more.
+The script does its own writes, not through `api/_lib/applySplits.js`. It
+skips archived and lesson cards, never overwrites a card (a sense whose front
+the deck already has isn't added, and new senses are plain inserts), gives new
+senses the original's class dates, and backs up the rows it rewrites. Both
+files were routes (`/api/split-senses`, `/api/apply-splits`) until nothing in
+the app called them; they moved to `api/_lib/` on 2026-10-06 to free two of
+the twelve route slots.
 
 The sync's prompt (rule 8c in `parse-cahier.js`) and the tutor's forbid such
 cards; the upload dialog's (`cahier-parse.js`) does not.
@@ -641,9 +643,9 @@ cards; the upload dialog's (`cahier-parse.js`) does not.
 
 ## Serverless functions (`api/`)
 
-There are twelve routes, one per file: the most Vercel's Hobby plan deploys.
-A 13th fails the whole deployment, so a new route means retiring or merging
-one. `api/_lib/` is shared code, not a route.
+There are ten routes, one per file. Vercel's Hobby plan deploys at most
+twelve, and a 13th fails the whole deployment, so two more fit before a new
+route means retiring or merging one. `api/_lib/` is shared code, not a route.
 
 | File | What it does |
 |---|---|
@@ -657,7 +659,6 @@ one. `api/_lib/` is shared code, not a route.
 | `admin-update-card.js` | Saves a card edit, for any student's own cards despite the name. Uses the service role: edits from the browser under RLS silently did nothing |
 | `admin-users.js` | Admin only: every account and its activity. `?view=status` is the latest status check on every student; with `&run=1` they are all checked now |
 | `parse-corrections.js` | Admin only: logs corrections that `cahier-parse` learns from |
-| `split-senses.js`, `apply-splits.js` | Propose, then write, splits of cards that teach two words. Nothing in the app calls them now |
 
 - Every route checks the caller's Supabase session, except `cahier-daily`,
   which checks `CRON_SECRET`. The service role key bypasses RLS, so a route
@@ -674,7 +675,7 @@ one. `api/_lib/` is shared code, not a route.
 | File | Model |
 |---|---|
 | `chat.js` | `claude-sonnet-5`, effort `low` |
-| `review-answer.js`, `split-senses.js` | `claude-opus-5` |
+| `review-answer.js`, `_lib/splitSenses.js` (the multi-sense script) | `claude-opus-5` |
 | `review-answer.js`, reviewing feedback | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
 | `parse-cahier.js`, `cahier-parse.js`, `cahier-sync.js`, `cahier-daily.js` | `claude-haiku-4-5` |
 
@@ -1168,7 +1169,7 @@ Sixteen need no browser:
 
 - `logic`: the pure rules, from card types and prompt cleaning to
   `reconcileLessons` and the released-lesson-cards list.
-- `apply-splits`: `api/apply-splits.js`: ownership, and which row keeps its
+- `apply-splits`: `api/_lib/applySplits.js`: ownership, and which row keeps its
   schedule; and the corrections log saving a correction.
 - `auth`: no endpoint that spends money reaches Anthropic without a verified
   session.
@@ -2325,11 +2326,7 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   not built. Leçons 2 to 5 were built from her sheets by hand (2026-10-04);
   her template is the same in all four (dialogue, grammar, numbers, then
   exercises with an answer key), so they are the examples to design from.
-- **Two routes nothing calls.** `api/split-senses.js` and `api/apply-splits.js`
-  have no caller in the app but count toward Vercel's 12-route limit. Retiring
-  them frees two slots; the multi-sense script imports its prompt from
-  `split-senses.js`, so that would move into the script. (`split-senses.js`
-  also still runs Opus 5 where Sonnet would do.)
+- **`splitSenses.js` still runs Opus 5** where Sonnet would do.
 - **Stale comments.** Two comments still say adding a lesson copies its cards,
   though there is no add step: the one above the Lessons page in
   `src/FlashcardApp.jsx` and the header of `src/data/lessons/index.js`. Several

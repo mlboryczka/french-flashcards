@@ -1,4 +1,7 @@
-// Vercel serverless function: POST /api/split-senses
+// Shared code, not a route. This was POST /api/split-senses; nothing in the
+// app called it any more, so it moved here (2026-10-06) to stop counting
+// toward the Hobby plan's 12 routes. scripts/fix-multi-sense.mjs imports the
+// prompt, tool and model from it. The handler below is kept as it was.
 //
 // Decides which cards are secretly two cards.
 //
@@ -14,7 +17,7 @@
 // frais"), the adjective doesn't ("frais"), a verb goes to the infinitive.
 //
 // Nothing is written here. Proposals go back to the client, the user approves
-// them, and /api/apply-splits performs the writes.
+// them, and applySplits.js performs the writes.
 //
 // Request body (JSON):
 //   { cards: [{ row_id, front, back, category }, ...] }   // max 25
@@ -22,8 +25,8 @@
 //   { results: [{ row_id, action: "split" | "keep", reason, cards: [...] }] }
 
 import Anthropic from "@anthropic-ai/sdk";
-import { requireUser } from "./_lib/auth.js";
-import { requireAnthropicKey } from "./_lib/anthropicKey.js";
+import { requireUser } from "./auth.js";
+import { requireAnthropicKey } from "./anthropicKey.js";
 
 export const MODEL = "claude-opus-5";
 export const MAX_CARDS = 25;
