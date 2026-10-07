@@ -68,7 +68,10 @@ ended up with 73 cards that repeated another one. The owner's rule since then:
   Claude is told what stays apart: "ou" and "où", "la poste" (the post office)
   and "le poste" (the job), "fin" (the end) and "fin (adj)" (thin), a "(fam)"
   meaning beside the ordinary one. If the question can't be answered, those
-  cards wait for the next reading rather than going in twice.
+  cards wait for the next reading rather than going in twice. The morning
+  status check uses the same rule and question on the deck itself, and fails
+  if a card is in it twice or a card the student removed is back
+  ([Evaluation harness](evaluation-harness.md)).
 - **A match only adds the date.** The card keeps its French, English,
   category, schedule and answers, and stays in or out of study as it was.
 

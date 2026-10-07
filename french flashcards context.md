@@ -118,7 +118,7 @@ included: the app run with it, and every script in `scripts/`, works on live
 data. If Claude Code refuses to touch production, give the owner the command
 to run in their terminal (not the Supabase SQL editor).
 
-**`npm test` before every push.** It runs the 35 suites in `tests/suites` (17
+**`npm test` before every push.** It runs the 36 suites in `tests/suites` (18
 without a browser, 18 in headless Chromium) in about twenty minutes, so start
 it early. `npm test -- <name>` runs only the suites whose names contain
 `<name>`. Don't edit `src/` while browser suites run: a save reloads the app
@@ -565,6 +565,9 @@ by one rule shared by every path that writes a card from notes
    added on a guess. A card gets a label in brackets only when Claude says it differs
    from one with the same French ("voler (to fly)").
 
+The same rule and question judge the deck itself every morning: "No card is
+in your deck twice" (see *The status check and the simulations*).
+
 A new card is compared with every card the student has: in study, archived,
 removed and lesson cards. A match only adds the class date, and never brings
 an archived or removed card back. Inside one reading the same rule merges a
@@ -722,7 +725,7 @@ one. `api/_lib/` is shared code, not a route.
 | `parse-cahier.js` | Upload: splits a notebook into dated classes (`slice`), says which lines are new and takes the student's turn (`plan`), then compares the new cards with the deck and saves them with the lines read (`commit`). The dialog's steps are `src/lib/uploadRun.js` |
 | `cahier-parse.js` | Upload: reads the classes with new lines, exactly as the sync does (`extractCardsFromBlock`) |
 | `cahier-sync.js` | Linked cahier: turns the doc's unread classes into cards. A body with `notesChecks` is instead the owner's test of how Claude reads a class (`api/_lib/notesChecks.js`) |
-| `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs. A second schedule, 14:00 UTC, runs the status check on every student instead (`api/_lib/statusDaily.js`); 15:00 and 16:00 UTC run the tests of Claude's marking and of its reading of class notes, each only when due (`api/_lib/evalRuns.js`). Vercel's `x-vercel-cron-schedule` header says which |
+| `cahier-daily.js` | Daily cron at 13:00 UTC: syncs up to 40 linked docs. A second schedule, 14:00 UTC, runs the status check on every student instead (`api/_lib/statusDaily.js`), first asking Claude about look-alike cards in study it hasn't judged, up to 200 a student a day; 15:00 and 16:00 UTC run the tests of Claude's marking and of its reading of class notes, each only when due (`api/_lib/evalRuns.js`), and either one, when its own isn't due, the test of Claude's same-or-different question (`api/_lib/repeatsChecks.js`). Vercel's `x-vercel-cron-schedule` header says which |
 | `chat.js` | The tutor. Gives hints, not the answer, until the card's answer is shown. Never writes cards |
 | `review-answer.js` | "My answer should be accepted". Saves an accepted answer for that student only; "Accept anyway" skips Claude. A body with `feedback` is instead Claude's review of a piece of feedback and the owner's Apply and Dismiss (`api/_lib/feedbackReview.js`), here because of the 12-route limit. Every verdict is saved to `answer_reviews` (migration_015); a body with `answerChecks` is the owner's list of them and the test made from them (`api/_lib/answerChecks.js`) |
 | `fsrs-fit.js` | Once a day per student: fits their own FSRS settings when due, and recomputes memory estimates when the settings change |
@@ -751,7 +754,7 @@ one. `api/_lib/` is shared code, not a route.
 | `review-answer.js`, `split-senses.js` | `claude-opus-5` |
 | `review-answer.js`, reviewing feedback | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
 | `parse-cahier.js`, `cahier-parse.js`, `cahier-sync.js`, `cahier-daily.js` | `claude-haiku-4-5` |
-| `parse-cahier.js` (commit), `cahier-sync.js`: same card or different | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
+| `parse-cahier.js` (commit), `cahier-sync.js`, `cahier-daily.js` (the status run, and the test of the question): same card or different | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
 
 No other route calls a model. The tutor's effort is set explicitly: left
 unset, the model thought at high effort and the tutor was slow.
@@ -806,7 +809,8 @@ holds other students' cards).
 
 | Script | What it does |
 |---|---|
-| `status-check.mjs` | Runs the nine status checks on a student's live record, and only reads. It checks the admin unless `--email` names someone else; `--from YYYY-MM-DD` judges from an earlier day, `--tz` sets the time zone for answers saved without one, `--all` shows every detail. Claude runs it on the owner's Mac under the rule in `.claude/settings.local.json`; without that rule auto mode blocks it from reading production. The owner's `.env.local` leaves both admin addresses blank, so pass `--email` |
+| `status-check.mjs` | Runs the eleven status checks on a student's live record, and only reads. It checks the admin unless `--email` names someone else; `--from YYYY-MM-DD` judges from an earlier day, `--tz` sets the time zone for answers saved without one, `--all` shows every detail. `--everyone` is the morning check: every student who has answered, what the server's daily run last asked Claude about look-alike cards, and the three tests of Claude's work with any slip named; it exits 1 when something needs looking at. It never asks Claude anything. Claude runs it on the owner's Mac under the rule in `.claude/settings.local.json`; without that rule auto mode blocks it from reading production. The owner's `.env.local` leaves both admin addresses blank, so pass `--email` |
+| `record-cleanup-reasons.mjs` | One-off. Writes onto the 85 cards the 2026-10-06 clean-up put away why it did: `archived_reason` 'duplicate' with `merged_into` the card each repeats (for a list card whose words each kept a card, the one the card-writers' rule finds closest), or 'removed' for "Naza" and the registers card, and `archived_at` the time it ran. From the clean-up's plan (`--plan`, its `cleanup-plan.json`) and backup (`--backup`). Needs migration_016; touches only those three columns, only on rows still out of study with no reason, backs them up first, and a second run writes nothing. Not run yet |
 | `resolve-feedback.mjs` | Lists open feedback; `<ids> --note "…" --apply` marks entries resolved. Never deletes |
 | `resolve-disputes.mjs` | Settles old disputed marks in `feedback_submissions`, leaving `uncertain` ones alone: a machine that can't decide shouldn't close a complaint about its own marking |
 | `fix-multi-sense.mjs` | Splits cards that teach two words. Never run on the live deck. Leaves archived and lesson cards alone, never overwrites a card (a sense the deck already has isn't added), gives new senses the original's class dates, and backs up before writing |
@@ -873,8 +877,10 @@ The files:
   'duplicate'), `archived_at` and `merged_into`, the first two cleared by a
   trigger when a card comes back into study; `card_pairs`, every
   same-or-different verdict of Claude's on two look-alike cards, with the
-  question's version; and `eval_runs.kind` may be 'repeats'. Additive and
-  re-runnable; the app works before it, knowing classes by date only.
+  question's version, from an upload, the sync or the morning check
+  (`source` 'check'); and `eval_runs.kind` may be 'repeats', the test of that
+  question. Additive and re-runnable; the app works before it, knowing
+  classes by date only, and the two checks of the deck wait for it.
 
 ---
 
@@ -1248,7 +1254,7 @@ protocol*.
 
 ### The suites
 
-Seventeen need no browser:
+Eighteen need no browser:
 
 - `logic`: the pure rules, from card types and prompt cleaning to
   `reconcileLessons` and the released-lesson-cards list.
@@ -1267,9 +1273,11 @@ Seventeen need no browser:
   replacing a student's own.
 - `grammar-sort`: `scripts/sort-grammar-cards.mjs`, with stand-ins.
 - `status`: the status check on a simulated student: a clean record passes,
-  and each fault planted in it fails its check.
+  and each fault planted in it fails its check, a card in the deck twice and a
+  deleted or corrected card back among them.
 - `status-script`: `scripts/status-check.mjs` against a stand-in Supabase,
-  sending only GETs.
+  sending only GETs: what it reads for each check, and the morning check
+  (`--everyone`).
 - `feedback-review`: Claude's review of feedback and Apply and Dismiss, with a
   stand-in store and Claude: who may ask, Apply changing only the card's text,
   and refusing a card that changed after the review.
@@ -1292,6 +1300,13 @@ Seventeen need no browser:
   pairs, Replace by class, the first run after the fix, the question's calls
   side by side and its time limit, the lesson sync leaving removed cards out,
   View feedback's Remove card, and before migration_016.
+- `repeat-checks`: the harness for repeated cards: the morning check asking
+  Claude about look-alikes (the cap, newest first, verdicts kept and judged
+  with, a failed call's pairs left for tomorrow, nothing asked before
+  migration_016 or by the read-only check), the test of the same-or-different
+  question and the schedule that runs it, the red dot's rule for it, drills of
+  different verbs not being look-alikes, and
+  `scripts/record-cleanup-reasons.mjs`.
 
 Eighteen drive the app in a browser. `openApp` opens every one as a student
 who has seen the first-visit tour, unless it passes `tour: true`; `ready`
@@ -1711,7 +1726,7 @@ for every student: each card, its way round, why it was dealt and what the
 app believed about it (`recordDeal`, `src/lib/dealLog.js`). Neither record
 can hold up or lose an answer.
 
-### The nine checks
+### The eleven checks
 
 Following FSRS:
 
@@ -1739,8 +1754,43 @@ How well it's working:
    predictions fails at 10 points off once it has 100 answers, the whole at 5
    points off once it has 300; under 300 it waits.
 
+The deck itself (since 2026-10-06, after the owner's "there should be NO
+duplicates from reuploading an updated cahier" and "make sure the evaluation
+harness is catching this properly"):
+
+10. No card is in your deck twice. Fails on two cards in study, lesson cards
+    included, that are one card by the sure rule every card-writer uses
+    (`src/lib/sameCard.js`), or that Claude judged the same card
+    (`card_pairs`). A verdict counts only while both cards read as they did
+    when Claude judged them, and the latest on a pair wins. Look-alikes
+    Claude hasn't judged yet (the near search, as a new card meets it) make it
+    wait, saying how many; so do the ones it can't read before migration_016.
+    A pair the rule joins still fails before it.
+11. Nothing you deleted or corrected came back. Fails on a card in study that
+    is a card the student removed (`archived_reason` 'removed') or the owner
+    deleted (`parse_corrections`), by the sure rule, made after it was taken
+    out; or the form a card had before the owner corrected it: the exact
+    French when the rule can't tell the two apart ("Je parle jamais de
+    Pierre." and its full stop), the rule otherwise ("une propositiond"), and
+    corrected English back on the card. A card made before the removal or the
+    correction isn't back (the card a duplicate was deleted beside, or the
+    corrected card itself), and a form a later correction put back isn't
+    watched. Each student is judged on their own removals and corrections.
+    Before migration_016 the removals can't be known: with nothing else back
+    it waits.
+
+Both run the card-writers' code, imported, so "the same card" means the same
+to the check as to the upload and the sync. Run on the copy of the live tables
+taken before the 2026-10-06 clean-up, the second named exactly the three cards
+that clean-up put right ("Naza", the registers card and "Je parle jamais de
+Pierre."), and the first reached all three decks' repeat groups: the owner's
+63 (10 by the rule, 52 through the near search, the last only through its
+neighbours, "15 → en lettres" and "quinze"), and the others' 8.
+
 Checks 5, 6 and 8 need the set records, so they start the day after the
-first recorded set: 2026-09-29 at the earliest.
+first recorded set: 2026-09-29 at the earliest. Checks 10 and 11 read Claude's
+verdicts (`card_pairs`) and the owner's corrections (`parse_corrections`)
+besides the cards, everywhere the checks run.
 
 Two things the set checks leave alone (2026-10-04, after three false alarms
 on the owner's record). A set replaced before anything in it was answered,
@@ -1753,13 +1803,25 @@ notes had arrived, which is when the first card carrying that date was made
 on or after that day, since only a notes upload makes one. Any other date is
 uncertain, and an order that depends on it isn't judged.
 
+A third, since 2026-10-06: check 6 doesn't judge an order that hangs on a
+card whose class dates may have changed after the set was dealt, because a
+repeat was put away into it later. The clean-up of 2026-10-06 moved each
+put-away card's dates onto the card kept, and four of the owner's sets were
+then faulted over "lourd (adj)", which had gained a class from "lourd, lourde
+(adj)" that evening. The repeat is the card named by `merged_into`; before
+migration_016 (and `scripts/record-cleanup-reasons.mjs`), a card out of study
+with no reason that looks like the card (the sure rule or the near search) and
+shares the date stands in, and its last change (`updated_at`) is when it was
+put away.
+
 ### Since 2026-10-06: every student, Claude's marking, and tests on GitHub
 
 The owner asked for the checks to meet the standards of a guide to evals
 (2026-10-06). Three things came of it, all in the Status window, which has a
 tab for each:
 
-- **All students.** The nine checks run on the server every morning (the
+- **All students.** The checks (nine then, eleven since the two of the deck)
+  run on the server every morning (the
   second `cahier-daily` schedule) on every student who has answered a card,
   and the reports are kept in `status_reports` (migration_015). "Check
   everyone now" runs them on demand. A student's failed check lights the
@@ -1789,6 +1851,28 @@ tab for each:
   Its version hashes the whole of `api/parse-cahier.js` (the question, the
   model and every step that tidies Claude's reply into cards;
   `cardsFromExtracted` moved there for it) and the two app files it uses.
+- **Repeated cards** (2026-10-06, the owner: "make sure the evaluation
+  harness is catching this properly"). Checks 10 and 11 above, and two more
+  things. The server's morning run (14:00 UTC) first puts to Claude the
+  look-alike pairs of cards in study it hasn't judged, every student's in one
+  pooled question (`judgeLookalikes`, `api/_lib/statusDaily.js`; the
+  question every card-writer asks, `api/_lib/sameCardQuestion.js`), at most
+  200 a student a day, newest cards first, keeps the verdicts in `card_pairs`
+  (source 'check'), then checks. A call that fails or runs late leaves its
+  pairs for the next morning, and the kept report says how many
+  (`report.judging`). Nothing starts after 150 seconds and no call runs past
+  210. The owner's deck had 875 such pairs on 2026-10-06, about five mornings'
+  worth; after that, a day's new cards raise a handful. The morning check on
+  the Mac and Check everyone now only read. And the question itself is
+  tested, as kind `repeats` (`api/_lib/repeatsChecks.js`): each card put away
+  as a repeat with the card it repeats (`archived_reason` 'duplicate' and
+  `merged_into`) should be "same", and the pairs in `api/_lib/keepApart.js`
+  (the plan's eight keep-apart pairs and seven more) "different", each asked
+  three times in rounds of the app's own calls. Its version is the
+  question's. It has no schedule of its own: the 15:00 and 16:00 runs each
+  take it when their own test isn't due. Until
+  `scripts/record-cleanup-reasons.mjs` records the clean-up's 82 repeats it
+  has only the keep-apart pairs to ask, all "different".
 - **Both run by themselves** (owner, 2026-10-06: "make both run
   automatically", after being asked to mark and press buttons for decisions
   they had already made). Two daily schedules on `cahier-daily` (15:00 and
@@ -1821,14 +1905,13 @@ jamais de Pierre." with its full stop). The clean-up that evening put them and
 (*The linked cahier*: what has been read, and a word written another way)
 stops an upload or the sync making them again.
 
-**What migration_016 keeps for the checks of repeated cards** (to be built
-on it): `card_pairs`, every same-or-different verdict of Claude's with both
-cards' text and ids and the question's version (`SAME_CARD_VERSION`,
-`api/_lib/sameCardQuestion.js`); on `user_cards`, `archived_reason` and
-`merged_into`, so a card put away as a repeat names the card it repeats; and
-`eval_runs.kind` 'repeats'. The rule and the near search are pure
-(`src/lib/sameCard.js`, `src/lib/cardMatch.js`), so a check can run the very
-code the card-writers run.
+**What migration_016 keeps for the checks of repeated cards**: `card_pairs`,
+every same-or-different verdict of Claude's with both cards' text and ids and
+the question's version (`SAME_CARD_VERSION`, `api/_lib/sameCardQuestion.js`);
+on `user_cards`, `archived_reason` and `merged_into`, so a card put away as a
+repeat names the card it repeats; and `eval_runs.kind` 'repeats'. Checks 10
+and 11, the morning judging and the test of the question are built on them
+(see *Repeated cards* above).
 
 ### The simulations (`tests/simulate/`)
 
@@ -1840,7 +1923,11 @@ assumptions.
 - `npm run simulate`: weak and typical students, 180 days, every check, in
   seconds. Run it before any change to scheduling or to which cards a set
   takes. The predictions check can't fail it, since the students' memory is
-  invented.
+  invented. The simulated deck holds each card once, as the app makes it
+  (since 2026-10-06: "une marque" and "la marque" in the demo notebook are one
+  card, and a lesson card the notes already have isn't added), and a stand-in
+  for Claude calls every look-alike pair different, so "No card is in your
+  deck twice" passes; nothing is deleted or corrected, so check 11 waits.
 - Messy students (`messy` in `simulate`, since 2026-10-06), run alongside
   the tidy ones: on a share of study days the app deals from the browser's
   old copy on opening and deals again seconds later, a class's notes arrive
@@ -1867,7 +1954,9 @@ assumptions.
 Suites: `status` (each fault the checks exist for fails its check),
 `status-script` (the script against a stand-in Supabase), `status-daily` (the
 morning check on every student), `answer-checks` and `notes-checks` (the tests
-of Claude's work), and `statusline` (browser: the Status line and dialog).
+of Claude's work), `repeat-checks` (the morning judging of look-alikes and the
+test of the same-or-different question), and `statusline` (browser: no Status
+line in the app).
 
 ---
 
@@ -2293,6 +2382,35 @@ View feedback records the reason too; linking while the notes are being read
 says so; and `lesson-sync` checks, in the browser, that a removed lesson card
 stays out and that the deck loads before migration_016.
 
+### 2026-10-06 — The harness catches repeated cards
+
+The owner asked to "make sure the evaluation harness is catching this
+properly". Two checks were added to the status check, both running the
+card-writers' own rule: no card in study twice (by the rule, or by Claude's
+verdict on two look-alikes), and nothing the student deleted or corrected back
+(see *The eleven checks*). The server's morning run now first asks Claude
+about look-alike cards in study it hasn't judged, up to 200 a student a day,
+and keeps the verdicts; the morning check on the Mac reads them, the removal
+reasons and the corrections for every student, and says what the daily run
+asked and what is left. Claude's same-or-different question is tested like
+its marking and its note reading, as kind `repeats`, on the cards the clean-up
+put away and fixed keep-apart pairs, run in the 15:00 or 16:00 slot when that
+slot's own test isn't due, so no cron was added. `scripts/record-cleanup-reasons.mjs`
+writes why the clean-up put each card away, once migration_016 is in.
+
+Run read-only on the live tables that evening: the owner's deck has no card
+twice by the rule and 875 look-alike pairs for Claude (958 before drills of
+different verbs stopped counting as look-alikes, a change to the near search
+made with this); nothing the owner deleted or corrected is back. On the copy
+taken before the clean-up, check 11 named exactly the three cards the
+clean-up put right. Two students with answers would fail check 10 at once:
+demarajackson 19 repeats and laura.caufour 3, made inside one reading (see
+*Bugs and loose ends*). The same run showed check 6 failing four of the
+owner's sets over "lourd (adj)", a false alarm the clean-up's date moves made;
+check 6 now leaves such an order alone (see *The eleven checks*). The dry run of the reasons script found one of the 85
+cards back in study: Leçon 2's lesson sync had taken over "après" (16650) at
+23:33 UTC.
+
 ---
 
 ## Open items
@@ -2306,7 +2424,17 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
   editor. Until then uploads and the sync know classes by date only: an
   unchanged re-upload still reads nothing new, but a line added to an old
   class waits for it, two runs at once aren't stopped, a removed card keeps
-  no reason, and a removed lesson card comes back with its lesson.
+  no reason, and a removed lesson card comes back with its lesson. The checks
+  of repeated cards wait for it too: no look-alike is put to Claude and no
+  removal can be judged.
+- **Then record why the 2026-10-06 clean-up put cards away**:
+  `node scripts/record-cleanup-reasons.mjs --plan <cleanup-plan.json>`, read
+  the list, then again with `--apply`. It writes 82 repeats and the 2
+  removed cards (a write to live cards: three columns, backed up first), so
+  they stay out whatever a lesson does and become the "same" cases of the
+  test of Claude's question. The clean-up's `cleanup-plan.json` was written
+  to a Claude session's temporary folder; keep a copy beside its backup in
+  `backups/` (the script looks for `backups/cleanup-plan-2026-10-06.json`).
 - **Check that `CRON_SECRET` is set in Vercel.** Without it the daily cahier
   check (`api/cahier-daily.js`) refuses to run. Linked docs are still read
   when a student opens the app, so the only sign is classes arriving late.
@@ -2324,19 +2452,36 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 
 - **Cards archived before migration_016 say no reason.** `archived_reason` is
   empty on them, so the clean-up of 2026-10-06 left its 85 repeats without
-  "duplicate" or `merged_into` (its backup in `backups/` says which card each
-  repeats). Only cards with the reason "replaced" ever come back through an
-  upload, so none of these does.
+  "duplicate" or `merged_into` until `scripts/record-cleanup-reasons.mjs` is
+  run (see *The owner's to-dos*). Only cards with the reason "replaced" ever
+  come back through an upload, so none of these does.
+- **The lesson sync takes over an own card out of study with a lesson card's
+  French.** A missing lesson card is written as an upsert on the French, so
+  when the student has a card of their own with exactly that French out of
+  study, and it gives no reason that keeps it out ('removed' or 'duplicate'),
+  the row becomes the lesson's card, back in study, with the lesson's English
+  and no class dates. It happened to "après" (16650), put away by the
+  clean-up, at 23:33 UTC on 2026-10-06. Once migration_016 is run and the
+  clean-up's reasons recorded, those cards are safe; other own cards archived
+  without a reason (Replace before the fix, the grammar sort, merge-duplicates)
+  aren't. One is exposed today: sammy's archived "prendre", beside Leçon 3's.
+  `reconcileLessons` could count every own card out of study as "taken".
 - **The lesson sync can delete answered cards.** When a lesson drops a card
   that Reset all progress put back to new, the sync deletes it, and its
   answers from before the reset with it. `reconcileLessons`
   (`src/lib/lessonSync.js`) looks only at `fsrs_state`; it should check
   `card_reviews` first, as the upload's replace does.
-- **Repeats made inside one reading are still in some decks.** The clean-up of
-  2026-10-06 put away only repeats from reading notes again. A few made
-  inside one reading remain in five decks (the plan lists them), and the
-  owner's deck has drill-and-word pairs and partial list overlaps left for
-  them to decide.
+- **Repeats made inside one reading are still in some decks**, and the
+  morning check now fails on them. The clean-up of 2026-10-06 put away only
+  repeats from reading notes again. By the rule, on 2026-10-06:
+  demarajackson 19 and laura.caufour 3, both with answers, so check 10 fails
+  for them every morning until they are put away; foisydm 18, nguyen.t12090 1
+  and sammy 1, who have no answers and aren't checked. A few of
+  demarajackson's are pairs the old reading labelled as two meanings that the
+  rule joins ("pas mal" / "pas mal (quite a lot;)", "ça allait" / "ça allait
+  ?"). The owner's deck has drill-and-word pairs and partial list overlaps
+  left for them to decide; those are look-alikes, which the morning run puts
+  to Claude.
 - **A few rules in the owner's deck are filed as words or phrases**, such as
   "voie passive" and "double pronoms (COD + COI)", so they are asked both ways.
   The grammar sort only read cards filed `G` or `P`. These few need re-filing
@@ -2372,6 +2517,12 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
 
+- **The checks of repeated cards** (2026-10-06). Only stand-ins have
+  answered the look-alike question in the morning run and in its test. After
+  migration_016, the next 14:00 UTC run should put up to 200 of the owner's
+  875 look-alike pairs to Claude and keep them in `card_pairs`, and the
+  morning check should print the line; the 15:00 or 16:00 run should keep a
+  `repeats` run in `eval_runs`.
 - **No card made twice** (2026-10-06). After migration_016, upload the same
   notes twice: the second should say no new cards and every class already
   read. Claude's same-or-different question has only met a stand-in; the

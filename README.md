@@ -16,18 +16,21 @@ Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.verce
 
 ### Evaluation harness
 
-Every morning the server runs nine checks on every student's record of
-answers. They confirm that each answer was scheduled the way FSRS says, that no
-card came up before it was due, that missed cards came back first and new
-cards arrived in the agreed order, and that FSRS's predictions match how often
-students are actually right.
+Every morning the server runs eleven checks on every student's record of
+answers and their deck. They confirm that each answer was scheduled the way
+FSRS says, that no card came up before it was due, that missed cards came back
+first and new cards arrived in the agreed order, that FSRS's predictions match
+how often students are actually right, that no card is in a deck twice, and
+that nothing a student deleted or corrected has come back.
 
 Claude's own work is tested too. Its marking of disputed answers is checked
-against the decisions of the app's owner, who runs it and studies with it, and
-its reading of class notes against the owner's corrections to the cards it
-made. Before any change to scheduling, simulated students study for six months
-with the app's own code, including messy ones who reload mid-set or wander off
-into a lesson. And 35 test suites run on GitHub on every push.
+against the decisions of the app's owner, who runs it and studies with it, its
+reading of class notes against the owner's corrections to the cards it made,
+and its judging of whether two look-alike cards are the same card against
+repeats the owner put away and pairs that must stay apart. Before any change
+to scheduling, simulated students study for six months with the app's own
+code, including messy ones who reload mid-set or wander off into a lesson. And
+36 test suites run on GitHub on every push.
 [Evaluation harness](docs/evaluation-harness.md)
 
 ![The Status window, where the owner sees the nine checks](docs/screenshots/status.png)

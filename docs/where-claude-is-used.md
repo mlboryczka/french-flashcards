@@ -33,8 +33,13 @@ Claude: the same card to learn, or different? All of a reading's pairs go in
 one request, or a few side by side for a big first upload. "Same" only adds
 the class date to the student's card. If no answer comes, the card waits for
 the next reading. Every answer is kept with the card pair and a version of the
-question, so the answers can be tested later
-([details](cards-from-notes.md#one-card-per-thing-to-learn)).
+question ([details](cards-from-notes.md#one-card-per-thing-to-learn)).
+
+Each morning the server also asks the same question about cards already in a
+deck that look alike and haven't been judged, so a repeat that got in another
+way is caught: two cards Claude calls the same fail the morning status check.
+The question itself is tested on repeats the owner put away and on pairs that
+must stay apart ([Evaluation harness](evaluation-harness.md#judging-look-alike-cards)).
 
 ## Judging a disputed mark
 

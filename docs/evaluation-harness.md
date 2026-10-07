@@ -5,14 +5,15 @@ early, a missed word fails to come back first, or a schedule is saved from the
 wrong answer, the student still just sees cards, and nothing looks broken. So
 Déjà Review checks its own work in four ways:
 
-1. **The status check**: nine checks on every student's real record of
-   answers, run every morning.
-2. **Tests of Claude's work**: its marking of disputed answers and its reading
-   of class notes, each tested against decisions the owner (who runs the app
-   and studies with it) has already made.
+1. **The status check**: eleven checks on every student's real record of
+   answers and their deck, run every morning.
+2. **Tests of Claude's work**: its marking of disputed answers, its reading
+   of class notes, and its judging of whether two look-alike cards are the
+   same card, each tested against decisions the owner (who runs the app and
+   studies with it) has already made.
 3. **Simulated students**, who study for six months with the app's own code,
    including messy ones who reload and wander off mid-set.
-4. **34 test suites**, run on GitHub on every push.
+4. **36 test suites**, run on GitHub on every push.
 
 ![The Status window: each of the nine checks with its result](screenshots/status.png)
 
@@ -31,7 +32,7 @@ the app deals is saved with what the app believed about each card at that
 moment: due, new, or missed last time. Neither record can delay or lose an
 answer.
 
-The nine checks, as the Status window names them:
+The checks, as the reports name them:
 
 **Following FSRS**
 
@@ -60,6 +61,21 @@ The nine checks, as the Status window names them:
    real share right is 10 points off once it holds 100 answers, and all the
    answers together fail at 5 points off once there are 300.
 
+**The deck itself**
+
+10. *No card is in your deck twice.* Two cards in study fail it when they are
+    one card by the rule every path that makes cards from notes uses, or when
+    Claude has judged the pair the same card. The check imports that rule
+    rather than restating it, so it means by "the same card" exactly what the
+    upload and the linked notebook mean.
+11. *Nothing you deleted or corrected came back.* A card the student removed,
+    or the form a card had before the owner corrected it, fails it when it is
+    in study again, made after it was taken out.
+
+Run on a copy of the live tables taken before a clean-up of repeated cards,
+the last check named exactly the three cards that clean-up put right, and the
+first reached every group of repeats it put away.
+
 The checks are one file, used in three places:
 
 - **In the app**, for the owner. "Status" in the profile menu opens a window
@@ -83,10 +99,12 @@ answered isn't judged, and a class date counts only once its notes had arrived.
 
 ## Testing Claude's work
 
-Claude makes two judgments in the app that change what students learn: whether
-an answer the app marked wrong should have been accepted, and which cards a
-class's notes should become. Both are tested against what the owner has
-already done in the app, so nobody has to sit down and label examples.
+Claude makes three judgments in the app that change what students learn:
+whether an answer the app marked wrong should have been accepted, which cards
+a class's notes should become, and whether a new card that looks like one the
+student has is the same card to learn. All three are tested against what the
+owner has already done in the app, so nobody has to sit down and label
+examples.
 
 ### Marking disputed answers
 
@@ -115,9 +133,31 @@ back of a card, or a deleted card made again in other words. When the test was
 first built, the owner's 48 corrections made 46 cases (two edits had changed
 nothing), and the class behind every one of them was found.
 
+### Judging look-alike cards
+
+A word is often written a little differently from one class to the next: "le
+cas" and "un cas", "japonais" and "japonais, japonaise". Fixed rules settle
+most new cards, but rules loose enough to catch the rest would also join
+words that differ, such as "un état" (a condition) and "l'État" (the State).
+So near look-alikes are put to Claude as one question: the same card to learn,
+or different? A wrong "same" loses a card, and a wrong "different" makes one
+twice.
+
+Each morning, before the checks, the server also puts to Claude every pair of
+cards in study that look alike and haven't been judged, a few hundred a
+student a day, and keeps the verdicts. A pair Claude judges the same fails
+"No card is in your deck twice". A question that can't be answered leaves its
+pairs for the next morning; nothing is decided on a guess.
+
+The question is tested like the other two. The cards the owner approved
+putting away as repeats, each with the card it repeats, should come out
+"same". Fixed pairs that must stay apart should come out "different": "ou"
+and "où", "la poste" and "le poste", "voler" to steal and "voler" to fly, and
+a dozen more.
+
 ### When the tests run, and when they warn
 
-Both tests run by themselves on the server: once a week, and at the next
+The tests run by themselves on the server: once a week, and at the next
 scheduled run after the question Claude is asked changes. Each version of the question has a
 fingerprint, made from its wording and the model, and for the notes test from
 all the code that turns Claude's reply into cards. Results are kept per
@@ -160,7 +200,7 @@ best choice depended on the student, so Automatic stays the default.
 
 ## The test suites
 
-`npm test` runs 34 suites. Sixteen need no browser. They cover the rules for
+`npm test` runs 36 suites. Eighteen need no browser. They cover the rules for
 dealing and scheduling, the study day, the status check itself, and most of the
 server functions, with stand-ins for the database and for Claude, so nothing
 leaves the machine. One of them checks that a caller without a verified sign-in
@@ -174,7 +214,7 @@ writes to the database. The stand-in database refuses what the real one
 refuses, because a more lenient stand-in twice let through a write that then
 failed on the live app.
 
-Every push to GitHub runs the build, the simulated students and all 34 suites,
+Every push to GitHub runs the build, the simulated students and all 36 suites,
 in about nine minutes. A failure marks the commit with a red cross. A browser
 suite that fails gets one second try, and the summary names any suite that
 needed it, so a suite that fails now and then still gets noticed.
@@ -185,13 +225,16 @@ failed.
 
 ## In the code
 
-- `src/lib/statusChecks.js`: the nine checks, shared by the app, the script and
-  the simulations
+- `src/lib/statusChecks.js`: the eleven checks, shared by the server, the
+  script and the simulations; the deck checks import `src/lib/sameCard.js`,
+  the rule the card-writers use
 - `src/StatusModal.jsx`: the Status window
 - `api/_lib/statusDaily.js`: the morning run for every student
-- `api/_lib/answerChecks.js` and `api/_lib/notesChecks.js`: the tests of
-  Claude's marking and note reading; `api/_lib/evalRuns.js` decides when they
-  are due, and `api/_lib/evalStatus.js` when the red dot lights
+- `api/_lib/answerChecks.js`, `api/_lib/notesChecks.js` and
+  `api/_lib/repeatsChecks.js`: the tests of Claude's marking, note reading and
+  judging of look-alike cards (the pairs that must stay apart are in
+  `api/_lib/keepApart.js`); `api/_lib/evalRuns.js` decides when they are due,
+  and `api/_lib/evalStatus.js` when the red dot lights
 - `scripts/status-check.mjs`: the checks from the terminal
 - `tests/simulate/`: the simulated students
 - `.github/workflows/tests.yml`: the tests on every push
