@@ -764,8 +764,12 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [user?.id]);
   // The lesson whose switch failed to save, to say so beside it.
   const [choiceFailed, setChoiceFailed] = useState(null);
+  // Lessons in the sidebar, folded by a press on it on the Lessons page.
+  // Opens again on any move to another page or lesson.
+  const [lessonsFolded, setLessonsFolded] = useState(false);
+  useEffect(() => { setLessonsFolded(false); }, [mode, lessonFilter]);
   // A heading among the lessons (Basic Lessons) folds its own list away. Open
-  // unless the student folded it, and never folded over the lesson they're in.
+  // unless the student folded it; folded, it still shows the lesson they're in.
   const [closedGroups, setClosedGroups] = useState(() => new Set());
   const toggleGroup = (title) => setClosedGroups((prev) => {
     const next = new Set(prev);
@@ -1270,6 +1274,8 @@ export default function FlashcardApp({ user, onSignOut }) {
       }
       setMode("lessons");
     },
+    goStats: () => setMode("stats"),
+    setTutor: (on) => (on ? openChat() : setShowChat(false)),
     openLesson: (id) => { if (mode !== "study" || lessonFilter !== id) enterLesson(id); },
     setNotes: (on) => {
       if (on) { setShowChat(false); setShowFeedback(false); }
@@ -1283,6 +1289,8 @@ export default function FlashcardApp({ user, onSignOut }) {
     return {
       goCards: call("goCards"),
       goLessons: call("goLessons"),
+      goStats: call("goStats"),
+      setTutor: call("setTutor"),
       openLesson: call("openLesson"),
       setNotes: call("setNotes"),
       setSettings: call("setSettings"),
@@ -1970,8 +1978,9 @@ export default function FlashcardApp({ user, onSignOut }) {
   // with Tab. Not a clicked one: Chrome leaves focus on a tab you click, and
   // that held the keys the same way. (Nor :focus-visible, which Chrome turns
   // on for a clicked button at the very keypress being asked about.)
+  const sidebarWidth = sidebarMin ? SIDEBAR_MIN_WIDTH : SIDEBAR_WIDTH;
   const roomToReflow = (panelWidth) =>
-    winWidth - (sidebarMin ? SIDEBAR_MIN_WIDTH : SIDEBAR_WIDTH) - panelWidth >= MIN_REFLOW_CONTENT;
+    winWidth - sidebarWidth - panelWidth >= MIN_REFLOW_CONTENT;
   const chatReflow = showChat && roomToReflow(CHAT_PANEL_WIDTH);
   const lessonReflow = showLessonPanel && roomToReflow(LESSON_PANEL_WIDTH);
   const overlayOpen =
@@ -2652,8 +2661,10 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   // The lessons drop down from Lessons: open on the Lessons page and inside a
   // lesson, where you pick one or see which you are in; folded away
-  // everywhere else, so the sidebar is just its four items.
-  const lessonsOpen = mode === "lessons" || (mode === "study" && lessonFilter !== "all");
+  // everywhere else, so the sidebar is just its four items. On the Lessons
+  // page a press on Lessons folds the list away or opens it again, as its
+  // arrow says; it used to do nothing there.
+  const lessonsOpen = !lessonsFolded && (mode === "lessons" || (mode === "study" && lessonFilter !== "all"));
 
   // Open the tutor panel and the app reflows to sit beside it rather than
   // being covered — you can still read the card you're asking about. Reflow
@@ -2731,6 +2742,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                   // were inside — otherwise it selects itself while the lesson
                   // beneath it stays filtered and marked.
                   if (m === "study") leaveLesson();
+                  if (m === "lessons" && mode === "lessons" && !sidebarMin) { setLessonsFolded((v) => !v); return; }
                   setMode(m);
                 }}
                 title={sidebarMin ? label : undefined}
@@ -2750,8 +2762,10 @@ export default function FlashcardApp({ user, onSignOut }) {
                   rather than a trip through the catalogue. Not on the rail,
                   which has no room to nest anything. */}
               {m === "lessons" && !sidebarMin && lessonsOpen && LESSON_GROUPS.map((group) => {
-                const inside = group.lessons.some((l) => mode === "study" && lessonFilter === l.id);
-                const closed = group.folds && closedGroups.has(group.title) && !inside;
+                // Folded, it still shows the lesson you're in. (It used to
+                // refuse to fold there, so the press did nothing you could
+                // see.)
+                const closed = group.folds && closedGroups.has(group.title);
                 const base = group.folds ? { ...S.sideSubItem, ...S.sideSubItemNested } : S.sideSubItem;
                 return (
                   <Fragment key={group.title || "lessons"}>
@@ -2768,7 +2782,7 @@ export default function FlashcardApp({ user, onSignOut }) {
                         </span>
                       </button>
                     )}
-                    {!closed && group.lessons.map((lesson) => {
+                    {group.lessons.filter((l) => !closed || (mode === "study" && lessonFilter === l.id)).map((lesson) => {
                       const on = mode === "study" && lessonFilter === lesson.id;
                       return (
                         <button
@@ -2934,6 +2948,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         onClose={() => setShowLessonPanel(false)}
         lesson={LESSONS.find((l) => l.id === lessonFilter) || null}
         reflow={lessonReflow}
+        sidebarWidth={sidebarWidth}
       />
       <ChatPanel
         open={showChat}
@@ -2950,6 +2965,7 @@ export default function FlashcardApp({ user, onSignOut }) {
         onCardUpdated={patchDeckCard}
         onNeedKey={() => { setShowChat(false); setShowKeyModal(true); }}
         reflow={chatReflow}
+        sidebarWidth={sidebarWidth}
       />
       <ApiKeyModal
         open={showKeyModal}

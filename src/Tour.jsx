@@ -14,15 +14,24 @@ import { T } from "./theme";
 // step says `touch`, so that nothing (the tutor, the upload window) opens
 // under the dimming.
 //
-// Between steps everything stays dimmed with nothing lit for a moment, then
-// the new highlight and caption appear in place, all at once (owner,
-// 2026-10-06: "highlights shouldn't fly in"). A step whose page is still
-// moving (a panel sliding in) waits for it with `settle`.
+// Between steps the highlight and caption fade out where they are, the page
+// changes under an even dim, and the new ones fade in where they belong.
+// Nothing moves across the screen (owner, 2026-10-06: "highlights shouldn't
+// fly in"), and nothing snaps (owner, 2026-10-06: Next made the screen
+// "flicker and jerk"). A step whose page is still moving (a panel sliding in)
+// waits for it with `settle`.
 
 const Z = 20000; // above every panel, scrim, menu and toast in the app
 const GAP = 16;
 const EDGE = 10;
 const SCRIM = "rgba(3,22,50,0.55)";
+const RING = "rgba(255,255,255,0.55)";
+const FADE_OUT = 160;
+const FADE_IN = 220;
+
+// The transition for a part fading in (`on`) or out.
+const fade = (on, props = ["opacity"]) =>
+  props.map((p) => `${p} ${on ? FADE_IN : FADE_OUT}ms ease`).join(", ");
 
 const val = (x, ...args) => (typeof x === "function" ? x(...args) : x);
 const list = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);
@@ -89,6 +98,8 @@ export default function Tour({ steps, app, onClose }) {
   // step is lit or shown until it has settled too.
   const [readyStep, setReadyStep] = useState(-1);
   const ready = readyStep === i;
+  // Fading out on the way to another step.
+  const [leaving, setLeaving] = useState(false);
   const [geo, setGeo] = useState(null);
   const [shake, setShake] = useState(0);
   const boxRef = useRef(null);
@@ -97,6 +108,7 @@ export default function Tour({ steps, app, onClose }) {
   const travel = useRef(1);
   const advancing = useRef(null);
   const settling = useRef(null);
+  const fading = useRef(null);
   const armed = useRef(false);
   // The step whose `enter` has run: its caption may read what enter kept.
   const arrived = useRef(-1);
@@ -114,18 +126,26 @@ export default function Tour({ steps, app, onClose }) {
   const close = useCallback(() => {
     clearTimeout(advancing.current);
     clearTimeout(settling.current);
+    clearTimeout(fading.current);
     prevStep.current?.leave?.();
     prevStep.current = null;
     onClose();
   }, [onClose]);
+  // Fade this step out, then move. A second press while it fades is ignored,
+  // so a double click can't skip a step.
   const go = useCallback((n) => {
     clearTimeout(advancing.current);
     advancing.current = null;
-    if (n < 0) return;
+    if (n < 0 || fading.current) return;
     if (n >= steps.length) { close(); return; }
-    travel.current = n >= iRef.current ? 1 : -1;
-    setReadyStep(-1);
-    setI(n);
+    setLeaving(true);
+    fading.current = setTimeout(() => {
+      fading.current = null;
+      travel.current = n >= iRef.current ? 1 : -1;
+      setLeaving(false);
+      setReadyStep(-1);
+      setI(n);
+    }, FADE_OUT);
   }, [steps.length, close]);
   const next = () => go(i + 1);
   const back = () => (i === 0 ? close() : go(i - 1));
@@ -161,7 +181,7 @@ export default function Tour({ steps, app, onClose }) {
   // up), not coming back with Back, or the step would send the student
   // straight forwards again.
   useEffect(() => {
-    if (!ready || !step.until || advancing.current) return;
+    if (!ready || leaving || !step.until || advancing.current) return;
     if (!step.until(app, memo.current)) { armed.current = true; return; }
     if (!armed.current && travel.current < 0) return;
     const at = i;
@@ -170,7 +190,7 @@ export default function Tour({ steps, app, onClose }) {
       if (iRef.current === at) go(at + 1);
     }, step.delay ?? 400);
   });
-  useEffect(() => () => { clearTimeout(advancing.current); clearTimeout(settling.current); }, []);
+  useEffect(() => () => { clearTimeout(advancing.current); clearTimeout(settling.current); clearTimeout(fading.current); }, []);
 
   // Follow the lit part every frame while a step shows, so the highlight
   // stays on it however the page moves (a panel opening beside the card, a
@@ -201,7 +221,9 @@ export default function Tour({ steps, app, onClose }) {
       let g;
       if (r) {
         const pad = s.pad ?? 6;
-        r = { left: Math.max(0, r.left - pad), top: Math.max(0, r.top - pad), right: Math.min(vw, r.right + pad), bottom: Math.min(vh, r.bottom + pad) };
+        // Whole pixels, so the edge of a hole filled in to fade it matches
+        // the dim around it.
+        r = { left: Math.round(Math.max(0, r.left - pad)), top: Math.round(Math.max(0, r.top - pad)), right: Math.round(Math.min(vw, r.right + pad)), bottom: Math.round(Math.min(vh, r.bottom + pad)) };
         r.width = r.right - r.left; r.height = r.bottom - r.top;
         g = { hole: r, ...placeBox(r, bw, bh, s.prefer || ["right", "left", "bottom", "top"]) };
       } else {
@@ -252,7 +274,12 @@ export default function Tour({ steps, app, onClose }) {
   const nudge = (e) => { e.stopPropagation(); setShake((n) => n + 1); };
 
   const shown = ready && geo && geo.step === i;
-  const hole = shown && geo.hole;
+  // Fully on, rather than fading out or not yet in.
+  const on = shown && !leaving;
+  const hole = on && geo.hole;
+  // Where the hole is drawn: the last step's place until the new step is
+  // lit, filled with the dim meanwhile, so the switch can't be seen.
+  const drawn = geo?.hole;
   const vw = geo?.vw ?? window.innerWidth, vh = geo?.vh ?? window.innerHeight;
   const blocks = hole
     ? [
@@ -274,15 +301,21 @@ export default function Tour({ steps, app, onClose }) {
     <div data-tour-root data-tour-step={step.id} onMouseDown={swallow} onPointerDown={swallow} onClick={swallow}>
       <div
         data-tour-hole
-        style={hole
-          ? { ...S.hole, left: hole.left, top: hole.top, width: hole.width, height: hole.height, borderRadius: step.radius ?? 12 }
-          : { ...S.hole, ...S.holeShut, left: vw / 2, top: vh / 2 }}
+        style={{
+          ...S.hole,
+          ...(drawn
+            ? { left: drawn.left, top: drawn.top, width: drawn.width, height: drawn.height, borderRadius: step.radius ?? 12 }
+            : { ...S.holeShut, left: vw / 2, top: vh / 2 }),
+          background: on ? "transparent" : SCRIM,
+          boxShadow: `0 0 0 2px ${on && drawn ? RING : "rgba(255,255,255,0)"}, 0 0 0 200vmax ${SCRIM}`,
+          transition: fade(on, ["background-color", "box-shadow"]),
+        }}
       />
       {blocks.map((b, k) => (
-        <div key={k} style={{ ...S.block, ...b }} onMouseDown={nudge} onClick={swallow} />
+        <div key={k} style={{ ...S.block, ...b }} onMouseDown={on ? nudge : swallow} onClick={swallow} />
       ))}
       {shown && geo.pulse && (
-        <div className="tour-pulse" data-tour-pulse style={{ ...S.pulse, ...geo.pulse, borderRadius: step.radius === 99 ? 99 : 10 }} />
+        <div className="tour-pulse" data-tour-pulse style={{ ...S.pulse, ...geo.pulse, borderRadius: step.radius === 99 ? 99 : 10, opacity: on ? 1 : 0, transition: fade(on) }} />
       )}
       <div
         ref={boxRef}
@@ -294,12 +327,17 @@ export default function Tour({ steps, app, onClose }) {
         style={{
           ...S.box,
           ...(step.center ? S.boxCenter : null),
-          left: shown ? geo.x : -9999,
-          top: shown ? geo.y : 0,
+          left: geo ? geo.x : -9999,
+          top: geo ? geo.y : 0,
+          opacity: on ? 1 : 0,
+          // Hidden the moment the step changes, while still empty: a caption
+          // left "visible" until a timer ran out could show (to a screen
+          // reader) the next step's title before that step had set itself up.
           visibility: shown ? "visible" : "hidden",
+          transition: fade(on),
         }}
       >
-        {shown && geo.arrow && <div style={{ ...S.arrow, ...geo.arrow }} />}
+        {geo?.arrow && <div style={{ ...S.arrow, ...geo.arrow }} />}
         <div style={S.top}>
           <span style={S.count}>{count}</span>
           {!step.center && <button style={S.skip} onClick={close} data-tour-skip>Skip tour</button>}
@@ -323,8 +361,8 @@ export default function Tour({ steps, app, onClose }) {
 }
 
 const S = {
-  hole: { position: "fixed", zIndex: Z, pointerEvents: "none", borderRadius: 12, boxShadow: `0 0 0 2px rgba(255,255,255,0.55), 0 0 0 200vmax ${SCRIM}` },
-  holeShut: { width: 0, height: 0, boxShadow: `0 0 0 200vmax ${SCRIM}` },
+  hole: { position: "fixed", zIndex: Z, pointerEvents: "none", borderRadius: 12 },
+  holeShut: { width: 0, height: 0 },
   block: { position: "fixed", zIndex: Z + 1 },
   pulse: { position: "fixed", zIndex: Z + 2, pointerEvents: "none", border: `2px solid ${T.color.secondary}`, boxSizing: "border-box" },
   box: { position: "fixed", zIndex: Z + 3, width: 292, boxSizing: "border-box", background: T.color.surfaceLowest, borderRadius: 14, boxShadow: "0 24px 60px rgba(3,22,50,0.3)", padding: "16px 18px 14px", fontFamily: T.font.sans, textAlign: "left" },

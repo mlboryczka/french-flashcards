@@ -19,7 +19,9 @@ import { PANEL_ANIM_MS, PANEL_EASING } from "./lib/motion";
 
 export const LESSON_PANEL_WIDTH = 460;
 
-export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
+// sidebarWidth: the scrim starts right of the sidebar, so the sidebar stays
+// usable (covered, every press on it was lost).
+export default function LessonPanel({ open, onClose, lesson, reflow = false, sidebarWidth = 0 }) {
   const [mounted, setMounted] = useState(open);
   const [entered, setEntered] = useState(false);
   const [tab, setTab] = useState(0);
@@ -93,9 +95,11 @@ export default function LessonPanel({ open, onClose, lesson, reflow = false }) {
   return createPortal(
     <div style={S.wrap} data-lesson-panel>
       {/* Dims the app behind an overlay-mode panel. Not a dismissal: see the
-          note above — the ✕ and the toggle are the only ways out. */}
+          note above — the ✕ and the toggle are the only ways out. Fading out
+          after the ✕ it lets clicks through, or for 420ms it would swallow
+          the next one, invisibly. */}
       {!activeReflow && (
-        <div style={{ ...S.scrim, opacity: entered ? 1 : 0 }} />
+        <div style={{ ...S.scrim, left: sidebarWidth, opacity: entered ? 1 : 0, pointerEvents: entered ? "auto" : "none" }} />
       )}
       <div
         ref={panelRef}
@@ -277,7 +281,8 @@ function Block({ b, prev, first }) {
 
 const S = {
   wrap: { position: "fixed", inset: 0, zIndex: 1000, pointerEvents: "none" },
-  scrim: { position: "absolute", inset: 0, background: "rgba(3,22,50,0.28)", pointerEvents: "auto", transition: `opacity ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
+  // Longhands: `left` is set per render to clear the sidebar.
+  scrim: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, background: "rgba(3,22,50,0.28)", pointerEvents: "auto", transition: `opacity ${PANEL_ANIM_MS}ms ${PANEL_EASING}, left ${PANEL_ANIM_MS}ms ${PANEL_EASING}` },
   panel: {
     position: "absolute", top: 0, right: 0, bottom: 0,
     width: `min(${LESSON_PANEL_WIDTH}px, 100vw)`, pointerEvents: "auto",

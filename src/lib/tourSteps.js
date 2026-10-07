@@ -144,7 +144,7 @@ export function tourSteps(act, lesson) {
       enter: () => act.goLessons(),
       title: "Lessons in your daily cards",
       body: (a) => (a.tourLessonOn
-        ? `${name} is switched on, so its cards come up in Cards every day, like all the basic lessons. When your class reaches a lesson like L’impératif, switch it on here.`
+        ? `${name} and the other basic lessons are already switched on, so their cards are in your daily set. When your class gets to a new lesson, like L’impératif, switch on **In my daily cards** for it.`
         : "Switch on **In my daily cards** for each lesson your class reaches, and its cards come up in Cards every day.") },
 
     { id: "cards", spot: NAV("cards"), pad: 0, radius: 6,
@@ -153,10 +153,13 @@ export function tourSteps(act, lesson) {
       body: "**Cards** gives you each day’s set from the lessons you’ve switched on and your own class notes." },
 
     { id: "stats", spot: NAV("stats"), pad: 0, radius: 6,
+      enter: () => act.goStats(),
       title: "Your progress",
       body: "**Stats** shows your streak and how many of your cards you remember." },
 
-    { id: "tutor", spot: NAV("tutor"), pad: 0, radius: 6,
+    { id: "tutor", spot: NAV("tutor"), pad: 0, radius: 6, settle: 480,
+      enter: () => act.setTutor(true),
+      leave: () => act.setTutor(false),
       title: "Ask the tutor",
       body: "Stuck on a word or a sentence? Ask the **Tutor**. It can add the word to your cards for you. To use it, first click your user icon at the bottom left, then **Connect Claude account**. You’ll need an API key from console.anthropic.com, which is paid for separately from a Claude subscription." },
 

@@ -17,6 +17,8 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { checker } from "../check.mjs";
 import { simulate, USER_ID, standInVerdicts } from "../simulate/student.mjs";
 
@@ -76,12 +78,16 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const BASE = `http://127.0.0.1:${server.address().port}`;
 
 // Runs the script. ADMIN_EMAIL is a space: set, so a .env.local can't fill it
-// in, and blank, so the script falls back to VITE_ADMIN_EMAIL.
+// in, and blank, so the script falls back to VITE_ADMIN_EMAIL. HOME is a
+// fresh folder, so the morning check's list of problems already raised
+// (kept under the home folder) is this run's own, never the owner's.
+const HOME = mkdtempSync(join(tmpdir(), "status-script-home-"));
+const RAISED = join(HOME, ".claude", "scheduled-tasks", "morning-check", "raised.json");
 function run(args = [], env = {}) {
   return new Promise((resolve) => {
     const c = spawn(process.execPath, [SCRIPT, ...args], {
       env: {
-        PATH: process.env.PATH, HOME: process.env.HOME,
+        PATH: process.env.PATH, HOME,
         SUPABASE_URL: BASE, SUPABASE_SERVICE_ROLE_KEY: KEY,
         ADMIN_EMAIL: " ", VITE_ADMIN_EMAIL: STUDENT, TZ: "America/New_York",
         ...env,
@@ -188,7 +194,18 @@ console.log("\n  the morning check: --everyone");
      /Claude judging whether two look-alike cards are the same card: last tested 2026-10-14 \(version bbbbbbb, 0 of 1 right every time\)\./.test(r.out),
      r.out.match(/Claude judging[^\n]*/)?.[0]);
   ck("  naming a slip after a change to the question", /- Since the last change to how Claude is asked, it calls “ou” and “où” the same card, which it kept apart before\./.test(r.out));
-  ck("  so something needs looking at, and it exits 1", /Something needs looking at\./.test(r.out) && r.code === 1);
+  const slipLine = "Claude judging whether two look-alike cards are the same card: Since the last change to how Claude is asked, it calls “ou” and “où” the same card, which it kept apart before.";
+  ck("  so something new needs looking at, and it exits 1",
+     (r.out.split("New since the last morning check")[1] || "").includes(`- ${slipLine}`) && /Something new needs looking at\./.test(r.out) && r.code === 1,
+     r.out.split("\n").slice(-2).join(" "));
+  ck("  without --record the list of problems raised is only read", !existsSync(RAISED));
+  const recorded = await run(["--everyone", "--record"]);
+  const again = await run(["--everyone"]);
+  ck("--record keeps what was raised, so the next morning it is not new, and exits 0",
+     recorded.code === 1 && existsSync(RAISED) && slipLine in JSON.parse(readFileSync(RAISED, "utf8")) &&
+       (again.out.split("Raised with the owner before and still failing")[1] || "").includes(`- ${slipLine} (raised `) &&
+       !/New since the last morning check/.test(again.out) && /Nothing new: everything still failing was raised before\./.test(again.out) && again.code === 0,
+     again.out.split("\n").slice(-3).join(" "));
   ck("it read Claude's verdicts and the corrections for every student", ["card_pairs", "parse_corrections", "status_reports", "eval_runs"].every((t) => state.requests.some((q) => q.path === `/rest/v1/${t}`)));
   ck("and only ever read", state.requests.every((q) => q.method === "GET"), [...new Set(state.requests.map((q) => q.method))].join(","));
 

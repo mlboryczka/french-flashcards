@@ -228,6 +228,13 @@ export function BetaFeedback({
       if (e.target.closest?.("[data-feedback-toggle]")) return;
       if (e.target.closest?.("[data-report-card]")) return;
       if (e.target.closest?.("[data-tutor-toggle]")) return;
+      // A press in the sidebar: closing puts a minimized sidebar back on its
+      // rail and moves everything under the pointer, so the click would land
+      // on nothing. Close once the button is released instead.
+      if (e.target.closest?.("[data-sidebar]")) {
+        window.addEventListener("mouseup", () => setTimeout(close, 0), { once: true, capture: true });
+        return;
+      }
       close();
     };
     const onKey = (e) => { if (e.key === "Escape") close({ returnFocus: true }); };
