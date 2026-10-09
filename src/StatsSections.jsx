@@ -164,7 +164,6 @@ export function StudyCalendar({ days, since }) {
             {[{ label: "Didn't study", bg: T.color.surfaceMid }, ...[...LEVELS].reverse()].map((l) => (
               <div key={l.label} style={S.keyItem}><span style={{ ...S.keySq, background: l.bg }} />{l.label}</div>
             ))}
-            <div style={S.keyItem}><span style={{ ...S.keySq, background: "transparent", boxShadow: `0 0 0 1.5px ${T.color.secondary}` }} />Today</div>
           </div>
         </div>
         <div style={S.cal}>

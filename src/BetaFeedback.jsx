@@ -525,21 +525,25 @@ export function BetaFeedback({
 // The outcome of a send, shown where the panel just was. In the sidebar, so
 // it covers nothing; announced through a live region, so it isn't only visual.
 //
-// Success waits 5s and pauses while the pointer is on it — the old 1.5s
-// banner inside a closing sheet was the thing people missed. A failure never
-// times out: an error that fades before it is read is the case NN/g warns
-// about, and this one has an action.
+// Success goes by itself after 5s — the old 1.5s banner inside a closing
+// sheet was the thing people missed. It no longer waits while the pointer is
+// on it: it appears right where Send was pressed, so the pointer usually is,
+// and it stayed up for as long as the mouse sat still. The timer also no
+// longer restarts when the app redraws (onDone is a new function each time).
+// A failure never times out: an error that fades before it is read is the
+// case NN/g warns about, and this one has an action.
 function Toast({ kind, onDone, onOpen }) {
   const failed = kind === "failed";
   const [shown, setShown] = useState(false);
-  const [hovered, setHovered] = useState(false);
   const leaving = useRef(null);
   const ref = useRef(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   const dismiss = useCallback(() => {
     setShown(false);
     clearTimeout(leaving.current);
-    leaving.current = setTimeout(onDone, DOCK_ANIM_MS);
-  }, [onDone]);
+    leaving.current = setTimeout(() => onDoneRef.current(), DOCK_ANIM_MS);
+  }, []);
   // Same start-state trick as the panel above.
   useLayoutEffect(() => {
     ref.current?.getBoundingClientRect();
@@ -547,17 +551,15 @@ function Toast({ kind, onDone, onOpen }) {
     return () => clearTimeout(leaving.current);
   }, []);
   useEffect(() => {
-    if (failed || hovered) return;
+    if (failed) return;
     const t = setTimeout(dismiss, TOAST_MS);
     return () => clearTimeout(t);
-  }, [failed, hovered, dismiss]);
+  }, [failed, dismiss]);
   return (
     <div
       ref={ref}
       data-feedback-toast={kind}
       role={failed ? "alert" : "status"}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       style={{
         ...BF.toast,
         ...(failed ? BF.toastFailed : null),
