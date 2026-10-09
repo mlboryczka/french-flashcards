@@ -230,9 +230,18 @@ export function ProgressByLesson({ groups, rows }) {
   });
   return (
     <div style={{ marginTop: 24 }} data-stats-areas>
-      <button style={S.foldHead} onClick={() => setOpen((v) => !v)} aria-expanded={open} data-stats-areas-toggle>
-        Progress by Lesson<Chevron open={open} />
-      </button>
+      <div style={S.foldRow}>
+        <button style={{ ...S.foldHead, marginBottom: 0 }} onClick={() => setOpen((v) => !v)} aria-expanded={open} data-stats-areas-toggle>
+          Progress by Lesson<Chevron open={open} />
+        </button>
+        {/* What the bars' two colours are, once for every bar. */}
+        {open && (
+          <div style={S.barKey} data-stats-bar-key>
+            <span style={S.barKeyItem}><span style={{ ...S.barKeySq, background: NAVY }} />Remembered</span>
+            <span style={S.barKeyItem}><span style={{ ...S.barKeySq, background: NAVY, opacity: 0.3 }} />Seen</span>
+          </div>
+        )}
+      </div>
       {open && (
         <div style={S.areaList}>
           {groups.map((g) => {
@@ -279,6 +288,10 @@ const S = {
   dow: { fontSize: 10, fontWeight: 600, fontFamily: T.font.sans, color: T.color.onSurfaceVariant, textAlign: "center", opacity: 0.7 },
   day: { aspectRatio: "1", borderRadius: 5, cursor: "default" },
   today: { boxShadow: `0 0 0 2px ${T.color.background}, 0 0 0 3.5px ${T.color.secondary}` },
+  foldRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 14 },
+  barKey: { display: "flex", gap: 16 },
+  barKeyItem: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontFamily: T.font.sans, color: T.color.onSurfaceVariant },
+  barKeySq: { width: 10, height: 10, borderRadius: 3, flexShrink: 0 },
   foldHead: { display: "flex", alignItems: "center", gap: 10, padding: 0, border: "none", background: "transparent", cursor: "pointer", fontFamily: T.font.serif, fontSize: 18, fontWeight: 600, color: NAVY, textAlign: "left", marginBottom: 14 },
   areaList: { display: "flex", flexDirection: "column", gap: 10 },
   nested: { display: "flex", flexDirection: "column", gap: 8, margin: "-2px 0 2px 18px", paddingLeft: 14, borderLeft: `2px solid ${T.color.surfaceHigh}` },
