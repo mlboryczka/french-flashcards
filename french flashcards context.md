@@ -953,7 +953,7 @@ the simulations*). Run `simulate` before changing scheduling.
 - The owner runs them in the Supabase SQL editor, in number order, after
   `supabase/schema.sql` on a new project. The live database has all of them
   up to 016: 012 was run on 2026-09-27, 013 on 2026-09-28, 014 on 2026-10-04,
-  015 on 2026-10-06 and 016 on 2026-10-07. 017 waits for the owner.
+  015 on 2026-10-06, 016 on 2026-10-07 and 017 on 2026-10-09.
 - The test app on `testing` shares the live database, so a migration made
   there must leave `main`'s app working: additive only, until `testing` is
   released into `main` (see *Working protocol*).
@@ -2100,7 +2100,7 @@ keeps which page is showing)
   works as a card's row id does).
 - Feedback sent from Podcasts names the page it came from (`podcasts/episode`).
 
-**The three tables** (`migration_017`, waiting for the owner)
+**The three tables** (`migration_017`, run by the owner on 2026-10-09)
 
 - `podcast_episodes`: every episode of a podcast anyone follows, kept once
   for everyone: the feed's columns, RFI's transcript and stories, and the
@@ -2992,16 +2992,11 @@ database.
 
 In order: the owner's to-dos, bugs, things not yet checked on the live app,
 and ideas. One item, the lesson bar by section, is agreed but not built.
-Podcasts is built and waits on the test app for `migration_017` and the
-owner's try.
+Podcasts is built and on the test app; the owner ran `migration_017` on
+2026-10-09 and is trying it.
 
 ### The owner's to-dos
 
-- **Run `migrations/migration_017_podcasts.sql`** in the Supabase SQL
-  editor. It adds Podcasts' three new, empty tables and changes nothing that
-  exists, so the students' app is the same before and after. Until it is
-  run, Podcasts on the test app says it needs a database update, and nothing
-  there can be tried.
 - **Record why the 2026-10-06 clean-up put cards away**:
   `node scripts/record-cleanup-reasons.mjs --plan <cleanup-plan.json>`, read
   the list, then again with `--apply`. It writes 82 repeats and the 2
@@ -3107,7 +3102,7 @@ owner's try.
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
 
-- **Podcasts** (2026-10-09), on the test app once `migration_017` is run.
+- **Podcasts** (2026-10-09), on the test app (`migration_017` run 2026-10-09).
   Every part was tested against stand-ins only.
   - Claude, for real: no real call has written an episode's questions or
     marked an answer. Which passages it picks, the ideas it lists, the words
