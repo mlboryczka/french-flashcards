@@ -109,6 +109,8 @@ console.log("\n  which area a card counts towards");
      areaOf(unseen({ dates: [localISODateDaysAgo(30, new Date(NOW))] }), NOW) === "earlier");
   ck("a tutor card added yesterday is recent",
      areaOf({ source: "tutor-chat", dates: [], created_at: new Date(NOW - DAY).toISOString() }, NOW) === "recent");
+  ck("a card added from a podcast passage yesterday is recent too (2026-10-09)",
+     areaOf({ source: "podcast:3f2a9c4e-0000-4000-8000-000000000001", dates: [], created_at: new Date(NOW - DAY).toISOString() }, NOW) === "recent");
   ck("a card with no date at all is earlier", areaOf(unseen({ dates: [] }), NOW) === "earlier");
 }
 

@@ -20,7 +20,7 @@ Anthropic for Claude.
    rows returned." This creates the tables, with row-level security so that
    each user can only see their own data.
 3. Run each file in `migrations/` the same way, in number order, from 002 to
-   015. Migrations 002 and 009 have the same email placeholder to replace.
+   017. Migrations 002 and 009 have the same email placeholder to replace.
    Migration 003 has the original owner's address where the placeholder would
    be, so replace that with yours too.
 
@@ -64,7 +64,8 @@ in your inbox.
 
 Vite serves the app but not the server functions in `api/`, so anything that
 calls one only works on the deployed site: uploading notes, the linked
-notebook, the tutor, disputing a mark, and fitting each student's settings.
+notebook, the tutor, disputing a mark, fitting each student's settings, and
+Podcasts.
 
 ## 6. Deploy to Vercel
 
@@ -75,8 +76,9 @@ deploy, add these environment variables:
 - `VITE_SUPABASE_URL`: your Supabase URL.
 - `VITE_SUPABASE_ANON_KEY`: your anon key.
 - `VITE_ADMIN_EMAIL`: your email. It only decides whether the owner's menu
-  items are drawn. Anything starting with `VITE_` is built into the public
-  page, so it is never a security check.
+  items, and for now the Flashcards / Podcasts switch, are drawn. Anything
+  starting with `VITE_` is built into the public page, so it is never a
+  security check.
 - `SUPABASE_URL`: the same as `VITE_SUPABASE_URL`.
 - `SUPABASE_SERVICE_ROLE_KEY`: the service_role key.
 - `ADMIN_EMAIL`: your email. This is the real owner check, made on the server.
@@ -95,8 +97,8 @@ Deploying takes about a minute. Every push to `main` deploys again.
 
 Two things to know about Vercel's free Hobby plan:
 
-- It deploys at most 12 server functions, and this app has exactly 12, one per
-  file in `api/`. A 13th file fails the whole deployment. Shared code lives in
+- It deploys at most 12 server functions, and this app has 11, one per file
+  in `api/`. A 13th file fails the whole deployment. Shared code lives in
   `api/_lib/`, which doesn't count.
 - `vercel.json` sets four scheduled runs a day, all on `api/cahier-daily`. At
   13:00 UTC it reads the linked notebooks, at 14:00 it runs the status check on

@@ -6,7 +6,7 @@ import { T } from "./theme";
 import { CAT_UI_TO_DB } from "./lib/cardCategories";
 import { keyHeaders, BYOK_REQUIRED, BAD_KEY } from "./lib/anthropicKey";
 import { cleanFrenchPrompt } from "./lib/cardText";
-import { buildTutorContext, cardPrompt, cardAnswer } from "./lib/deckContext";
+import { buildTutorContext, cardPrompt, cardAnswer, podcastAbout, podcastLabel } from "./lib/deckContext";
 import { readThread, writeThread } from "./lib/tutorThreads";
 
 // "Ask the tutor" slide-over. Look a word or phrase up, get an explanation,
@@ -33,7 +33,7 @@ import { readThread, writeThread } from "./lib/tutorThreads";
 //
 // Usage:
 //   <ChatPanel open={showChat} onClose={...} user={user} cards={userCards}
-//              currentCard={...} thread={{ id, rowId }}
+//              currentCard={...} podcast={...} thread={{ id, rowId }}
 //              onCardAdded={addDeckCard} onCardUpdated={patchDeckCard} />
 
 // Panel width. Exported because FlashcardApp reflows the app by exactly this
@@ -81,7 +81,13 @@ const SUGGESTIONS = [
 // Opened on a card, the useful first questions are about THAT card, and which
 // ones depends on where the student is with it. None of these is sent on its
 // own: every question costs the student's own credit.
-function suggestionsFor(card) {
+//
+// On Podcasts (owner only, 2026-10-09) they are about the passage being
+// answered, and before it is answered none of them asks for its meaning: the
+// passage IS the question, and the tutor won't translate it until it has
+// been answered (api/chat.js, "A podcast episode").
+function suggestionsFor(card, podcast) {
+  if (!card?.f && podcast) return podcastSuggestions(podcast);
   if (!card?.f) return SUGGESTIONS;
   if (!card.answered) {
     return ["Give me a hint without the answer", "What kind of word am I looking for?"];
@@ -94,6 +100,16 @@ function suggestionsFor(card) {
     ];
   }
   return ["Use it in a sentence", "Any related words worth knowing?", "When would I use this?"];
+}
+
+function podcastSuggestions(podcast) {
+  const p = podcast?.passage;
+  if (!p?.fr) return ["Explain a word from this episode", "Which phrase in this episode is worth learning?"];
+  if (!p.answered) return ["Give me a hint without translating it", "Explain a word in this passage"];
+  const reuse = "Use a phrase from this passage in a new sentence";
+  if (p.verdict === "partly") return ["Why was my answer only partly right?", reuse];
+  if (p.verdict === "missed") return ["What did I miss in this passage?", reuse];
+  return [reuse, "Explain the grammar in this passage"];
 }
 
 // Bold and italics, rendered. The prompt asks for plain prose, but a model
@@ -231,6 +247,11 @@ export default function ChatPanel({
   // and `result`. Whether it has been answered decides what the header may
   // show and what the tutor may say.
   currentCard = null,
+  // On Podcasts (owner only, 2026-10-09), in place of a card: the episode on
+  // screen and the passage being answered, as the podcasts page describes
+  // them ({ key, episode, passage, transcript }, see lib/deckContext.js).
+  // Sent as the request's `context.podcast`. Null everywhere else.
+  podcast = null,
   // Bumped when the tutor is opened from a card ("Ask the tutor" after a
   // miss). A thread about a different card is put away for a fresh one.
   thread = null,
@@ -456,9 +477,12 @@ export default function ChatPanel({
           content: trimmed,
           // What the card showed when this was asked — its prompt, never its
           // answer. Sent back with every later turn so a follow-up still knows
-          // what "why?" was about.
-          about: currentCard?.f ? cardPrompt(currentCard) : "",
-          rowId: currentCard?.row_id ?? null,
+          // what "why?" was about. On Podcasts, the episode and the start of
+          // the passage; its key (pod:<episode>:<passage>) does what a card's
+          // row id does, so opening the tutor on another passage starts a
+          // fresh thread rather than turn nine of this one.
+          about: currentCard?.f ? cardPrompt(currentCard) : podcast ? podcastAbout(podcast) : "",
+          rowId: currentCard?.row_id ?? podcast?.key ?? null,
         },
       ];
       // The empty assistant bubble is what fills in as tokens arrive, so it
@@ -507,7 +531,7 @@ export default function ChatPanel({
             })),
             // Rebuilt from scratch every turn against the question just asked,
             // so it never accumulates in the thread.
-            context: buildTutorContext({ question: trimmed, previousQuestion, cards, currentCard }),
+            context: buildTutorContext({ question: trimmed, previousQuestion, cards, currentCard, podcast }),
           }),
         });
 
@@ -615,7 +639,7 @@ export default function ChatPanel({
         abortRef.current = null;
       }
     },
-    [input, sending, messages, cards, currentCard, user, updateLast, drain, drained, stopDrain]
+    [input, sending, messages, cards, currentCard, podcast, user, updateLast, drain, drained, stopDrain]
   );
 
   const addCard = useCallback(
@@ -754,6 +778,19 @@ export default function ChatPanel({
                 {currentCard.answered ? ` — ${cardAnswer(currentCard)}` : ""}
               </div>
             )}
+            {/* On Podcasts: the passage being answered, in French as it is on
+                screen, or the episode when no passage is. Its own marker, so
+                nothing that reads the card's chip mistakes it for one. The
+                episode's name is on hover. */}
+            {!currentCard?.f && podcast && (podcast.passage?.fr || podcastLabel(podcast)) && (
+              <div
+                style={S.contextChip}
+                data-tutor-podcast={podcast.key || ""}
+                title={podcastLabel(podcast) || undefined}
+              >
+                {podcast.passage?.fr ? `« ${podcast.passage.fr} »` : podcastLabel(podcast)}
+              </div>
+            )}
           </div>
           <div style={S.headActions}>
             {messages.length > 0 && (
@@ -775,7 +812,7 @@ export default function ChatPanel({
           <div style={S.threadFoot}>
           {messages.length === 0 && (
             <div style={S.empty}>
-              {suggestionsFor(currentCard).map((s) => (
+              {suggestionsFor(currentCard, podcast).map((s) => (
                 <button key={s} style={S.suggestion} onClick={() => send(s)}>
                   {s}
                 </button>

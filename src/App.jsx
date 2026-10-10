@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase";
 import Auth from "./Auth";
-import FlashcardApp from "./FlashcardApp";
+import FlashcardApp, { clearPodcastsPlace } from "./FlashcardApp";
 import { clearDeckCache } from "./useUserDeck";
 import { clearProgressCache } from "./useProgress";
 import { clearTutorThread } from "./lib/tutorThreads";
 import { clearStudyPlace } from "./lib/studyPlace";
+import { clearPodcastDrafts } from "./usePodcasts";
 
 // How long to wait for getSession() before giving up on it.
 //
@@ -119,6 +120,10 @@ export default function App() {
     clearProgressCache(session?.user?.id);
     clearTutorThread(session?.user?.id);
     clearStudyPlace(session?.user?.id);
+    // Podcasts (owner only for now, 2026-10-09): the page the owner was on,
+    // kept in this browser, and the unsent answers and lists kept in memory.
+    clearPodcastsPlace(session?.user?.id);
+    clearPodcastDrafts(session?.user?.id);
     await supabase.auth.signOut();
   };
 

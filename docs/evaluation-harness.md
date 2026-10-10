@@ -13,7 +13,7 @@ Déjà Review checks its own work in four ways:
    studies with it) has already made.
 3. **Simulated students**, who study for six months with the app's own code,
    including messy ones who reload and wander off mid-set.
-4. **36 test suites**, run on GitHub on every push.
+4. **39 test suites**, run on GitHub on every push.
 
 ![The Status window: each of the nine checks with its result](screenshots/status.png)
 
@@ -107,6 +107,14 @@ a class's notes should become, and whether a new card that looks like one the
 student has is the same card to learn. All three are tested against what the
 owner has already done in the app, so nobody has to sit down and label
 examples.
+
+Podcasts, which only the owner has so far, adds two more: which passages of
+an RFI episode to ask about, and whether an answer to one caught its ideas
+("Got it", "Partly" or "Missed"). These are not yet tested against the
+owner's decisions. Nothing records yet what the owner thinks of a verdict or
+a passage, so there are no right answers to test against. Their code is
+tested with a stand-in for Claude: a passage that isn't word for word in the
+transcript is dropped, and "Got it" needs every idea caught.
 
 ### Marking disputed answers
 
@@ -205,11 +213,11 @@ best choice depended on the student, so Automatic stays the default.
 
 ## The test suites
 
-`npm test` runs 36 suites. Eighteen need no browser. They cover the rules for
+`npm test` runs 39 suites. Twenty need no browser. They cover the rules for
 dealing and scheduling, the study day, the status check itself, and most of the
 server functions, with stand-ins for the database and for Claude, so nothing
 leaves the machine. One of them checks that a caller without a verified sign-in
-can't cause a single request to Claude. The other eighteen drive the real app
+can't cause a single request to Claude. The other nineteen drive the real app
 in headless Chromium against a mock database.
 
 The browser suites measure what a student would see, rather than trusting what
@@ -219,7 +227,7 @@ writes to the database. The stand-in database refuses what the real one
 refuses, because a more lenient stand-in twice let through a write that then
 failed on the live app.
 
-Every push to GitHub runs the build, the simulated students and all 36 suites,
+Every push to GitHub runs the build, the simulated students and all 39 suites,
 in about nine minutes. A failure marks the commit with a red cross. A browser
 suite that fails gets one second try, and the summary names any suite that
 needed it, so a suite that fails now and then still gets noticed.

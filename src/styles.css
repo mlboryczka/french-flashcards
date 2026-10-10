@@ -224,3 +224,12 @@ textarea:focus-visible {
   background: rgba(3, 22, 50, 0.09) !important;
   transition: none !important;
 }
+
+/* The Flashcards / Podcasts switch at the top of the sidebar (owner only,
+   2026-10-09). Its own class rather than .side-btn: that one's hover
+   background is !important, and would paint over the white of the selected
+   half. The half not selected answers the pointer by darkening its text, as
+   in the approved mockup. !important: the buttons' colour is inline. */
+.mod-btn[aria-pressed="false"]:hover {
+  color: #031632 !important;
+}

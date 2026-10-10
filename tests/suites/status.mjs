@@ -325,6 +325,49 @@ console.log("\n  following the app's rules");
   ck("  and says which card it passed over", /ahead of/.test(r.details[0] || ""), r.details[0]);
 }
 {
+  // A card the student added themselves is dated by the day they added it,
+  // and that day is never an uncertain class date: the tutor's cards, and
+  // since 2026-10-09 "Add to my cards" under a podcast passage. One added an
+  // hour before a set and never met is that day's word, so a set that took
+  // a notes card from an older class instead broke the agreed order, and a
+  // podcast card is judged exactly as a tutor card is.
+  const dayOf = (t) => {
+    const d = new Date(t - 4 * 3600000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const withAdded = (source) => {
+    const rec = clone(base);
+    for (const set of rec.deals.filter((d) => d.scope === "all|all" && d.items.some((x) => x.b === "new"))) {
+      const at = Date.parse(set.dealt_at);
+      const twoDaysBefore = dayOf(at - 2 * DAY);
+      const older = set.items.find((x) => {
+        const c = x.b === "new" && rec.cards.find((card) => card.id === x.c);
+        return c && c.source === "cahier-upload" && c.dates.length && c.dates.every((d) => d <= twoDaysBefore);
+      });
+      if (!older) continue;
+      rec.cards.push({
+        ...clone(rec.cards.find((c) => c.id === older.c)), id: -3, front: "un cortège", back: "a protest march", dates: [], source,
+        created_at: new Date(at - 3600000).toISOString(), next_due_at: null, en_next_due_at: null, stability: null, en_stability: null,
+        difficulty: null, en_difficulty: null, fsrs_state: 0, en_fsrs_state: 0, reps: 0, en_reps: 0, lapses: 0, en_lapses: 0,
+        last_review: null, en_last_review: null, last_answer_correct: null, en_last_answer_correct: null,
+      });
+      return rec;
+    }
+    return null;
+  };
+  const tutor = withAdded("tutor-chat");
+  const podcast = withAdded("podcast:3f2a9c4e-0000-4000-8000-000000000001");
+  ck("(a set took a new notes card from a class at least two days old)", !!tutor && !!podcast);
+  if (tutor && podcast) {
+    const rt = result(check(tutor), "new-order");
+    const rp = result(check(podcast), "new-order");
+    ck("a set passing over a tutor card added that day fails", rt.status === "fail", `${rt.status}: ${rt.summary}`);
+    ck("  and one passing over a card added from a podcast passage that day fails the same way",
+       rp.status === "fail" && /cortège/.test(rp.details[0] || "") && rp.summary === rt.summary && rp.details.length === rt.details.length,
+       `${rp.status}: ${rp.summary} ${rp.details[0] || ""}`);
+  }
+}
+{
   const rec = clone(base);
   const set = rec.deals.find((d, i) => i > 2 && d.items.some((x) => x.b === "new"));
   const n = set.items.find((x) => x.b === "new");

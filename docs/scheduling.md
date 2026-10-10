@@ -100,7 +100,10 @@ however well it is known.
 New cards come in a fixed order. In a lesson they follow the lesson's teaching
 order. Otherwise they come from the last two weeks of classes first, newest
 class first, then from older classes, starting with the words that came up in
-the most classes, and lesson cards come after the student's own. The set is
+the most classes, and lesson cards come after the student's own. A card the
+student added themselves, from the tutor or, for the owner so far, from a
+podcast passage, came up in no class, so it counts as if from a class on the
+day it was added: one added today is among the newest. The set is
 then shuffled, because practising one kind of
 card in a run feels easier at the time but is remembered worse afterwards.
 

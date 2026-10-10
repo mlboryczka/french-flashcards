@@ -12,7 +12,10 @@ and the browser tab carry the name; the repo, the live address and this
 document keep the old one.
 
 Live at `french-flashcards-nine.vercel.app`, deployed by Vercel from `main`.
-Repo: `mlboryczka/french-flashcards`.
+Repo: `mlboryczka/french-flashcards`. The owner's test app, deployed from the
+`testing` branch, is at
+`french-flashcards-git-testing-mlboryczkas-projects.vercel.app` (see *Working
+protocol*).
 
 "The owner" is the person who runs the app and studies with it. Their decisions
 are marked *(owner, date)*; don't undo one without asking them.
@@ -54,11 +57,11 @@ the repository), update those too.
 - **Hosting:** Vercel, which deploys `main` automatically: `api/*.js` are
   serverless functions, plus four daily cron runs in `vercel.json` (see
   *Serverless functions*). The Hobby plan deploys at most 12 functions, and
-  there are 12 (`api/_lib/` doesn't count).
+  there are 11 (`api/_lib/` doesn't count).
   A 13th fails the whole deployment, as `api/fsrs-fit.js` did on 2026-09-26.
 
-`npm run dev` doesn't serve `api/`, so uploading, the tutor, disputing a mark
-and the daily FSRS check work only on the deployed site.
+`npm run dev` doesn't serve `api/`, so uploading, the tutor, disputing a mark,
+the daily FSRS check and Podcasts work only on the deployed site.
 
 A free Supabase project pauses after about a week idle. The app then says
 "Couldn't reach the server" after 10 seconds (`App.jsx`); resume the project in
@@ -78,8 +81,27 @@ from `main`, so nothing is live until it is there.
 
 - First `git fetch`, and fast-forward `main` if it is behind `origin/main`.
 - If the session was set up on another branch or in a worktree, say so in the
-  first reply and use `main`. Work pushed elsewhere is invisible to the owner;
-  whole sessions were lost that way (2026-09-08, 2026-09-09).
+  first reply and use `main`, unless the work is for `testing` (below). Work
+  pushed elsewhere is invisible to the owner; whole sessions were lost that
+  way (2026-09-08, 2026-09-09).
+
+**Except work the owner is trying out first, which goes to `testing`**
+(owner, 2026-10-09: "segment the updates i am now making between the
+application i use (and will be testing) and the app given to others").
+Podcasts is the first such work.
+
+- `main` is the students' app. `testing` is the owner's test app, deployed by
+  Vercel at `french-flashcards-git-testing-mlboryczkas-projects.vercel.app`.
+  On the owner's Mac it is checked out in the worktree
+  `.claude/worktrees/testing`.
+- Nothing on `testing` reaches students until the owner says so. Merging it
+  into `main` is that release.
+- Both apps use the same Supabase database. A sign-in on the test app is the
+  owner's real account, with their real cards and progress.
+- So every migration made on `testing` must be additive until the release:
+  new tables or columns that `main`'s app never reads, nothing changed or
+  removed that it does read.
+- GitHub runs the tests on every push to either branch (78a4946).
 
 **Resolve feedback in the session that fixes it:**
 `node scripts/resolve-feedback.mjs <ids> --note "what was done" --apply`, also
@@ -118,8 +140,8 @@ included: the app run with it, and every script in `scripts/`, works on live
 data. If Claude Code refuses to touch production, give the owner the command
 to run in their terminal (not the Supabase SQL editor).
 
-**`npm test` before every push.** It runs the 36 suites in `tests/suites` (18
-without a browser, 18 in headless Chromium) in about twenty minutes, so start
+**`npm test` before every push.** It runs the 39 suites in `tests/suites` (20
+without a browser, 19 in headless Chromium) in about twenty minutes, so start
 it early. `npm test -- <name>` runs only the suites whose names contain
 `<name>`. Don't edit `src/` while browser suites run: a save reloads the app
 under a running test. For a small change the owner wants the result in
@@ -208,8 +230,10 @@ weeks of class*), newest class first; then *Older classes*, the words from the
 most classes first (`dates.length`); then undated cards; then unseen lesson
 cards, lesson by lesson in `MEETING_ORDER` (`src/data/lessons/index.js`):
 L'impératif, the adverbs, then Leçons 1 to 5 in number order, though Leçon 1
-was added last (owner, 2026-10-06). A card added from the tutor is dated by
-its `created_at`. Ties come in random order.
+was added last (owner, 2026-10-06). A card the student added themselves, from
+the tutor or (since 2026-10-09) with "Add to my cards" in Podcasts, is dated
+by its `created_at` (`addedByStudent`, `src/lib/sessionQueue.js`). Ties come
+in random order.
 
 **Then the block is shuffled,** because runs of one kind are blocked practice,
 which tests worse than mixed. A lesson's block is shuffled too (owner,
@@ -786,8 +810,8 @@ cards; the upload dialog's (`cahier-parse.js`) does not.
 
 ## Serverless functions (`api/`)
 
-There are ten routes, one per file. Vercel's Hobby plan deploys at most
-twelve, and a 13th fails the whole deployment, so two more fit before a new
+There are eleven routes, one per file. Vercel's Hobby plan deploys at most
+twelve, and a 13th fails the whole deployment, so one more fits before a new
 route means retiring or merging one. `api/_lib/` is shared code, not a route.
 
 | File | What it does |
@@ -802,6 +826,7 @@ route means retiring or merging one. `api/_lib/` is shared code, not a route.
 | `admin-update-card.js` | Saves a card edit, for any student's own cards despite the name. Uses the service role: edits from the browser under RLS silently did nothing. A body with `action: "remove"` is a student removing a card: archived with the reason "removed", answers kept (`api/_lib/removeCard.js`) |
 | `admin-users.js` | Admin only: every account and its activity. `?view=status` is the latest status check on every student; with `&run=1` they are all checked now |
 | `parse-corrections.js` | Admin only: logs corrections that `cahier-parse` learns from |
+| `podcasts.js` | Podcasts, the owner's only for now: every action in one route, named by `action` in the body, because of the 12-route limit. `follow` (a Spotify link, or a podcast's slug), `refresh` (the followed podcasts' feeds), `episode` (RFI's transcript, and the questions, written once), `mark` (Claude marks one answer) and `add-card` (a word from a passage to the caller's cards). Anyone but the owner gets 403 "Admin only". The work is in `api/_lib/podcasts.js` (see *Podcasts*) |
 
 - Every route checks the caller's Supabase session, except `cahier-daily`,
   which checks `CRON_SECRET`. The service role key bypasses RLS, so a route
@@ -813,8 +838,9 @@ route means retiring or merging one. `api/_lib/` is shared code, not a route.
   (`src/lib/replaceDeck.js`, since 2026-10-06): a card with none of its
   classes in the upload leaves study, marked "replaced"; a later Replace with
   its class brings it back, unless the same card is in study by then (a
-  lesson's copy, say), which gains its class dates instead; lesson and tutor
-  cards are left alone; a card the database refuses no longer turns it into
+  lesson's copy, say), which gains its class dates instead; lesson cards and
+  cards the student added (from the tutor or a podcast passage) are left
+  alone; a card the database refuses no longer turns it into
   an add. A card the student has answered, either way round, never leaves
   study, whatever the classes say (2026-10-07), and the message says how many
   stayed and why; `save_notes_reading` refuses it too. A Replace with the
@@ -831,7 +857,9 @@ route means retiring or merging one. `api/_lib/` is shared code, not a route.
 | `review-answer.js`, `_lib/splitSenses.js` (the multi-sense script) | `claude-opus-5` |
 | `review-answer.js`, reviewing feedback | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
 | `parse-cahier.js`, `cahier-parse.js`, `cahier-sync.js`, `cahier-daily.js` | `claude-haiku-4-5` |
-| `parse-cahier.js` (commit), `cahier-sync.js`, `cahier-daily.js` (the status run, and the test of the question): same card or different | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
+| `parse-cahier.js` (commit), `cahier-sync.js`, `cahier-daily.js` (the status run, and the test of the question), `podcasts.js` (`add-card`): same card or different | `claude-opus-5-5`, effort `medium`, with Anthropic's fallback model if it declines |
+| `podcasts.js` (`episode`, `_lib/podcastQuestions.js`): writing an episode's questions, once | `claude-opus-5-5`, effort `medium`, with the fallback; 150 s, reply at most 16,000 tokens |
+| `podcasts.js` (`mark`, `_lib/podcastQuestions.js`): marking one answer | `claude-opus-5-5`, effort `low`, with the fallback; 45 s, reply at most 2,000 tokens |
 
 No other route calls a model. The tutor's effort is set explicitly: left
 unset, the model thought at high effort and the tutor was slow.
@@ -845,7 +873,10 @@ unset, the model thought at high effort and the tutor was slow.
   every caller, the cron included).
 - Browser: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_ADMIN_EMAIL`.
   These are public, so they can't be a security boundary: `VITE_ADMIN_EMAIL`
-  only decides whether the admin menu items are drawn.
+  only decides whether the admin menu items, and for now the Flashcards /
+  Podcasts switch, are drawn.
+- Podcasts needs nothing new: RFI's feeds and pages and Spotify's oEmbed are
+  read without a key.
 - `.env.example` lists them all.
 
 ---
@@ -862,6 +893,20 @@ unset, the model thought at high effort and the tutor was slow.
 - So does Claude's review of feedback, since the reviews are for the owner
   (owner, 2026-10-04). A student's browser can ask for one review per piece of
   feedback it sent in the last 10 minutes, and nothing more.
+- Podcasts is the owner's only for now (owner, 2026-10-09), so the owner pays
+  for all of it, by the usual rule: their own key if the browser sends one,
+  otherwise the server's `ANTHROPIC_API_KEY`. Three things there call Claude:
+  writing an episode's questions (the first time anyone opens it), marking an
+  answer, and the same-card question when a word is added. Following a
+  podcast, or opening an episode whose questions exist, calls nothing.
+- Before students get Podcasts, two things must be decided. Who pays for an
+  episode's questions, which are written once and shared by every student:
+  the owner, as for the linked cahier, or whoever opens the episode first.
+  And the follow check: the server doesn't yet check that the caller follows
+  an episode's podcast before writing its questions, marking or adding a card
+  (see *Open items*). As built, every call there uses the caller's key, as
+  every route does, so the first student to open an episode would pay for
+  its questions.
 - The key is kept only in the student's browser (`src/lib/anthropicKey.js`),
   entered at profile menu → "Connect Claude account" (`src/ApiKeyModal.jsx`).
   It is never stored on the server, so the app holds nobody's credentials.
@@ -907,8 +952,11 @@ the simulations*). Run `simulate` before changing scheduling.
 
 - The owner runs them in the Supabase SQL editor, in number order, after
   `supabase/schema.sql` on a new project. The live database has all of them
-  up to 015: 012 was run on 2026-09-27, 013 on 2026-09-28, 014 on 2026-10-04
-  and 015 on 2026-10-06. 016 waits for the owner.
+  up to 016: 012 was run on 2026-09-27, 013 on 2026-09-28, 014 on 2026-10-04,
+  015 on 2026-10-06 and 016 on 2026-10-07. 017 waits for the owner.
+- The test app on `testing` shares the live database, so a migration made
+  there must leave `main`'s app working: additive only, until `testing` is
+  released into `main` (see *Working protocol*).
 - `schema.sql`, 002, 003 and 009 write the admin's email into policies.
   Change it for another project.
 - Any of them can be run again except 004, which would blank `card_id` on
@@ -958,6 +1006,16 @@ The files:
   (`source` 'check'); and `eval_runs.kind` may be 'repeats', the test of that
   question. Additive and re-runnable; the app works before it, knowing
   classes by date only, and the two checks of the deck wait for it.
+- `017_podcasts`: the three tables of Podcasts (see *Podcasts*).
+  `podcast_episodes` is shared: written only by the server, and the first
+  table any signed-in user may read. `podcast_follows` is each student's own
+  to read, add and remove. `podcast_answers` is a record like `card_reviews`:
+  the server writes it, each student reads their own, and no policy lets
+  anyone change or delete a row. An answer's episode can't be deleted (no
+  cascade). No policy names an email. Three new, empty tables and nothing
+  else, re-runnable; Flashcards works the same before and after it, and
+  until it is run the Podcasts pages say "Podcasts need a database update
+  first". Made on `testing`; `main`'s app never reads these tables.
 
 ---
 
@@ -1108,6 +1166,12 @@ and shipped broken.
   Enter grade the card. The notes take a key only on one of their buttons
   reached with Tab (`notesHaveKeyboard`), because Chrome leaves focus on a
   clicked tab.
+- **Podcasts' pages sit inside `main` like every page**, so the tutor makes
+  room for them the same way. The episode's play bar is sticky inside the
+  page's own scroll, never fixed to the window, where it would end up under
+  the tutor. Podcasts adds no key handler on the window: Cmd/Ctrl+Enter
+  checks an answer from its own box, and the study keys stay off because
+  they work only while `mode` is "study".
 
 ### The feedback panel
 
@@ -1202,6 +1266,33 @@ Nothing changes until the owner presses a button.
 - **Every nav item style declares all four border sides, as longhands**, never
   the `borderRight` shorthand. React updates style properties one at a time,
   so a shorthand plus an override left a stale marker (`layout` checks this).
+- **The owner's sidebar starts with a switch, Flashcards or Podcasts** (owner,
+  2026-10-09; `data-module-switch`). Two halves at the top of the nav, below
+  the rail's expand button; the one showing is white. On the rail they stack
+  as two icons, cards and headphones, titled "Flashcards" and "Podcasts". It
+  is drawn only for the owner (`isAdmin`), so a student's sidebar is exactly
+  what it was.
+- **The switch is never a marked item.** Its halves say which is showing
+  with `aria-pressed`, and their borders are transparent, so nothing that
+  reads the nav's marker counts one.
+- **Flashcards shows Lessons, Cards, Stats and Tutor; Podcasts shows
+  Episodes, My podcasts and Tutor**, with each podcast followed listed under
+  My podcasts (`data-pod-nav`, `data-pod-follow`). The rail leaves those out,
+  as it does the lessons.
+- **Exactly one item is marked in either module.** On a podcast's page, or
+  one of its episodes, the podcast under My podcasts is marked. On the rail,
+  or while that podcast isn't listed yet, My podcasts stands in for it.
+- **The switch's styles follow the longhand rule too**: every variant (rail
+  or full width, showing or not) declares the same keys, as longhands, since a
+  key one variant lacks is left behind on the way back (the 24b55b7 bug). The
+  `podcasts` suite toggles it both ways: rail to Podcasts, expand, back to
+  Flashcards, minimise, expand, with nothing under the minimise button.
+- **Switching module never touches the cards.** Back on Flashcards the same
+  page opens (Lessons or Stats if that is where you were), with the same card,
+  counter, typed answer and retries; nothing is written. Which module and
+  which Podcasts page were showing are kept for the owner in
+  `localStorage["podcasts-place:<user id>"]`, dropped on sign-out. "Take the
+  tour again" switches to Flashcards first.
 
 ### The toolbar and chip rows
 
@@ -1331,7 +1422,7 @@ protocol*.
 
 ### The suites
 
-Eighteen need no browser:
+Twenty need no browser:
 
 - `logic`: the pure rules, from card types and prompt cleaning to
   `reconcileLessons` and the released-lesson-cards list.
@@ -1402,8 +1493,23 @@ Eighteen need no browser:
   different verbs not being look-alikes, the same words in another order
   being look-alikes, "pas mal" and "pas mal (quite a lot;)" not called one
   card, and `scripts/record-cleanup-reasons.mjs`.
+- `podcast-feed`: Podcasts' reading of RFI and Spotify
+  (`api/_lib/podcastSource.js`) and Listen's times
+  (`src/lib/podcastTiming.js`), on short synthetic French in RFI's own
+  markup (`tests/fixtures/podcasts`): a feed's episodes, an episode page's
+  transcript and stories, every Spotify link a student copies, a title
+  (even cut short) finding its podcast and episode, only the two sites read;
+  and `migration_017` run twice after every migration where the machine has
+  Postgres.
+- `podcast-marking`: the Podcasts server (`api/_lib/podcasts.js`,
+  `podcastQuestions.js`) with a stand-in Claude counted at the wire: the
+  questions written once and checked against the transcript, "Got it" only
+  with every idea caught, a passage back `RETRY_DAYS` later, a failure kept
+  as a short code, anyone but the owner refused, Add to my cards inserting
+  one new card and touching no other, and every action before
+  `migration_017`.
 
-Eighteen drive the app in a browser. `openApp` opens every one as a student
+Nineteen drive the app in a browser. `openApp` opens every one as a student
 who has seen the first-visit tour, unless it passes `tour: true`; `ready`
 says what to wait for when a page has no "Previous card".
 
@@ -1451,6 +1557,13 @@ says what to wait for when a page has no "Previous card".
   part do nothing; Enter on a step that explains leaves the card alone;
   Finish lands in Lesson 1; never again after a reload, on another computer,
   or for a student with answers; "Take the tour again".
+- `podcasts`: the Podcasts pages, on their own Vite (port 5191) with the test
+  account as admin, the podcast tables and `/api/podcasts` stood in: the
+  switch for the owner only and none for a student, the round trip both ways
+  with the same card and no card written, Episodes and "To try again", an
+  episode's tabs, Listen starting `LISTEN_LEAD_S` early, answering, Add to my
+  cards as one request with no card written from the browser, the tutor told
+  about the episode, and the message before `migration_017`.
 
 ### Rules for writing checks
 
@@ -1591,8 +1704,8 @@ narrowed to My cahier (owner, 2026-10-04; `src/lib/lessonChoice.js`).
   was on only because it had been started goes off. One switched on by hand,
   or by a first answer inside it, stays on.
 - **My cahier** deals every card that isn't a lesson's: classes from the
-  linked doc, uploads, and words added from the tutor (owner, 2026-10-04). It
-  keeps a set of its own.
+  linked doc, uploads, and words added from the tutor (owner, 2026-10-04) or,
+  since 2026-10-09, from a podcast passage. It keeps a set of its own.
 - **Switching a lesson changes the set on screen like a fresh deck does**:
   what has been shown, answered or lined up for a retry stays, and the cards
   not yet reached are dealt again (`switchSig`, `dealtSwitchRef`). A set under
@@ -1784,6 +1897,232 @@ in favour of seen and about N remembered; the `stats` suite fails if the word
 appears. The threshold went with the spot checks on 2026-09-26. The only
 "Mastered" left is an admin-only column in the users table
 (`api/admin-users.js`, legacy `card_progress.score >= 3`).
+
+---
+
+## Podcasts
+
+A second part of the app beside Flashcards: listening practice with RFI's
+podcasts for learners, such as Journal en français facile. The owner agreed
+it from a clickable mockup (`.claude/mockups/podcasts.html`, on the owner's
+Mac only, not in the repo) and said "i like it build it" (owner,
+2026-10-09). The mockup holds every approved label.
+
+It is the owner's alone until they have tried it (owner, 2026-10-09: "this
+module should only be for me right now"). It is on the `testing` branch, the
+owner's test app, and reaches `main` only when the owner says so (see
+*Working protocol*).
+
+**Who can see it**
+
+- **Only the owner has the switch.** The sidebar's Flashcards / Podcasts
+  switch is drawn only when the signed-in account is `VITE_ADMIN_EMAIL`
+  (`isAdmin`), which only hides it (see *The sidebar*).
+- **The server is the real check.** `api/podcasts.js` verifies the session,
+  then answers 403 "Admin only" to anyone but `ADMIN_EMAIL`, before any
+  action runs.
+- **A student's app is unchanged**: no switch, no Podcasts pages, nothing new
+  read or kept in their browser. The `podcasts` suite checks that a student
+  build has no switch.
+
+**The pages** (`src/PodcastsPage.jsx`; the shell in `src/FlashcardApp.jsx`
+keeps which page is showing)
+
+- **Episodes**: every episode of the podcasts followed, newest first, each
+  row with its podcast's name above the title and a status: "Not started",
+  "3 of 9 passages answered", or "7 of 9 passages understood" once all are
+  answered. "To try again" comes first when a passage is due back, and such
+  a row says "2 passages to try again". With nothing followed: "Add a podcast
+  under My podcasts to see its episodes here."
+- **My podcasts**: a box for a Spotify link ("Paste a Spotify link", Add),
+  and a card for each podcast followed, saying "4 of 12 episodes done".
+  There is no way to stop following one yet.
+- **A podcast's page**: its episodes, headed with its name and "RFI".
+- **An episode's page**: a play bar for RFI's recording (speeds 1, 0.75 and
+  1.25) and three tabs, Questions, Transcript and Words to learn. Journal en
+  français facile's episodes are headed with the long date ("Tuesday 6
+  October"); the others with the episode's title, and the podcast and date
+  beneath. The back pill says "Episodes" or the podcast's name, whichever you
+  came from.
+- **Words to learn** lists every key phrase of the episode's passages once,
+  each with "Add to my cards". **Transcript** shows RFI's text story by
+  story, each with its start time to jump to.
+
+**Only RFI's learner podcasts, for now** (owner, 2026-10-09)
+
+- Journal en français facile, Les mots de l'info, and Un mot, une histoire,
+  listed in code (`src/lib/podcastCatalogue.js`). The database keeps only a
+  podcast's slug, so a slug must never change.
+- Anything else gets "Only RFI's learner podcasts can be added for now, such
+  as Journal en français facile."
+
+**Reading RFI** (`api/_lib/podcastSource.js`)
+
+- **The feed.** Each podcast's RSS feed gives the episodes: title, date,
+  page, MP3 and length. The page link's tracking query string is dropped. The
+  server reads the feed when a podcast is followed, and again at most every
+  10 minutes while Podcasts is open. A feed read writes only the feed's
+  columns, so it never blanks a transcript or questions saved later.
+- **The episode's page**, read the first time anyone opens the episode. The
+  transcript is the paragraphs inside `.m-transcription__content`, without
+  its "Voir plus" / "Voir moins" button. The stories are the chapter items
+  (`li.a-chapter`) that come before `.t-content__transcription`, each with
+  its start time ("01:18 Mouvement lycéen : 450 000 manifestants…"); the
+  first is "Les titres", the headlines. Les mots de l'info and Un mot, une
+  histoire have no stories.
+- **No transcript yet**: the page says "RFI hasn't published a transcript for
+  this episode." RFI sometimes publishes one late, so an open 15 minutes or
+  more later reads the page again.
+- **No HTML parser**: the project has none, so this is plain string work,
+  written against pages saved on 2026-10-09. A page that isn't what's
+  expected gives nothing rather than an error.
+- **Only two sites can be read**, `francaisfacile.rfi.fr` and
+  `open.spotify.com`, over https, with a 10-second limit and a 2 MB cap, and
+  a redirect to anywhere else isn't followed. Students paste the links, so a
+  link must never make the server fetch something else.
+- **No key is needed** for RFI or Spotify, so Podcasts adds no environment
+  variable.
+
+**A Spotify link finds its podcast by title**
+
+- The server asks Spotify's oEmbed for the link's title, then looks for it
+  among the episode titles of every podcast in the catalogue.
+- A title matches exactly (apostrophes, spacing and capitals aside), or as
+  the start of an episode's title, at least 40 characters long, because
+  Spotify cuts long titles.
+- **A show link's oEmbed title is the show's latest episode, not the show's
+  name** (checked 2026-10-09). So a show link is matched the same way, and
+  every feed is read for it.
+- An episode link also opens that episode.
+- A link that matches nothing while a feed couldn't be read says RFI
+  couldn't be reached, not that it isn't RFI's. A Journal link while the
+  Journal's feed was down was told it wasn't one of RFI's (found
+  2026-10-09).
+
+**The questions: written once per episode, shared by everyone**
+(`api/_lib/podcastQuestions.js`)
+
+- **No multiple choice** (owner, 2026-10-09). Each question shows a French
+  passage of RFI's transcript with a Listen button and asks "What's being
+  said here? Give the idea in English." (about two-thirds) or "Translate into
+  English."
+- **How many.** A Journal episode gets one passage per story, and a second
+  for the longest or hardest, 8 to 10 in all; the headlines and the sign-off
+  get none. A short episode on one topic gets 3, spread through it. Never more
+  than 10 (`MAX_PASSAGES`). Episodes over 12 minutes are out of scope for
+  now: they still get at most 10.
+- **Written the first time anyone opens the episode**, by Claude, and saved
+  on `podcast_episodes.questions` for every student. A lease
+  (`questions_lease_until`, three minutes) means two people opening a new
+  episode at once pay once. The second sees "Writing the questions for this
+  episode…" and the page asks again every 4 seconds, for up to 2 minutes.
+- **Checked, not trusted.** A passage is kept only if it is word for word in
+  one paragraph of the transcript (spacing and apostrophes aside). The server
+  gives each passage its key, from its own French (`s1-3fa2c1d0`), so
+  questions written again can never pin an old answer on a different
+  passage. Fewer than 3 good passages and nothing is saved: the next open
+  tries again.
+- **A failure is kept on the episode as a short code** ("busy:429"), never
+  Claude's own message, because every signed-in student can read the row.
+- **The words to learn** follow the notes reader's card rules: dictionary
+  form, the article on a noun. A noun that lives in the plural keeps it,
+  with "les" ("les vacances", "les dégâts"). A singular "dégât" would have
+  been added beside the owner's own "les dégâts" as a second card (found
+  2026-10-09).
+
+**Listen plays RFI's own recording**, not the browser's voice (owner,
+2026-10-09)
+
+- RFI publishes no time for each sentence, only each story's start. So the
+  passage's start and end are estimated from where it sits in its story's
+  text: the share of the story's characters before it, times the story's
+  length, from the story's start (`src/lib/podcastTiming.js`). A podcast with
+  no stories is one story.
+- **Listen starts 3 seconds before the estimate and stops 2 seconds after
+  it** (owner, 2026-10-09; `LISTEN_LEAD`, `LISTEN_TAIL`). The button reads
+  "Stop" while it plays.
+- RFI reads at a steady 15 to 16 characters a second (seven Journal
+  episodes, 1 to 9 October 2026), so the estimate should be good to a few
+  seconds. A clip of someone interviewed, faster or slower, can move it.
+- One recording per episode page, shared by the play bar and every Listen,
+  so two never play at once. It stops when the page goes.
+
+**Claude marks each answer**
+
+- The verdict is "Got it", "Partly" or "Missed". Claude says which of the
+  passage's ideas the answer holds, by meaning, not wording, and the server
+  works the verdict out from those, so the pill and the sentence under it
+  always agree.
+- Under the answer: what was caught and what was missed ("You caught that
+  450,000 people protested. You missed that parents joined the marches.";
+  for a translation, the French words), Claude's note if it has one useful
+  sentence, "A good answer: …", and the passage's key phrases highlighted,
+  each with "Add to my cards".
+- The answer is saved for that student only (`podcast_answers`), with the
+  model and prompt version. A failed save still shows the verdict.
+- **A passage not fully understood comes back three days later** (owner,
+  2026-10-09; `RETRY_DAYS`): unanswered again, in its episode, with "Back for
+  another try" above it, and the episode listed under "To try again". The
+  result box says when: "The 2 passages you didn't fully get come back on
+  Monday 12 October." A passage's state is its latest answer
+  (`src/lib/podcastProgress.js`).
+
+**"Add to my cards" makes an ordinary card and touches nothing else**
+(owner's rule: updates never reset progress)
+
+- It goes through the server (`add-card`), never straight from the browser,
+  and uses the deck's same-card rule (`src/lib/cardMatch.js`).
+- A card the student already has, in study or not, adds nothing: "In your
+  deck".
+- A card they removed stays removed: "You removed this card earlier".
+  Whether an Add should bring it back isn't decided (see *Open items*).
+- A near look-alike is put to Claude. If that can't be answered, nothing is
+  added on a guess: "Couldn't check this one. Try again."
+- A new card is inserted, never written over another row, as a word (`V`),
+  with no class dates, no schedule (it starts new both ways round) and the
+  source `podcast:<episode id>`.
+- Like a tutor card it is the student's own (`addedByStudent`,
+  `src/lib/sessionQueue.js`): dated by the day it was added, dealt on My
+  cahier, left alone by "Replace my existing deck", and given no uncertain
+  class dates by the morning check's new-card order. All four ask the same
+  test, so a third way of adding a card can't be missed in one of them.
+
+**The tutor on Podcasts**
+
+- It is told the episode's name, RFI's transcript (clipped to 12,000
+  characters) and the passage on screen, with whether it has been answered
+  (`api/chat.js`, "A podcast episode").
+- Like an unanswered card, an unanswered passage isn't translated or
+  summarised, even when asked; the tutor helps with a word or the grammar
+  instead. Once it is answered, the tutor may explain it in full.
+- The hidden flashcard is never sent from Podcasts. A question about another
+  passage starts a fresh thread (its key, `pod:<episode id>:<passage key>`,
+  works as a card's row id does).
+- Feedback sent from Podcasts names the page it came from (`podcasts/episode`).
+
+**The three tables** (`migration_017`, waiting for the owner)
+
+- `podcast_episodes`: every episode of a podcast anyone follows, kept once
+  for everyone: the feed's columns, RFI's transcript and stories, and the
+  questions with which prompt and model wrote them. Only the server writes
+  it; any signed-in user can read it.
+- `podcast_follows`: which podcasts each student follows, and the link each
+  was added from. Each student reads, adds and removes their own.
+- `podcast_answers`: every answer to a passage, one row each, like
+  `card_reviews`: the passage's key and French, what was typed, the verdict
+  and feedback, and `due_at` for a passage coming back. The server writes
+  them; each student reads their own; nobody changes or deletes one.
+- **Podcast answers never go into `card_reviews` or `dealt_sets`**, which the
+  status check, the FSRS fit and Stats read.
+- **Until `migration_017` is run**, the Podcasts pages say "Podcasts need a
+  database update first: run migrations/migration_017_podcasts.sql in
+  Supabase." Flashcards is unchanged either way.
+
+**Tests.** `podcast-feed` and `podcast-marking` need no browser; `podcasts`
+drives the pages (see *The suites*). They run on short synthetic French in
+RFI's markup (`tests/fixtures/podcasts`): RFI's text is copyrighted and the
+repo is public, so no real transcript is committed. No suite reads RFI or
+Spotify, or calls Claude.
 
 ---
 
@@ -1995,7 +2334,8 @@ tab for each:
   Cases Claude gets wrong are listed in the tab either way. The same answer
   disputed more than once is one case, judged by the strongest call.
 - **Tests on GitHub.** `.github/workflows/tests.yml` builds the app, runs the
-  simulated students and every test suite on each push to `main`. A failure
+  simulated students and every test suite on each push to `main` or
+  `testing` (`testing` since 2026-10-09, 78a4946). A failure
   marks the commit and emails whoever pushed. A browser suite that fails gets
   one second try and is named in the summary.
 
@@ -2615,23 +2955,54 @@ and fixed with a test that fails without it:
   longer counts as the fix being live; the owner passes `--fix-live` after
   the deploy.
 
+### 2026-10-09 — Podcasts on the testing branch
+
+The owner asked for listening practice with RFI's podcasts for learners. A
+clickable mockup was agreed first (`.claude/mockups/podcasts.html`, on the
+owner's Mac only), and the owner said "i like it build it". Two more
+decisions came with it. "this module should only be for me right now": so
+only the owner has the switch, and the server refuses everyone else. And
+"segment the updates i am now making between the application i use (and will
+be testing) and the app given to others": so Podcasts was built on a new
+branch, `testing`, which Vercel deploys as the owner's test app at
+https://french-flashcards-git-testing-mlboryczkas-projects.vercel.app, while
+`main` stays the students' app. GitHub runs the tests on pushes to both
+(78a4946). The test app uses the same database as the live one, so until
+`testing` is released into `main` its migrations must be additive:
+`migration_017` adds three new tables and changes nothing else. A card the
+owner adds from a podcast is an ordinary card in their real deck. See
+*Podcasts*, and *Working protocol* for the branch.
+
+Three things went wrong during the build and were fixed, each with a check:
+a Journal link while the Journal's feed was down was told it wasn't one of
+RFI's; a noun that lives in the plural ("les dégâts") was made singular, so
+it would have sat beside the owner's own card as a second one; and a stored
+story with no first paragraph read as paragraph 0, which put the whole
+transcript under the headlines. Cards added from a podcast are dated like
+tutor cards, through one test (`addedByStudent`) used by the new-card order,
+Replace and the morning check alike. Tested against stand-ins only
+(`podcast-feed`, `podcast-marking` and `podcasts`, and new cases in `logic`,
+`serving`, `progress`, `repeats`, `status` and `auth`): no call was made to
+the real Claude, RFI or Spotify, and nothing was written to the live
+database.
+
 ---
 
 ## Open items
 
 In order: the owner's to-dos, bugs, things not yet checked on the live app,
 and ideas. One item, the lesson bar by section, is agreed but not built.
+Podcasts is built and waits on the test app for `migration_017` and the
+owner's try.
 
 ### The owner's to-dos
 
-- **Run `migrations/migration_016_notes_read_once.sql`** in the Supabase SQL
-  editor. Until then uploads and the sync know classes by date only: an
-  unchanged re-upload still reads nothing new, but a line added to an old
-  class waits for it, two runs at once aren't stopped, Replace takes nothing
-  out of study (it says so), a removed card keeps no reason, and a removed lesson card comes back with its lesson. The checks
-  of repeated cards wait for it too: no look-alike is put to Claude and no
-  removal can be judged.
-- **Then record why the 2026-10-06 clean-up put cards away**:
+- **Run `migrations/migration_017_podcasts.sql`** in the Supabase SQL
+  editor. It adds Podcasts' three new, empty tables and changes nothing that
+  exists, so the students' app is the same before and after. Until it is
+  run, Podcasts on the test app says it needs a database update, and nothing
+  there can be tried.
+- **Record why the 2026-10-06 clean-up put cards away**:
   `node scripts/record-cleanup-reasons.mjs --plan <cleanup-plan.json>`, read
   the list, then again with `--apply`. It writes 82 repeats and the 2
   removed cards (a write to live cards: three columns, backed up first), so
@@ -2719,10 +3090,40 @@ and ideas. One item, the lesson bar by section, is agreed but not built.
 - **The Anthropic SDK never updates itself.** Below 1.0 a caret pins the minor
   version, so `^0.124.0` stays 0.124.x through every reinstall. Update it
   deliberately.
+- **Podcasts doesn't check that the caller follows the podcast** (2026-10-09).
+  Opening an episode (which writes its questions the first time), marking an
+  answer and adding a card all take any episode's id, and any signed-in
+  account can read every episode. Only the owner can call them now, so it
+  costs nothing. Before students get Podcasts, the owner decides on this
+  check together with who pays for an episode's questions (see *Who pays for
+  Claude*).
+- **Whether "Add to my cards" should bring back a card the student removed
+  isn't decided** (2026-10-09). For now it doesn't: the button says "You
+  removed this card earlier" and nothing is written, as the lesson sync
+  leaves a removed card out. An Add is the student asking for that word
+  again, so the owner may want it back in study instead.
 
 ### Not yet checked on the live app
 
 Each was tested against the mock or a stand-in only; worth checking signed in.
+
+- **Podcasts** (2026-10-09), on the test app once `migration_017` is run.
+  Every part was tested against stand-ins only.
+  - Claude, for real: no real call has written an episode's questions or
+    marked an answer. Which passages it picks, the ideas it lists, the words
+    it offers and how lenient its marking is are unseen on a real episode.
+    Open a Journal en français facile episode and answer a few passages, one
+    deliberately half right.
+  - Listen's timing with RFI's real audio: the start and stop are checked
+    against the estimate, not heard. Press Listen on passages early, in the
+    middle and at the end of an episode, and on one with someone
+    interviewed; each should start just before the passage and stop just
+    after it.
+  - RFI and Spotify from Vercel's servers: the feeds, the episode pages and
+    Spotify's oEmbed were read from the Mac while building the parsing,
+    never from Vercel, which either site could treat differently. Add a
+    podcast by pasting a Spotify episode link and a show link, and open an
+    episode.
 
 - **The checks of repeated cards** (2026-10-06). Only stand-ins have
   answered the look-alike question in the morning run and in its test. After
@@ -2847,6 +3248,11 @@ Each was tested against the mock or a stand-in only; worth checking signed in.
   her template is the same in all four (dialogue, grammar, numbers, then
   exercises with an answer key), so they are the examples to design from.
 - **`splitSenses.js` still runs Opus 5** where Sonnet would do.
+- **Claude's work in Podcasts isn't tested against the owner's decisions**
+  (2026-10-09), unlike its marking of disputed answers, its reading of notes
+  and its same-card question. Nothing yet records what the owner thinks of a
+  podcast verdict or a passage Claude picked, so there are no right answers
+  to test against yet.
 - **Stale comments.** Two comments still say adding a lesson copies its cards,
   though there is no add step: the one above the Lessons page in
   `src/FlashcardApp.jsx` and the header of `src/data/lessons/index.js`. Several

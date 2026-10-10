@@ -27,8 +27,11 @@
 //     by then: that card gains its class dates instead, so the word isn't in
 //     study twice (2026-10-06). No other card out of study comes back: one
 //     the student removed, or one put away as a repeat, stays out;
-//   • lesson cards belong to their lesson and tutor cards to the student, so
-//     both are left alone;
+//   • lesson cards belong to their lesson, and cards the student added
+//     themselves (from the tutor, or from a podcast passage since 2026-10-09;
+//     sessionQueue.js's addedByStudent) belong to the student, so all of
+//     them are left alone. They have no class dates, so without this an
+//     unanswered one would be taken out by every Replace and never come back;
 //   • before migration_016 nothing is taken out (api/_lib/notesReading.js): a
 //     card taken out then couldn't say a Replace took it, so it would never
 //     come back.
@@ -40,9 +43,10 @@ import { ARCHIVE_PREFIX, isArchived } from "./archive.js";
 import { LESSON_SOURCE_PREFIX } from "./lessonSource.js";
 import { DIRECTIONS, sideOf } from "./directions.js";
 import { cardIndex } from "./sameCard.js";
+import { addedByStudent } from "./sessionQueue.js";
 
 const leftAlone = (row) =>
-  typeof row.source === "string" && (row.source.startsWith(LESSON_SOURCE_PREFIX) || row.source === "tutor-chat");
+  typeof row.source === "string" && (row.source.startsWith(LESSON_SOURCE_PREFIX) || addedByStudent(row));
 
 // Answered at least once, either way round: French to English or English to
 // French. Any sign of an answer counts: a state other than new, an answer

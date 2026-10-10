@@ -1,15 +1,17 @@
 # Where Claude is used
 
 Claude is only ever called from the server, never from the browser. It does
-five jobs in the app, and is called again each week to test two of them:
+seven jobs in the app, and is called again each week to test two of them:
 
 | Job | Model | Paid for by |
 |---|---|---|
 | Reading class notes into cards | Haiku 4.5 | the owner for the linked notebook; the student for an upload |
-| Settling whether a new card is one the student has | Opus 5.5 | the same as the reading |
+| Settling whether a new card is one the student has | Opus 5.5 | the same as the reading; the owner for a word added in Podcasts |
 | Judging a disputed mark | Opus 5 | the student |
 | Reviewing feedback | Opus 5.5 | the owner |
 | The tutor | Sonnet 5 | the student |
+| Writing an episode's listening questions, in Podcasts (the owner's only, for now) | Opus 5.5 | the owner |
+| Marking an answer to a podcast passage (the owner's only, for now) | Opus 5.5 | the owner |
 | Testing its own marking and note reading | the same as the app | the owner |
 
 "The owner" is the person who runs the app, and also studies with it. Three
@@ -87,6 +89,40 @@ suggest new cards, but it never writes to the database itself. A suggested card
 is shown to the student, who can edit it before adding it, and the student's
 own browser saves it under their own permissions.
 
+On Podcasts the tutor is told the episode and the passage on screen instead
+of a card. Until the passage has been answered, it won't translate or
+summarise it, since that is the exercise.
+
+## Listening questions in Podcasts
+
+Podcasts is a part of the app for listening practice with RFI's podcasts for
+learners, such as Journal en français facile. For now only the owner has it,
+on a test copy of the app, while they try it out. Students don't see it, and
+the server refuses anyone else. Claude does two jobs there.
+
+**Writing an episode's questions.** The first time an episode is opened,
+Claude reads RFI's transcript and picks passages from it: one for each story
+of a ten-minute news bulletin, and a second for the longest or hardest, 8 to
+10 in all; three for a short episode on one topic. Each passage asks the
+student either to give its idea in English or to translate it. For each,
+Claude writes a good answer, the ideas a good answer must hold, and up to
+four words worth a card. The server keeps only passages found word for word
+in the transcript, and works out where each one is said in the recording.
+The questions are saved and shared by everyone who opens the episode, so
+Claude writes them once per episode, not once per student. Opus 5.5, at
+medium effort, with up to two and a half minutes.
+
+**Marking an answer.** Claude says which of the passage's ideas the answer
+holds, judging meaning rather than wording: the student's own words count,
+and a wrong meaning is a miss. The verdict follows from that: "Got it" when
+every idea is there, "Partly" when some are, and "Missed" when none are. It
+may add one sentence about a specific misunderstanding, such as « davantage »
+meaning "more", not "about". A passage not fully understood comes back three
+days later. Opus 5.5, at low effort, because the student is waiting.
+
+Adding a word from a passage to the student's cards uses the same-card
+question above when the word looks like a card the student already has.
+
 ## Who pays
 
 Students pay for their own requests with their own Anthropic API key, entered
@@ -99,6 +135,10 @@ The owner's key, set on the server, pays for the owner's own requests, and for
 work no student asks for: reading every linked notebook (the daily job runs
 with no student there to pay), reviewing feedback (the reviews are for the
 owner), and the weekly tests of Claude's work.
+
+While Podcasts is the owner's alone, the owner pays for all of it. Before
+students get it, the owner will decide who pays for an episode's questions,
+which every student who opens the episode shares.
 
 Before students brought their own keys, three routes accepted callers they
 shouldn't have, one of them anyone at all, signed in or not, and all three
@@ -123,6 +163,10 @@ spent the owner's credit.
 - Speech uses the browser's own French voice. An earlier version sent text to a
   paid speech service through two routes that had no sign-in check at all.
   They were removed rather than patched.
+- For Podcasts the server reads two outside sites, RFI's and Spotify's, and
+  no others: only those two addresses, over https, with a time limit and a
+  size limit, and a redirect anywhere else is refused. Students paste the
+  links, so a link can never make the server fetch something else.
 
 ## Cost
 
@@ -130,6 +174,13 @@ Hosting runs on the free tiers of Supabase and Vercel. Claude is the only bill.
 As rough estimates, reading a new class costs a cent or two (one Haiku 4.5
 call), and judging a disputed mark under 3 cents (one Opus 5 call, with the
 reply capped at 1,000 tokens).
+
+For Podcasts, as rough estimates worked out from the size of the
+instructions and a ten-minute transcript, not measured: writing an episode's
+questions costs about 10 to 25 cents, once per episode (one Opus 5.5 call,
+with the reply capped at 16,000 tokens), and marking an answer about a cent,
+and under 5 cents at most (one Opus 5.5 call, with the reply capped at 2,000
+tokens).
 
 ## In the code
 
@@ -139,5 +190,8 @@ reply capped at 1,000 tokens).
 - `api/review-answer.js`: judging a disputed mark, and (through
   `api/_lib/feedbackReview.js`) reviewing feedback
 - `api/chat.js`: the tutor
+- `api/podcasts.js` and `api/_lib/podcastQuestions.js`: writing and marking
+  the questions in Podcasts (`api/_lib/podcasts.js` does the work, and
+  `api/_lib/podcastSource.js` reads RFI and Spotify)
 - `api/_lib/auth.js` and `api/_lib/anthropicKey.js`: who may call, and whose
   key pays

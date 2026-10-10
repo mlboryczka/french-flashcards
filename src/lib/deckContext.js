@@ -179,6 +179,84 @@ export function cardAnswer(card) {
   return dropFinalPeriod(card.shownDir === "en" ? card.f : card.b);
 }
 
+// ── A podcast episode instead of a card (owner, 2026-10-09) ───────────────
+// On Podcasts (owner only for now) there is no card on screen. What the tutor
+// is told instead is the RFI episode being worked through: its name, RFI's own
+// transcript, and the passage being answered, with whether it has been
+// answered yet. The podcasts page hands it up as
+//   { key, episode: { title, date, show },
+//     passage: { fr, kind, answered, typed, verdict } | null,
+//     transcript }
+// (build spec §11) and FlashcardApp passes it to the tutor as `podcast`.
+//
+// Kept apart from the card on purpose: cardPrompt, cardAnswer and "don't give
+// the answer away" are about a flashcard, and the passage has a rule of its
+// own (api/chat.js, "A podcast episode"): until it is answered, the tutor
+// doesn't translate or summarise it, since that is the exercise.
+
+// What goes to the tutor, at most. A Journal en français facile transcript
+// came to between 9,000 and 9,700 characters on seven saved episode pages
+// (measured roughly, tags stripped, 2026-10-09), so this keeps all of one; it
+// costs the asker a few thousand input tokens per question (an estimate),
+// which is the price of answers that quote the episode rather than guess at
+// it. The server clips to the same.
+export const PODCAST_TRANSCRIPT_MAX = 12000;
+// A passage is 1–4 sentences; this is room for four long ones.
+export const PODCAST_PASSAGE_MAX = 800;
+const PODCAST_VERDICTS = new Set(["got", "partly", "missed"]);
+
+const textOf = (v) => (typeof v === "string" ? v.trim() : "");
+
+/** The episode, named: RFI's title, else the show and its date. */
+export function podcastLabel(podcast) {
+  const ep = podcast?.episode && typeof podcast.episode === "object" ? podcast.episode : {};
+  return textOf(ep.title) || [textOf(ep.show), textOf(ep.date)].filter(Boolean).join(" · ");
+}
+
+/**
+ * What a question asked on Podcasts was about, kept on the turn as its
+ * `about` (the server clips it to 200 characters): the episode and the start
+ * of the passage, never the transcript.
+ */
+export function podcastAbout(podcast) {
+  const label = podcastLabel(podcast).slice(0, 70);
+  const fr = textOf(podcast?.passage?.fr);
+  if (!fr) return label;
+  const head = fr.length > 120 ? `${fr.slice(0, 119).trimEnd()}…` : fr;
+  return label ? `${label}: « ${head} »` : `« ${head} »`;
+}
+
+/**
+ * The episode as sent in the request's `context.podcast`, or null when there
+ * is nothing to send. What the student typed goes only once the passage has
+ * been answered: a draft half-typed in the box is theirs, and a tutor that
+ * corrected it would be answering the question for them.
+ */
+export function podcastContext(podcast) {
+  if (!podcast || typeof podcast !== "object") return null;
+  const ep = podcast.episode && typeof podcast.episode === "object" ? podcast.episode : {};
+  const p = podcast.passage && typeof podcast.passage === "object" ? podcast.passage : null;
+  const fr = p ? textOf(p.fr).slice(0, PODCAST_PASSAGE_MAX) : "";
+  const answered = !!p?.answered;
+  const typed = answered ? textOf(p.typed).slice(0, PODCAST_PASSAGE_MAX) : "";
+  const out = {
+    title: textOf(ep.title).slice(0, 200),
+    date: textOf(ep.date).slice(0, 200),
+    show: textOf(ep.show).slice(0, 200),
+    passage: fr
+      ? {
+          fr,
+          kind: p.kind === "translate" ? "translate" : "gist",
+          answered,
+          ...(typed ? { typed } : null),
+          ...(answered && PODCAST_VERDICTS.has(p.verdict) ? { verdict: p.verdict } : null),
+        }
+      : null,
+    transcript: textOf(podcast.transcript).slice(0, PODCAST_TRANSCRIPT_MAX),
+  };
+  return out.title || out.show || out.passage || out.transcript ? out : null;
+}
+
 /**
  * Assemble everything the tutor endpoint is given about the learner's deck.
  * Returns undefined when there is nothing worth sending, so the request body
@@ -191,8 +269,10 @@ export function cardAnswer(card) {
  * @param {Array}  opts.cards             shaped deck rows
  * @param {object} [opts.currentCard]     the card on screen, with the study
  *   view's live state: `answered`, and after a typed answer `typed` and `result`
+ * @param {object} [opts.podcast]         on Podcasts, the episode on screen and
+ *   the passage being answered (see podcastContext). Sent as `podcast`.
  */
-export function buildTutorContext({ question, previousQuestion, cards, currentCard }) {
+export function buildTutorContext({ question, previousQuestion, cards, currentCard, podcast }) {
   const ctx = {};
 
   if (currentCard?.f) {
@@ -214,6 +294,11 @@ export function buildTutorContext({ question, previousQuestion, cards, currentCa
       missedLastTime: sideOf(currentCard, currentCard.shownDir).last_answer_correct === false,
     };
   }
+
+  // Only ever one of the two: there is no card on screen on Podcasts. A card,
+  // if both came, wins, as the thing the study view is asking right now.
+  const pod = currentCard?.f ? null : podcastContext(podcast);
+  if (pod) ctx.podcast = pod;
 
   let related = findRelatedCards(question, cards);
   if (!related.length && previousQuestion) related = findRelatedCards(previousQuestion, cards);

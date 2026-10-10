@@ -68,6 +68,14 @@ const SPENDERS = [
    { user_answer: "a hill", expected_answer: "a hill", card_id: "une colline" }],
   ["/api/review-answer (feedback)", "../../api/review-answer.js", { feedback: { action: "review" } }],
   ["/api/cahier-parse", "../../api/cahier-parse.js", { text: "bonjour = hello" }],
+  // Podcasts (2026-10-09): the three actions that can call Claude. Owner only,
+  // so the forged admin token below matters here too.
+  ["/api/podcasts (episode: writing its questions)", "../../api/podcasts.js",
+   { action: "episode", episodeId: "00000000-0000-4000-8000-000000000001" }],
+  ["/api/podcasts (mark)", "../../api/podcasts.js",
+   { action: "mark", episodeId: "00000000-0000-4000-8000-000000000001", key: "s1-00000000", typed: "The drivers are on strike." }],
+  ["/api/podcasts (add-card: the same-card question)", "../../api/podcasts.js",
+   { action: "add-card", episodeId: "00000000-0000-4000-8000-000000000001", front: "un cortège", back: "a protest march" }],
 ];
 
 console.log("\n  no session: the endpoint refuses, and nothing is billed");

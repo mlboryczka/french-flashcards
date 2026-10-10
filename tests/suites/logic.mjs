@@ -449,6 +449,16 @@ console.log("\n  replacing the deck works by class and never deletes a card");
      JSON.stringify({ stay: ow.stay.map((r) => r.id), out: ow.archive.map((r) => r.id) }));
   ck("nothing is ever deleted", !("remove" in plan));
   ck("lesson and tutor cards are left alone", !plan.archive.some((r) => r.id === 5 || r.id === 6));
+  // A card added with "Add to my cards" under a podcast passage (2026-10-09)
+  // belongs to the student as a tutor card does: it has no class dates, so a
+  // Replace would otherwise take it out unanswered, for good.
+  const added = planReplace([
+    row(21, "un cortège", [], { source: "podcast:3f2a9c4e-0000-4000-8000-000000000001" }),
+    row(22, "grimper", [], { source: "tutor-chat" }),
+    row(23, "ouvrir", []),
+  ], ["2026-01-05"]);
+  ck("a card added from a podcast passage is left alone, as a tutor card is, while a notes card with no class in the upload leaves",
+     added.archive.map((r) => r.id).join(",") === "23", added.archive.map((r) => r.id).join(","));
   ck("a card a Replace took out comes back when its class is in the upload", plan.restore.map((r) => r.id).join(",") === "8",
      plan.restore.map((r) => r.id).join(","));
   ck("a card the student removed never does", !plan.restore.some((r) => r.id === 7));
@@ -717,6 +727,86 @@ console.log("\n  archive — out of circulation, recoverable");
      choicesOf({ user_metadata: { lessons_in_cards: { imperatif: true } } }).imperatif === true &&
      Object.keys(choicesOf({ user_metadata: { lessons_in_cards: ["imperatif"] } })).length === 0 &&
      Object.keys(choicesOf(null)).length === 0);
+}
+
+// The tutor on Podcasts (owner only, 2026-10-09). There is no card on screen
+// there: the tutor is told the RFI episode, its transcript and the passage
+// being answered, and until the passage is answered it must not translate or
+// summarise it, because that is the exercise.
+console.log("\n  the tutor on Podcasts — the episode and the passage, instead of a card");
+{
+  const { PODCAST_TRANSCRIPT_MAX, podcastAbout } = await import("../../src/lib/deckContext.js");
+  const text = (m) => (typeof m.content === "string" ? m.content : m.content.map((b) => b.text).join(""));
+  const passageFr = "Les manifestants ont défilé dans le calme jusqu’à la place de la République.";
+  // Long enough to be cut by the 200-character limit cards get, with a marker
+  // well past it, and another past the transcript's own limit.
+  const middle = "BIEN-AU-DELA-DE-DEUX-CENTS";
+  const beyond = "AU-DELA-DE-LA-LIMITE";
+  const transcript = `Bonsoir à tous. ${"Il fait beau. ".repeat(40)}${middle} ${"x".repeat(PODCAST_TRANSCRIPT_MAX)}${beyond}`;
+  const podcast = (passage) => ({
+    key: "pod:ep-1:s1-abcdef12",
+    episode: { title: "Les mots de l’info : défiler", date: "Tuesday 6 October", show: "Les mots de l’info" },
+    passage,
+    transcript,
+  });
+  const unanswered = podcast({ fr: passageFr, kind: "translate", answered: false, typed: "the protesters", verdict: null });
+
+  const ctx = buildTutorContext({ question: "what does défiler mean?", cards: [], podcast: unanswered });
+  ck("the passage on screen is sent, marked as not answered", ctx?.podcast?.passage?.fr === passageFr && ctx.podcast.passage.answered === false,
+     JSON.stringify(ctx?.podcast?.passage));
+  ck("a half-typed answer is not sent before the passage is checked", !("typed" in (ctx?.podcast?.passage || {})),
+     JSON.stringify(ctx?.podcast?.passage));
+  ck("the transcript is kept up to its limit and no further",
+     ctx?.podcast?.transcript.length === PODCAST_TRANSCRIPT_MAX && ctx.podcast.transcript.includes(middle) && !ctx.podcast.transcript.includes(beyond),
+     `${ctx?.podcast?.transcript.length} characters`);
+  ck("no card is described on Podcasts", !ctx?.currentCard, JSON.stringify(Object.keys(ctx || {})));
+  const withCard = buildTutorContext({ question: "why?", cards: [], currentCard: { f: "une colline", b: "a hill", shownDir: "fr", answered: false }, podcast: unanswered });
+  ck("a card on screen is what the tutor is told about, never both", !!withCard?.currentCard && !withCard.podcast, JSON.stringify(Object.keys(withCard || {})));
+
+  const about = podcastAbout(unanswered);
+  ck("a question keeps the episode and the start of its passage as what it was about",
+     about.length <= 200 && about.includes("Les mots de l’info") && about.includes("Les manifestants"), about);
+  ck("never the transcript", !about.includes("Bonsoir"), about);
+
+  const out = buildRequestMessages({
+    messages: [
+      { role: "user", content: "a hint?", about },
+      { role: "assistant", content: "Think of a parade." },
+      { role: "user", content: "what does défiler mean?" },
+    ],
+    context: ctx,
+  });
+  const last = text(out[out.length - 1]);
+  ck("an earlier question keeps what was on screen, without calling it a card",
+     /Asked while this was on screen/.test(text(out[0])) && /Les manifestants/.test(text(out[0])) && !/this card/.test(text(out[0])), text(out[0]));
+  ck("the passage goes with the latest question", last.includes(passageFr), last.slice(0, 300));
+  ck("an unanswered passage is flagged as not to be translated", /NOT answered/.test(last) && /do not translate/.test(last), last.slice(0, 400));
+  ck("it says which exercise the passage is", /translate it into English/.test(last), last.slice(0, 400));
+  // The server clips on its own as well: a request built some other way is
+  // held to the same limit.
+  const raw = text(buildRequestMessages({
+    messages: [{ role: "user", content: "what does défiler mean?" }],
+    context: { podcast: { ...ctx.podcast, transcript } },
+  }).at(-1));
+  ck("the transcript reaches the tutor well past the 200 characters a card gets, up to its limit",
+     last.includes(middle) && raw.includes(middle) && !raw.includes(beyond), `${raw.length} characters sent from ${transcript.length}`);
+  ck("the earlier turns carry no transcript, so the history stays the same from turn to turn",
+     !text(out[0]).includes("Bonsoir") && !text(out[1]).includes("Bonsoir"), text(out[0]).slice(0, 120));
+
+  const answeredCtx = buildTutorContext({
+    question: "why only partly?",
+    cards: [],
+    podcast: podcast({ fr: passageFr, kind: "gist", answered: true, typed: "People marched calmly", verdict: "partly" }),
+  });
+  const after = text(buildRequestMessages({ messages: [{ role: "user", content: "why only partly?" }], context: answeredCtx }).at(-1));
+  ck("once checked, what they typed and how it was marked are sent",
+     after.includes("People marched calmly") && /partly right/.test(after) && !/NOT answered/.test(after), after.slice(0, 400));
+  ck("a gist passage is described as giving the idea", /give the idea of it in English/.test(after), after.slice(0, 400));
+
+  const episodeOnly = buildTutorContext({ question: "what does amerrir mean?", cards: [], podcast: podcast(null) });
+  const epText = text(buildRequestMessages({ messages: [{ role: "user", content: "what does amerrir mean?" }], context: episodeOnly }).at(-1));
+  ck("with no passage on screen, the episode and its transcript still go", /Podcast episode on screen/.test(epText) && epText.includes(middle) && !/passage on their screen/.test(epText),
+     epText.slice(0, 200));
 }
 
 const n = ck.fails();

@@ -30,7 +30,7 @@ and its judging of whether two look-alike cards are the same card against
 repeats the owner put away and pairs that must stay apart. Before any change
 to scheduling, simulated students study for six months with the app's own
 code, including messy ones who reload mid-set or wander off into a lesson. And
-36 test suites run on GitHub on every push.
+39 test suites run on GitHub on every push.
 [Evaluation harness](docs/evaluation-harness.md)
 
 ![The Status window, where the owner sees the nine checks](docs/screenshots/status.png)
@@ -91,11 +91,12 @@ known both ways round.
 
 - React 18 and Vite, with no router and no CSS framework.
 - Supabase: Postgres with row-level security, and sign-in by emailed link.
-- Vercel: 12 server functions, the most its free plan allows, and four
+- Vercel: 11 server functions, one fewer than its free plan allows, and four
   scheduled runs a day.
-- Claude, called only from the server: Haiku 4.5 reads class notes, Opus 5
-  judges disputed marks, Opus 5.5 reviews feedback and settles look-alike
-  cards, and Sonnet 5 is the tutor.
+- Claude, called only from the server: Haiku 4.5 reads class notes; Opus 5
+  judges disputed marks; Opus 5.5 reviews feedback, settles look-alike cards,
+  and writes and marks the listening questions in Podcasts, which only the
+  owner has so far; and Sonnet 5 is the tutor.
 - ts-fsrs for scheduling, and the FSRS team's optimizer for fitting each
   student's settings.
 - Playwright driving headless Chromium for the browser tests, and GitHub

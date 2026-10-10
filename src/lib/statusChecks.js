@@ -39,7 +39,7 @@ import { State, Rating, makeScheduler, toFsrsTime } from "./spacedRepetition.js"
 import { buildHistories, replayHistory } from "./fsrsHistory.js";
 import { STARTING_WEIGHTS, targetOf, usableWeights } from "./fsrsSettings.js";
 import { sideOf, isTwoWay, directionsOf, otherDirection } from "./directions.js";
-import { classDaysOf } from "./sessionQueue.js";
+import { classDaysOf, addedByStudent } from "./sessionQueue.js";
 import { lessonIdOf } from "./lessonSource.js";
 import { classifyCard } from "./cardTypes.js";
 import { isArchived } from "./archive.js";
@@ -532,7 +532,10 @@ function newCardKey(card, { lessonMode, cutoff, lessonRank }, has = () => true) 
   const r = Number.isFinite(rank) ? rank : Infinity;
   if (lessonMode) return [r];
   if (lessonIdOf(card)) return [3, r];
-  const days = classDaysOf(card).filter((d) => card.source === "tutor-chat" || has(d)).sort();
+  // A card the student added (the tutor, a podcast passage) is dated by the
+  // day it was added, which the app always knew: not a class whose notes may
+  // not have arrived yet.
+  const days = classDaysOf(card).filter((d) => addedByStudent(card) || has(d)).sort();
   if (!days.length) return [2];
   const latest = days[days.length - 1];
   if (latest >= cutoff) return [0, -labelNo(latest), -days.length];
@@ -574,7 +577,7 @@ function checkNewOrder(idx, ctx) {
     const keyed = (card) => ({
       card,
       changed: changed(card),
-      unsure: card.source === "tutor-chat" ? [] : classDaysOf(card).filter((iso) => known(iso) === "maybe"),
+      unsure: addedByStudent(card) ? [] : classDaysOf(card).filter((iso) => known(iso) === "maybe"),
       key: newCardKey(card, opts, sure),
     });
     // `w` comes before `x` however the uncertain dates stood.

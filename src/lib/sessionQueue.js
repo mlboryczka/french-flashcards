@@ -119,13 +119,25 @@ function shuffleInPlace(arr, rng = Math.random) {
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+// A card the student added themselves, from the tutor chat ("tutor-chat") or
+// with "Add to my cards" under a podcast passage ("podcast:<episode id>",
+// 2026-10-09). Neither came up in a class, so neither has class dates, and
+// they are treated alike everywhere the app asks: dated by the day they were
+// added (classDaysOf below, and so Stats' areas), left alone by "Replace my
+// existing deck" (lib/replaceDeck.js), and given no uncertain class dates by
+// the Morning check's new-card order (lib/statusChecks.js). One test, so a
+// third way of adding a card can't be missed in one of those places.
+export const addedByStudent = (card) =>
+  card?.source === "tutor-chat" || (typeof card?.source === "string" && card.source.startsWith("podcast:"));
+
 // The classes a card came up in, as YYYY-MM-DD strings.
 //
-// Notes cards carry them in `dates`. A card the student added from the tutor
-// chat came up in no class, so it is dated by the day it was added: it counts
-// as recent for two weeks, then joins the older pile as a word seen once.
+// Notes cards carry them in `dates`. A card the student added themselves
+// (addedByStudent: the tutor chat, a podcast passage) came up in no class, so
+// it is dated by the day it was added: it counts as recent for two weeks,
+// then joins the older pile as a word seen once.
 export function classDaysOf(card) {
-  if (card?.source === "tutor-chat" && card.created_at) {
+  if (addedByStudent(card) && card.created_at) {
     const t = new Date(card.created_at);
     if (!Number.isNaN(t.getTime())) return [localISODate(t)];
   }

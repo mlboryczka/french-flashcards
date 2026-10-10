@@ -19,6 +19,14 @@ cards.
 
 Lessons are a fourth source, described below.
 
+Podcasts is a fifth, and for now only the owner has it, while they try it
+out. Under each passage of an RFI episode, the words worth learning, such as
+"un cortège" (a protest march), each have an "Add to my cards" button. The
+card it makes is an ordinary one, checked against the student's cards by the
+same rule as every other way in: a word they already have adds nothing, and
+a card they removed stays removed. Like a card from the tutor, it counts as
+one of the student's own, dated by the day it was added.
+
 ## The linked notebook
 
 The owner (who runs the app and studies with it) set these rules for the
@@ -111,9 +119,9 @@ has answered, either way round, always stays in study, and the message says
 how many did. A later Replace upload
 that has their class again brings them back, unless the same card is in study
 by then (a lesson's copy of it, say), which gains their class dates instead.
-Lesson cards and cards added from the tutor are left alone. Until the database
-update that came with this (migration_016) is run, Replace takes nothing out,
-and the upload's message says so.
+Lesson cards, and cards the student added from the tutor or a podcast, are
+left alone. Until the database update that came with this (migration_016) is
+run, Replace takes nothing out, and the upload's message says so.
 
 After an upload, the message says what was added, which classes were already
 read, and, by date, any class Claude couldn't read (upload the same notes

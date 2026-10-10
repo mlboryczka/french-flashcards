@@ -76,8 +76,96 @@ import { sideOf, sideColumns, directionsOf, isTwoWay, itemKey, resetColumns } fr
 import { newReviewId, reviewRow, withoutExtras, missingColumn } from "./lib/reviewLog";
 import { dealRow, missingTable } from "./lib/dealLog";
 import { uploadResultText } from "./lib/uploadText";
+// The Podcasts module (owner, 2026-10-09). Its pages, their hooks and all of
+// the episode audio live in PodcastsPage; the shell here only owns which
+// module is showing, which podcasts page, and the sidebar that marks it.
+import PodcastsPage from "./PodcastsPage";
+import { usePodcastFollows } from "./usePodcasts";
+import { podcastBySlug } from "./lib/podcastCatalogue";
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "").toLowerCase();
+// The owner's account. Client-side only, so it only ever HIDES things: every
+// podcasts action is refused on the server for anyone else (api/podcasts.js).
+const isAdminUser = (user) => !!(user?.email && user.email.toLowerCase() === ADMIN_EMAIL);
+
+// ─── PODCASTS: WHERE THE OWNER WAS ───────────────────────────────────────
+// The sidebar's switch has two halves, Flashcards and Podcasts (owner,
+// 2026-10-09), and for now only the owner sees it: Podcasts stays owner-only
+// until they have tried it, so a student's app has no switch, no Podcasts
+// pages and writes nothing new to this browser.
+//
+// The page a reload opens has always been Cards: `mode` is never saved, only
+// the place inside the cards (lib/studyPlace.js). Podcasts is a module, not a
+// page, and an episode half-answered is a place, so the owner's place there is
+// kept per user, in this browser: whether Podcasts was showing, and which of
+// its pages. A reload on Flashcards still opens Cards exactly as before.
+//
+// Read only for the owner, written only for the owner, dropped on sign-out
+// (App.jsx). Every access is wrapped: storage throws in private windows and
+// when it is full, and a lost place only costs a click.
+const PODCASTS_PLACE_KEY = "podcasts-place:";
+const PODCASTS_PLACE_VERSION = 1;
+const POD_VIEWS = ["episodes", "mine", "podcast", "episode"];
+const POD_TABS = ["questions", "transcript", "words"];
+// Where Podcasts opens the first time: the Episodes list.
+const POD_HOME = { view: "episodes", podcast: null, episodeId: null, from: "episodes", tab: "questions" };
+// One empty list, not a new one per render, for the page's effects to compare.
+const NO_FOLLOWS = [];
+
+// A podcasts page as PodcastsPage expects it (build spec §11), from whatever
+// was stored. Anything that doesn't add up (an episode page with no episode)
+// goes back to Episodes rather than to a page that can't draw.
+function cleanPodView(v) {
+  if (!v || typeof v !== "object" || !POD_VIEWS.includes(v.view)) return POD_HOME;
+  const podcast = typeof v.podcast === "string" && v.podcast ? v.podcast : null;
+  const episodeId = typeof v.episodeId === "string" && v.episodeId ? v.episodeId : null;
+  // A podcast the catalogue no longer has would be marked in the sidebar
+  // while the page (PodcastsPage's own check) shows Episodes.
+  if (v.view === "podcast" && !podcastBySlug(podcast)) return POD_HOME;
+  if (v.view === "episode" && !episodeId) return POD_HOME;
+  return {
+    view: v.view,
+    podcast,
+    episodeId,
+    from: v.from === "podcast" ? "podcast" : "episodes",
+    tab: POD_TABS.includes(v.tab) ? v.tab : "questions",
+  };
+}
+
+function readPodcastsPlace(userId) {
+  if (!userId) return null;
+  try {
+    const p = JSON.parse(localStorage.getItem(PODCASTS_PLACE_KEY + userId) || "null");
+    if (!p || p.v !== PODCASTS_PLACE_VERSION) return null;
+    return { open: p.open === true, view: cleanPodView(p.view) };
+  } catch {
+    return null;
+  }
+}
+
+function writePodcastsPlace(userId, { open, view }) {
+  if (!userId) return;
+  try {
+    localStorage.setItem(PODCASTS_PLACE_KEY + userId, JSON.stringify({ v: PODCASTS_PLACE_VERSION, open, view }));
+  } catch { /* storage blocked: the place is a convenience, not a record */ }
+}
+
+// Called by App.jsx's sign-out, with the deck cache, the tutor thread and the
+// study place: the next person on this browser must not open on the owner's
+// episode.
+export function clearPodcastsPlace(userId) {
+  if (!userId) return;
+  try { localStorage.removeItem(PODCASTS_PLACE_KEY + userId); } catch { /* storage blocked */ }
+}
+
+// Two tutor contexts with the same content. The podcasts page hands one up
+// whenever what is on screen changes; a fresh object with nothing new in it
+// must not re-render the whole app (and, through new props, the page again).
+const sameTutorPodcast = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+};
 
 // Feature flag: hide the pronunciation assessment UI (mic button + results
 // panel) without removing any code. The Azure backend, audio.js parser, and
@@ -381,7 +469,20 @@ export default function FlashcardApp({ user, onSignOut }) {
   // What the last deal or return of a set was made from — see the guard at the
   // top of the deck-build effect.
   const scheduledRef = useRef(null);
-  const [mode, setMode] = useState("study"); // study | stats | feedback
+  // The owner's place in Podcasts, read once (see readPodcastsPlace). Never
+  // read for anyone else, so a student's app opens exactly as it always has.
+  const podPlaceRef = useRef(undefined);
+  if (podPlaceRef.current === undefined) {
+    podPlaceRef.current = isAdminUser(user) ? readPodcastsPlace(user?.id) : null;
+  }
+  // The page: study | lessons | stats | podcasts. "study" is Cards and also
+  // the inside of a lesson (lessonFilter). "podcasts" is the whole Podcasts
+  // module, whichever of its pages is showing (podView, below), so the module
+  // is derived from the page rather than kept as state of its own: the tour
+  // and enterLesson set the page, and that alone brings the sidebar back to
+  // Flashcards. A separate module flag left behind on Podcasts would have the
+  // tour pointing at a Lessons item that isn't drawn.
+  const [mode, setMode] = useState(() => (podPlaceRef.current?.open ? "podcasts" : "study"));
   // seen/got/missed count TYPED answers only — those are verifiable, and
   // accuracy built from self-reported flips would be meaningless. `answered`
   // counts every graded card in either mode, so the end-of-session summary
@@ -672,9 +773,79 @@ export default function FlashcardApp({ user, onSignOut }) {
   // it came back, and accepted a wrong answer there.
   const disputeRef = useRef(null);
   const autoAdvanceTimer = useRef(null);
-  const isAdmin = !!(user?.email && user.email.toLowerCase() === ADMIN_EMAIL);
+  const isAdmin = isAdminUser(user);
   // "Status" in the profile menu (admin only): whether the cards are being
   // shown the way FSRS and the app's rules say. See lib/statusChecks.js.
+
+  // ── PODCASTS (owner only, 2026-10-09) ──────────────────────────────────
+  // Everything the shell keeps for the Podcasts module sits here, above the
+  // early returns (Loading, the onboarding screen): a hook below them would
+  // change the number of hooks once the deck loads, and React throws.
+  //
+  // Whether Podcasts is showing. Owner only: `mode` can only become
+  // "podcasts" through goPodcasts or the owner's saved place, both of which
+  // check, and this checks again so nothing a student could reach depends on
+  // that holding.
+  const podcastsOn = isAdmin && mode === "podcasts";
+  useEffect(() => { if (mode === "podcasts" && !isAdmin) setMode("study"); }, [mode, isAdmin]);
+  // Which Podcasts page: Episodes, My podcasts, one podcast, or one episode
+  // and its tab (shape: build spec §11). Kept here, not in the page, because
+  // the sidebar marks Episodes, My podcasts or the podcast you're in from it,
+  // and because the page unmounts whenever Flashcards is showing; coming back
+  // to Podcasts opens the page you left.
+  const [podView, setPodView] = useState(() => podPlaceRef.current?.view || POD_HOME);
+  // The Flashcards page to go back to: switching back opens Lessons or Stats
+  // if that is where you were, not Cards every time. Nothing else is touched
+  // on the way out or back: the set, the card on screen, a typed answer and
+  // the retries lined up all stay as they were, because the deck-build effect
+  // and the place-saving effect don't depend on the page (never add `mode` to
+  // either; owner rule: updates never reset progress).
+  const lastCardsModeRef = useRef("study");
+  useEffect(() => { if (mode !== "podcasts") lastCardsModeRef.current = mode; }, [mode]);
+  // The switch's two halves. Stable, so the tour can call goFlashcards.
+  const goPodcasts = useCallback(() => {
+    if (isAdmin) setMode("podcasts");
+  }, [isAdmin]);
+  const goFlashcards = useCallback(() => {
+    setMode((m) => (m === "podcasts" ? lastCardsModeRef.current || "study" : m));
+  }, []);
+  // Changing module stops the browser voice: a card being read aloud must
+  // not carry on over an episode, nor a podcast word over the next card. The
+  // episode's own recording is the podcasts page's to pause, and it does so
+  // as it unmounts. Keyed on the change itself, so it never runs for a
+  // student, whose app can't change module.
+  const podcastsWasOnRef = useRef(podcastsOn);
+  useEffect(() => {
+    if (podcastsWasOnRef.current === podcastsOn) return;
+    podcastsWasOnRef.current = podcastsOn;
+    stopSpeaking();
+  }, [podcastsOn]);
+  // The podcasts the owner follows, listed under My podcasts in the sidebar
+  // and handed to the page. Not asked for at all in a student's app.
+  const podFollows = usePodcastFollows(user, { enabled: isAdmin });
+  const followedSlugs = useMemo(
+    () => (podFollows?.follows || NO_FOLLOWS).map((f) => f?.podcast).filter((s) => typeof s === "string" && s),
+    [podFollows?.follows]
+  );
+  // The owner's place, kept as it changes (see readPodcastsPlace). Never
+  // written for anyone else.
+  useEffect(() => {
+    if (!isAdmin || !user?.id) return;
+    writePodcastsPlace(user.id, { open: podcastsOn, view: podView });
+  }, [isAdmin, user?.id, podcastsOn, podView]);
+  // What the tutor is told about the episode on screen: the podcasts page
+  // hands it up (shape: build spec §11) and the tutor gets it while Podcasts
+  // is showing. The hidden flashcard is never sent from here: tutorCard is
+  // null on any page but Cards.
+  const [tutorPodcast, setTutorPodcast] = useState(null);
+  const onTutorPodcast = useCallback((ctx) => {
+    const next = ctx && typeof ctx === "object" ? ctx : null;
+    setTutorPodcast((prev) => (sameTutorPodcast(prev, next) ? prev : next));
+  }, []);
+  // The page's callbacks, made once, so a page effect that depends on them
+  // doesn't run again on every render of the app.
+  const onPodcastCardAdded = useCallback((row) => (row ? addDeckCard(row) : reloadDeck()), [addDeckCard, reloadDeck]);
+  const onPodcastNeedKey = useCallback(() => setShowKeyModal(true), []);
 
   // Load card alternates from Supabase on mount (and when user changes)
   useEffect(() => {
@@ -1240,13 +1411,18 @@ export default function FlashcardApp({ user, onSignOut }) {
   }, [tourSeenKey, user]);
   const startTour = useCallback(() => {
     markTourSeen();
+    // The tour is about the cards and walks the Flashcards sidebar (Lessons,
+    // Cards, Stats, Tutor). "Take the tour again" pressed on Podcasts brings
+    // Flashcards back first, or its first step would light an item that
+    // isn't drawn.
+    goFlashcards();
     setShowProfileMenu(false);
     setShowSettings(false);
     setShowChat(false);
     setShowFeedback(false);
     setTourRun((n) => n + 1);
     setTourOpen(true);
-  }, [markTourSeen]);
+  }, [markTourSeen, goFlashcards]);
   useEffect(() => {
     if (tourChecked.current || !user || !loaded || !deckFreshSeq || !tourLesson || accountTourSeen === null) return;
     let seenHere = false;
@@ -1421,6 +1597,9 @@ export default function FlashcardApp({ user, onSignOut }) {
 
   const tutorCard = useMemo(() => {
     // After the last card of a block the checkpoint replaces it on screen.
+    // Off Cards there is no card on screen, Podcasts included: the set is
+    // still dealt behind it, and that hidden card must not reach the tutor
+    // as "Card on screen" while the question is about an episode.
     if (mode !== "study" || !card || sessionDone) return null;
     const answered = flipped || !!typeResult || revealedSlot === cardSlot;
     return {
@@ -2666,9 +2845,35 @@ export default function FlashcardApp({ user, onSignOut }) {
     stats: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>,
     lessons: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
     tutor: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9.1 9a2.5 2.5 0 0 1 4.9.6c0 1.7-2.5 2.5-2.5 2.5"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
+    // Podcasts (owner only): Episodes, My podcasts, and the switch's half on
+    // the rail. The same drawings as the approved mockup.
+    episodes: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>,
+    mine: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16.85 18.58a9 9 0 1 0-9.7 0"/><path d="M8 14a5 5 0 1 1 8 0"/><circle cx="12" cy="11" r="1"/><path d="M13 17a1 1 0 1 0-2 0l.5 4.5a.5.5 0 1 0 1 0Z"/></svg>,
+    headphones: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>,
   };
 
   const navItems = [["study", "Cards"], ["lessons", "Lessons"], ["stats", "Stats"]];
+
+  // ── Podcasts' side of the sidebar (owner only, 2026-10-09) ──
+  // Episodes, then My podcasts with the podcasts followed beneath it, then
+  // Tutor, as on Flashcards. Same buttons, same marker, same rail.
+  const podNavItems = [["episodes", "Episodes"], ["mine", "My podcasts"]];
+  // Which one is marked: exactly one, as on Flashcards. Episodes and My
+  // podcasts are their own pages. On a podcast's page, or one of its
+  // episodes, the podcast under My podcasts is marked, however you got there.
+  // Where that podcast isn't drawn (the rail has no room for sub-items, and a
+  // podcast still loading isn't listed yet), My podcasts, which it sits
+  // under, stands in for it, so the marker never vanishes.
+  const podMarked = (() => {
+    const v = podView.view;
+    if (v === "episodes" || v === "mine") return v;
+    const slug = podView.podcast;
+    return slug && !sidebarMin && followedSlugs.includes(slug) ? `follow:${slug}` : "mine";
+  })();
+  // Opening a podcasts page from the sidebar. An episode page is reached from
+  // the pages themselves; they set `from`, which the back pill reads.
+  const openPodPage = (view, podcast = null) =>
+    setPodView({ ...POD_HOME, view, podcast, from: view === "podcast" ? "podcast" : "episodes" });
 
   // Exactly one thing in the nav is ever marked.
   //
@@ -2750,7 +2955,83 @@ export default function FlashcardApp({ user, onSignOut }) {
             <span style={S.sideIcon}>{SIDEBAR_TOGGLE_ICON(true)}</span>
           </button>
         )}
-        {navItems.map(([m, label]) => {
+        {/* Flashcards or Podcasts (owner, 2026-10-09): two halves at the top
+            of the nav, below the rail's expand button, the selected one
+            white. On the rail they stack as two icons, named on hover. Owner
+            only until the owner has tried it: a student's sidebar has no
+            switch and is exactly what it was. */}
+        {isAdmin && (
+          <div
+            data-module-switch
+            role="group"
+            aria-label="Flashcards or podcasts"
+            style={sidebarMin ? S.modSwitchMin : S.modSwitch}
+          >
+            {[
+              ["flashcards", "Flashcards", NAV_ICONS.study, goFlashcards],
+              ["podcasts", "Podcasts", NAV_ICONS.headphones, goPodcasts],
+            ].map(([key, label, icon, go]) => {
+              const on = (key === "podcasts") === podcastsOn;
+              return (
+                <button
+                  key={key}
+                  data-module={key}
+                  className="mod-btn"
+                  aria-pressed={on}
+                  // Composed from four parts with the same keys whichever
+                  // half and whichever width: React updates styles property by
+                  // property, and an override setting a key the other variant
+                  // lacks is left behind on the way back (the 24b55b7 bug).
+                  style={{ ...S.modBtn, ...(sidebarMin ? S.modBtnRail : S.modBtnWide), ...(on ? S.modBtnOn : S.modBtnOff) }}
+                  onClick={go}
+                  title={sidebarMin ? label : undefined}
+                  aria-label={sidebarMin ? label : undefined}
+                >
+                  {sidebarMin ? <span style={S.sideIcon}>{icon}</span> : label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {podcastsOn && podNavItems.map(([key, label]) => {
+          const baseStyle = sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem;
+          const marked = podMarked === key;
+          return (
+            <Fragment key={key}>
+              <button
+                data-pod-nav={key}
+                className="side-btn"
+                aria-current={marked ? "page" : undefined}
+                style={marked ? { ...baseStyle, ...S.sideItemActive } : baseStyle}
+                onClick={() => openPodPage(key)}
+                title={sidebarMin ? label : undefined}
+                aria-label={sidebarMin ? label : undefined}
+              >
+                <span style={S.sideIcon}>{NAV_ICONS[key]}</span>
+                {!sidebarMin && label}
+              </button>
+              {/* The podcasts followed, under My podcasts, each opening its
+                  own page. Not on the rail, which has no room to nest
+                  anything (as with the lessons under Lessons). */}
+              {key === "mine" && !sidebarMin && followedSlugs.map((slug) => {
+                const on = podMarked === `follow:${slug}`;
+                return (
+                  <button
+                    key={slug}
+                    data-pod-follow={slug}
+                    className="side-btn"
+                    aria-current={on ? "page" : undefined}
+                    style={on ? { ...S.sideSubItem, ...S.sideSubItemActive } : S.sideSubItem}
+                    onClick={() => openPodPage("podcast", slug)}
+                  >
+                    {podcastBySlug(slug)?.name || slug}
+                  </button>
+                );
+              })}
+            </Fragment>
+          );
+        })}
+        {!podcastsOn && navItems.map(([m, label]) => {
           const baseStyle = sidebarMin ? { ...S.sideItem, ...S.sideItemMin } : S.sideItem;
           const activeStyle = S.sideItemActive;
           return (
@@ -2931,7 +3212,10 @@ export default function FlashcardApp({ user, onSignOut }) {
             <BetaFeedback
               compact={sidebarMin}
               user={user}
-              currentPage={mode}
+              // Which Podcasts page feedback came from (podcasts/episode,
+              // podcasts/mine…), not just "podcasts": the review reads it as
+              // "from the <page> page".
+              currentPage={podcastsOn ? `podcasts/${podView.view}` : mode}
               currentCard={mode === "study" ? card : null}
               open={showFeedback}
               onOpen={openFeedback}
@@ -2996,6 +3280,11 @@ export default function FlashcardApp({ user, onSignOut }) {
         // Live rather than a snapshot, so the tutor follows you as you advance
         // through the session — with whether each card's answer has been shown.
         currentCard={tutorCard}
+        // On Podcasts, the episode on screen instead, and the passage being
+        // answered, handed up by the podcasts page. Only while Podcasts is
+        // showing: a context left over from an episode must not ride along
+        // with a question asked on Cards.
+        podcast={podcastsOn ? tutorPodcast : null}
         thread={tutorThread}
         // The insert hands back the row, so the deck takes it in place; only a
         // write that returned nothing falls back to a refetch.
@@ -3111,6 +3400,42 @@ export default function FlashcardApp({ user, onSignOut }) {
       )}
     </>
   );
+
+  // ── PODCASTS (owner only, 2026-10-09) ───────────────────────────────
+  // Every page of the module is PodcastsPage's: Episodes, My podcasts, a
+  // podcast, an episode with its questions, and the episode's audio.
+  //
+  // The same three children as every other page (sidebar, main, modals), in
+  // the same places, so React keeps the sidebar, the tutor, the lesson notes
+  // and the tour mounted across the switch: anything added beside them, or a
+  // wrapper round them, would remount the tutor and lose a question being
+  // typed. The page sits INSIDE main, so the tutor's reflow (main's right
+  // padding) moves it aside like any page; a play bar fixed to the window
+  // would sit under the tutor instead.
+  if (podcastsOn) {
+    return (
+      <div style={shellStyle}>
+        {sidebar}
+        <main style={mainStyle}>
+          <PodcastsPage
+            user={user}
+            view={podView}
+            setView={setPodView}
+            follows={podFollows?.follows || NO_FOLLOWS}
+            followsMissing={!!podFollows?.missing}
+            reloadFollows={podFollows?.reload}
+            deckCards={userCards}
+            archivedCards={archivedCards}
+            onCardAdded={onPodcastCardAdded}
+            onTutorContext={onTutorPodcast}
+            openChat={openChat}
+            onNeedKey={onPodcastNeedKey}
+          />
+        </main>
+        {modals}
+      </div>
+    );
+  }
 
   // ── STATS VIEW ──────────────────────────────────────────────────────
   // ── LESSONS ──────────────────────────────────────────────────────────
@@ -5047,6 +5372,31 @@ const S = {
   // The arrow on Lessons: down while its lessons are folded away, up while they show.
   sideChevron: { display:"flex", marginLeft:"auto", opacity:0.7, transition:"transform 0.2s" },
   sideChevronOpen: { transform:"rotate(180deg)" },
+  // ── The Flashcards / Podcasts switch (owner only, 2026-10-09) ────────
+  // A pill of two halves at the top of the nav, as in the approved mockup:
+  // the selected half white and lifted, the other plain. Full width it reads
+  // "Flashcards" / "Podcasts"; on the rail it stacks into two icons.
+  //
+  // Every variant declares the SAME keys, all as longhands: React updates a
+  // style property by property, so a key only one variant sets is left behind
+  // when switching back (the 24b55b7 sidebar bug: the rail's paddingTop:8
+  // over a padding shorthand, and Cards slid up under the button on
+  // expanding). Toggled both ways — the width, and the half that's selected.
+  //
+  // On the rail the right margin is 4px wider than the left. The nav items
+  // carry a 4px marker border on their right, which moves their icons 2px
+  // left of the rail's middle; this puts the switch's icons on that same line.
+  modSwitch: { display:"flex", flexDirection:"row", gap:2, flex:"none", marginTop:0, marginRight:20, marginBottom:18, marginLeft:20, paddingTop:3, paddingRight:3, paddingBottom:3, paddingLeft:3, background:T.color.surfaceHigh, borderRadius:T.radius.lg, boxSizing:"border-box" },
+  modSwitchMin: { display:"flex", flexDirection:"column", gap:2, flex:"none", marginTop:6, marginRight:14, marginBottom:12, marginLeft:10, paddingTop:3, paddingRight:3, paddingBottom:3, paddingLeft:3, background:T.color.surfaceHigh, borderRadius:T.radius.lg, boxSizing:"border-box" },
+  // A half. Its border is declared side by side and transparent, so nothing
+  // that reads the nav's right-hand marker counts it as a marked page.
+  modBtn: { display:"flex", alignItems:"center", justifyContent:"center", minWidth:0, marginTop:0, marginRight:0, marginBottom:0, marginLeft:0, borderTopWidth:0, borderTopStyle:"solid", borderTopColor:"transparent", borderRightWidth:0, borderRightStyle:"solid", borderRightColor:"transparent", borderBottomWidth:0, borderBottomStyle:"solid", borderBottomColor:"transparent", borderLeftWidth:0, borderLeftStyle:"solid", borderLeftColor:"transparent", borderRadius:T.radius.md, cursor:"pointer", fontFamily:T.font.sans, fontSize:12, fontWeight:600, lineHeight:"16px", whiteSpace:"nowrap", transition:"background 0.15s, color 0.15s, box-shadow 0.15s" },
+  // Side by side, sharing the width / stacked, each its own height.
+  modBtnWide: { flexGrow:1, flexShrink:1, flexBasis:0, paddingTop:7, paddingRight:0, paddingBottom:7, paddingLeft:0 },
+  modBtnRail: { flexGrow:0, flexShrink:0, flexBasis:"auto", paddingTop:8, paddingRight:0, paddingBottom:8, paddingLeft:0 },
+  // Selected / not.
+  modBtnOn: { background:T.color.surfaceLowest, boxShadow:T.shadow.focus, color:T.color.primary },
+  modBtnOff: { background:"transparent", boxShadow:"none", color:T.color.onSurfaceVariant },
   // ── Sidebar bottom: avatar + email + feedback in one row ────────────
   sideDivider: { marginTop:"auto", height:1, background:"rgba(3,22,50,0.07)", marginLeft:20, marginRight:20 },
   sideBottom: { padding:"14px 20px 4px" },

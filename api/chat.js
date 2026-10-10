@@ -13,7 +13,7 @@
 // Request body (JSON):
 //   {
 //     messages: [
-//       { role: "user", content: "...", about?: "..." },  // about: the card's prompt when asked
+//       { role: "user", content: "...", about?: "..." },  // about: what was on screen when asked
 //       { role: "assistant", content: "...", cards?: [{ front, back }] },
 //     ],
 //     context?: {
@@ -22,6 +22,15 @@
 //         answered,                               // has the answer been shown yet
 //         result?, typed?,                        // this attempt, after a typed answer
 //         missedLastTime,
+//       },
+//       podcast?: {                               // on Podcasts, instead of a card
+//         title, date, show,                      // the RFI episode
+//         passage: {                              // the passage being answered, or null
+//           fr, kind: "gist" | "translate",
+//           answered,                             // has it been checked yet
+//           typed?, verdict?,                     // once answered: "got" | "partly" | "missed"
+//         } | null,
+//         transcript,                             // RFI's transcript, clipped
 //       },
 //       relatedCards?: [{ front, back }],         // deck matches for the question
 //       recentMisses?: [{ front, back }],         // misses that bear on the question
@@ -106,13 +115,20 @@ Write plain prose. No bullet lists, headings or tables — they are not rendered
 
 The latest user turn may carry a "[Context]" block: the card on their screen, cards already in their deck that relate to the question, and recent misses that bear on it. Use it — refer to their actual cards, tell them when they already have something, point out when your answer contradicts a card they own. Never mention the block itself or that you were given it.
 
-Earlier turns may carry bracketed notes — the card that was on screen when they asked, the cards you proposed. They are for your reference. Never write notes like them yourself.
+Earlier turns may carry bracketed notes — what was on their screen when they asked (a card, or a podcast passage), the cards you proposed. They are for your reference. Never write notes like them yourself.
 
 ## The card on screen
 
 They study by recalling the answer before it is shown, and the app records each attempt to decide when they see the card again. So:
 - If the card has NOT been answered yet, never state the expected answer, or a form of it, or a word that gives it away — not even if they ask outright. Help them recall it instead: the gender, a related word, a context it turns up in, the first letter. If they want the answer itself, tell them to reveal it on the card.
 - If they typed an answer, you are told what they typed and how it was marked. When they ask why, compare what they wrote with the expected answer — that is the question.
+
+## A podcast episode
+
+Instead of a card, the [Context] block may name an episode of an RFI podcast for learners that they are working through, with RFI's transcript of it, and the passage on their screen. Each passage asks them either to give the idea in English or to translate it into English, and their answer is then marked.
+- If the passage has NOT been answered yet, do not translate it, summarise it or give its gist — not even if they ask outright, because that is the exercise. Help with a single word, a grammar point or how something is said instead, and tell them that checking their answer shows a good one.
+- Once it has been answered, you may explain the passage in full and say what their answer missed.
+- When they ask about a word or phrase from the episode, quote the transcript where it comes up.
 
 ## Proposing flashcards
 
@@ -208,10 +224,13 @@ function sanitizeMessages(raw) {
 
 // The text a turn is sent as. The latest user turn skips its note: the
 // [Context] block describes the same card in full.
+//
+// "this", not "this card": on Podcasts the note is the episode and the start
+// of the passage (owner, 2026-10-09), and calling that a card would mislead.
 function renderTurn(m, isLatest) {
   if (m.role === "user") {
     return m.about && !isLatest
-      ? `[Asked while this card was on screen: "${m.about}"]\n${m.content}`
+      ? `[Asked while this was on screen: "${m.about}"]\n${m.content}`
       : m.content;
   }
   return m.proposed.length
@@ -248,6 +267,9 @@ function buildContextBlock(ctx) {
   const cur = ctx.currentCard;
   const line = cur && typeof cur === "object" ? currentCardLines(cur) : "";
   if (line) parts.push(line);
+
+  const pod = ctx.podcast && typeof ctx.podcast === "object" ? podcastLines(ctx.podcast) : "";
+  if (pod) parts.push(pod);
 
   const related = cardList(ctx.relatedCards);
   if (related.length) {
@@ -294,6 +316,63 @@ function currentCardLines(cur) {
   return lines.join("\n");
 }
 
+// The podcast episode on screen, on Podcasts (owner only, 2026-10-09). Like
+// the card, whether the passage has been answered decides what the tutor may
+// say (see "A podcast episode" in the system prompt), so it is stated.
+//
+// Its own clip limits: the shared clip() stops at 200 characters, which would
+// cut a passage of four sentences in half and leave nothing of the transcript.
+// A Journal en français facile transcript came to 9,000–9,700 characters on
+// seven saved episode pages (measured roughly, 2026-10-09); 12,000 keeps one
+// whole. It rides only on the latest question, so it is paid for once per
+// question and never piles up in the history.
+const PODCAST_TEXT_MAX = 200;
+const PODCAST_PASSAGE_MAX = 800;
+const PODCAST_TRANSCRIPT_MAX = 12000;
+const clipTo = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+
+const PASSAGE_TASK = {
+  gist: "they are asked to give the idea of it in English",
+  translate: "they are asked to translate it into English",
+};
+const VERDICT_TEXT = {
+  got: "was marked as understood",
+  partly: "was marked as partly right",
+  missed: "was marked as missed",
+};
+
+function podcastLines(pod) {
+  const title = clipTo(pod.title, PODCAST_TEXT_MAX);
+  const show = clipTo(pod.show, PODCAST_TEXT_MAX);
+  const date = clipTo(pod.date, PODCAST_TEXT_MAX);
+  const transcript = clipTo(pod.transcript, PODCAST_TRANSCRIPT_MAX);
+  const p = pod.passage && typeof pod.passage === "object" ? pod.passage : null;
+  const fr = p ? clipTo(p.fr, PODCAST_PASSAGE_MAX) : "";
+  const name = title || [show, date].filter(Boolean).join(", ");
+  if (!name && !fr && !transcript) return "";
+
+  const about = [show && show !== title ? show : "", date && date !== title ? date : ""].filter(Boolean).join(", ");
+  const lines = [
+    name
+      ? `Podcast episode on screen: "${name}"${about ? ` (${about})` : ""}.`
+      : "Podcast episode on screen.",
+  ];
+  if (fr) {
+    const task = PASSAGE_TASK[p.kind] || PASSAGE_TASK.gist;
+    lines.push(`The passage on their screen, where ${task}: "${fr}"`);
+    const typed = clipTo(p.typed, PODCAST_PASSAGE_MAX);
+    if (!p.answered) {
+      lines.push("They have NOT answered it yet — do not translate or summarise it.");
+    } else if (typed && VERDICT_TEXT[p.verdict]) {
+      lines.push(`They answered "${typed}", which ${VERDICT_TEXT[p.verdict]}.`);
+    } else {
+      lines.push("They have answered it.");
+    }
+  }
+  if (transcript) lines.push(`The episode's transcript (RFI's own):\n${transcript}`);
+  return lines.join("\n");
+}
+
 // Attach the context to the final user turn, leaving the caller's array alone.
 function withContext(messages, contextBlock) {
   const rendered = messages.map((m, i) => ({
@@ -315,6 +394,11 @@ function withContext(messages, contextBlock) {
 // latest question: that question carries this turn's [Context] block, which
 // is gone from it by the next request, so everything up to the turn before it
 // is exactly what the next request will send again.
+//
+// The podcast section (2026-10-09) added about 850 characters to the system
+// prompt, which by the same reckoning puts the pair near 1,050 tokens: an
+// estimate, not measured, and close enough to the line that this breakpoint
+// stays the one that matters.
 function withHistoryCache(messages) {
   if (messages.length < 2) return messages;
   const i = messages.length - 2;

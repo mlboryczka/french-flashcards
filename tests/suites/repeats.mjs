@@ -288,11 +288,15 @@ async function usedDeck({ migrated = true, via = "upload" } = {}) {
   // Removed, the way the app removes a card now.
   const removed = await removeCard({ admin, userId: USER, rowId: byFront(admin, "Naza").id });
   if (removed.status !== 200) throw new Error(`removing a card failed: ${JSON.stringify(removed.json)}`);
-  // A repeat put away by the clean-up, a lesson card, a tutor card.
+  // A repeat put away by the clean-up, a lesson card, a tutor card, and a
+  // card added from a podcast passage (2026-10-09), which has no class dates
+  // either and must be left alone the same way.
   cards(admin).push({ id: 9001, user_id: USER, front: "gratuit (adj)", back: "free", category: "V", dates: [D.C3], source: "archived:cahier-upload",
     fsrs_state: 0, en_fsrs_state: 0, ...(migrated ? { archived_reason: "duplicate", merged_into: byFront(admin, "gratuit").id } : {}) });
   cards(admin).push({ id: 9002, user_id: USER, front: "Je vais bien", back: "I'm fine", category: "V", dates: [], source: "lesson:lecon1#k9", fsrs_state: 2, en_fsrs_state: 0 });
   cards(admin).push({ id: 9003, user_id: USER, front: "une falaise", back: "a cliff", category: "V", dates: [], source: "tutor-chat", fsrs_state: 0, en_fsrs_state: 0 });
+  cards(admin).push({ id: 9004, user_id: USER, front: "un cortège", back: "a protest march", category: "V", dates: [],
+    source: "podcast:3f2a9c4e-0000-4000-8000-000000000001", fsrs_state: 0, en_fsrs_state: 0 });
   return admin;
 }
 
@@ -343,8 +347,9 @@ function headline(label, admin, before, { expectNew = EXPECTED_NEW, expectRead =
   ck(`${label}: the removed card and the put-away repeat stay out of study`,
      isOut(now.cards.find((r) => r.front === "Naza")) && isOut(now.cards.find((r) => r.front === "gratuit (adj)")) &&
        !live.some((r) => /^naza$/i.test(r.front)));
-  ck(`${label}: the lesson and tutor cards are left as they were`,
-     now.cards.find((r) => r.id === 9002)?.source === "lesson:lecon1#k9" && now.cards.find((r) => r.id === 9003)?.source === "tutor-chat");
+  ck(`${label}: the lesson, tutor and podcast cards are left as they were`,
+     now.cards.find((r) => r.id === 9002)?.source === "lesson:lecon1#k9" && now.cards.find((r) => r.id === 9003)?.source === "tutor-chat" &&
+     now.cards.find((r) => r.id === 9004)?.source === "podcast:3f2a9c4e-0000-4000-8000-000000000001");
 }
 
 async function secondTimeAsksNothing(label, admin, run) {

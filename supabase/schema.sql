@@ -159,6 +159,11 @@ create policy "Users manage their own alternates"
 --   migration_015 → answer_reviews (Claude's verdicts on disputed answers),
 --                   eval_runs (tests of Claude's work), status_reports (the
 --                   daily status check on every student)
+--   migration_016 → notes_read, card_pairs, and archived_reason, archived_at,
+--                   merged_into on this table (no card made twice from the
+--                   same notes)
+--   migration_017 → podcast_episodes (shared, written by the server),
+--                   podcast_follows, podcast_answers (the Podcasts module)
 -- Run this file first, then the migrations in order.
 
 create table if not exists public.user_cards (

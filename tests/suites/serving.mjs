@@ -9,7 +9,7 @@
 // wave through a UTC bug.
 process.env.TZ = "America/New_York";
 
-import { buildSession, orderNewCards, classDaysOf, placeRetry, withdrawRetry, applyAnswer } from "../../src/lib/sessionQueue.js";
+import { buildSession, orderNewCards, classDaysOf, addedByStudent, placeRetry, withdrawRetry, applyAnswer } from "../../src/lib/sessionQueue.js";
 import { packSet, unpackEntries } from "../../src/lib/studyPlace.js";
 import { SIDE_FIELDS, sideOf, itemKey, withLocalAnswers } from "../../src/lib/directions.js";
 import { localISODate, localISODateDaysAgo } from "../../src/lib/studyDay.js";
@@ -167,6 +167,31 @@ console.log("\n  tutor chat cards are dated by the day they were added");
   ck("added yesterday: it is a recent card and comes first", order[0] === addedYesterday.id, order.join(" "));
   ck("added a month ago: a word seen once, after the two-class word",
      order.indexOf(twoClassesOld.id) < order.indexOf(addedLastMonth.id), order.join(" "));
+}
+
+// "Add to my cards" under a podcast passage (2026-10-09) makes a card with no
+// class, like the tutor's: it is dated by the day it was added, the same way.
+console.log("\n  cards added from a podcast passage are dated the same way");
+{
+  const source = "podcast:3f2a9c4e-0000-4000-8000-000000000001";
+  const podcastYesterday = newCard({ source, dates: [], created_at: new Date(NOW - DAY).toISOString() });
+  const tutorYesterday = newCard({ source: "tutor-chat", dates: [], created_at: new Date(NOW - DAY).toISOString() });
+  const podcastLastMonth = newCard({ source, dates: [], created_at: new Date(NOW - 30 * DAY).toISOString() });
+  ck("a podcast card counts as added by the student, as a tutor card does, and a notes card doesn't",
+     addedByStudent(podcastYesterday) && addedByStudent(tutorYesterday) && !addedByStudent(newCard({ source: "cahier-upload" })) &&
+     !addedByStudent(newCard({ source: "lesson:imperatif#k" })) && !addedByStudent(newCard({ source: "archived:podcast:x" })) &&
+     !addedByStudent(null));
+  ck("its class day is the local day it was added, the same as a tutor card's",
+     classDaysOf(podcastYesterday)[0] === localISODate(new Date(NOW - DAY)) &&
+     JSON.stringify(classDaysOf(podcastYesterday)) === JSON.stringify(classDaysOf(tutorYesterday)),
+     JSON.stringify(classDaysOf(podcastYesterday)));
+  const twoClassesOld = newCard({ dates: ["2026-02-01", "2026-03-01"] });
+  const undated = newCard({ dates: [] });
+  const order = orderNewCards([undated, twoClassesOld, podcastLastMonth, podcastYesterday], { now: NOW, rng: rng() }).map((c) => c.id);
+  ck("added yesterday: a recent card, first", order[0] === podcastYesterday.id, order.join(" "));
+  ck("added a month ago: a word seen once, after the two-class word and before a card with no date",
+     order.indexOf(twoClassesOld.id) < order.indexOf(podcastLastMonth.id) && order.indexOf(podcastLastMonth.id) < order.indexOf(undated.id),
+     order.join(" "));
 }
 
 // ── Lessons ─────────────────────────────────────────────────────────────
