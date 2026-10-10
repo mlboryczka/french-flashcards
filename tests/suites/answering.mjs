@@ -5,6 +5,7 @@
 // Found on 2026-09-14 by driving every exception path in a study session.
 import { openApp, finish, checker, sessionCounter, cardBox, servedDeck, gotoStats, nullViolation } from "../harness.mjs";
 import { SIDE_FIELDS } from "../../src/lib/directions.js";
+import { localISODateDaysAgo } from "../../src/lib/studyDay.js";
 
 const ck = checker();
 const DAY = 86400000;
@@ -322,9 +323,13 @@ console.log("\n  changing direction re-deals the rest of the block, without a ne
 console.log("\n  Reset all progress resets both ways round, on every card, and the streak");
 {
   const deck = twoWayDeck();
-  // Three days studied, today among them, so the streak reads 3.
-  const day = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-  let days = [0, 1, 2].map((n) => ({ review_date: day(n) }));
+  // Three days studied, today among them, so the streak reads 3. "Today" is
+  // the app's own study day, which starts at 4am (src/lib/studyDay.js), not
+  // the calendar date. Counting from midnight, this check failed every night
+  // between midnight and 4am wherever the tests ran (on GitHub, which runs on
+  // UTC, that's the owner's evening): the test listed a day the app hadn't
+  // started yet, so the app showed a 2-day streak (2026-10-10).
+  let days = [0, 1, 2].map((n) => ({ review_date: localISODateDaysAgo(n) }));
   const streakDeletes = [];
   const dialogs = [];
   const t = await open({ rows: deck });
