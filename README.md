@@ -8,7 +8,7 @@ and turns it into flashcards. A model of memory called FSRS then decides which
 cards the student sees each day, so that each word comes back shortly before it
 would be forgotten.
 
-Live at [french-flashcards-nine.vercel.app](https://french-flashcards-nine.vercel.app).
+Live at [dejareview.vercel.app](https://dejareview.vercel.app).
 
 ![Studying a lesson card, with the lesson's notes open beside it](docs/screenshots/studying.png)
 

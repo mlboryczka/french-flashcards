@@ -11,11 +11,13 @@ starts with French and is meant for other languages later. The sign-in page
 and the browser tab carry the name; the repo, the live address and this
 document keep the old one.
 
-Live at `french-flashcards-nine.vercel.app`, deployed by Vercel from `main`.
+Live at `dejareview.vercel.app` (the students' app), deployed by Vercel from
+`main`; the old `french-flashcards-nine.vercel.app` still shows the same thing.
 Repo: `mlboryczka/french-flashcards`. The owner's test app, deployed from the
-`testing` branch, is at
-`french-flashcards-git-testing-mlboryczkas-projects.vercel.app` (see *Working
-protocol*).
+`testing` branch, is at `dejareview-mlb.vercel.app` (owner, 2026-10-09; a
+Vercel domain tied to the `testing` branch). Vercel's own branch address
+`french-flashcards-git-testing-mlboryczkas-projects.vercel.app` also works.
+See *Working protocol*.
 
 "The owner" is the person who runs the app and studies with it. Their decisions
 are marked *(owner, date)*; don't undo one without asking them.
@@ -91,7 +93,8 @@ application i use (and will be testing) and the app given to others").
 Podcasts is the first such work.
 
 - `main` is the students' app. `testing` is the owner's test app, deployed by
-  Vercel at `french-flashcards-git-testing-mlboryczkas-projects.vercel.app`.
+  Vercel at `dejareview-mlb.vercel.app`; the students' app is
+  `dejareview.vercel.app`.
   On the owner's Mac it is checked out in the worktree
   `.claude/worktrees/testing`.
 - Nothing on `testing` reaches students until the owner says so. Merging it
@@ -2965,7 +2968,7 @@ only the owner has the switch, and the server refuses everyone else. And
 "segment the updates i am now making between the application i use (and will
 be testing) and the app given to others": so Podcasts was built on a new
 branch, `testing`, which Vercel deploys as the owner's test app at
-https://french-flashcards-git-testing-mlboryczkas-projects.vercel.app, while
+https://dejareview-mlb.vercel.app (the owner chose the name), while
 `main` stays the students' app. GitHub runs the tests on pushes to both
 (78a4946). The test app uses the same database as the live one, so until
 `testing` is released into `main` its migrations must be additive:
